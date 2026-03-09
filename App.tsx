@@ -1,42 +1,41 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
-
-import { NewAppScreen } from '@react-native/new-app-screen';
-import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
-import {
-  SafeAreaProvider,
-  useSafeAreaInsets,
-} from 'react-native-safe-area-context';
+import { StyleSheet } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import MainNavigation from './src/navigations/mainNavigation';
+import { Provider } from 'react-redux';
+import { store } from './src/store/store';
+import './src/i18n/i18n';
+// import { useEffect } from 'react';
+// import AsyncStorage from '@react-native-async-storage/async-storage';
+// import NotificationService from './src/services/NotificationService';
 
 function App() {
-  const isDarkMode = useColorScheme() === 'dark';
+  // useEffect(() => {
+  //   const initNotifications = async () => {
+  //     const driverId = await AsyncStorage.getItem('driverId');
+  //     await NotificationService.initialize(driverId || undefined);
+  //   };
+
+  //   initNotifications();
+  // }, []);
 
   return (
-    <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <AppContent />
-    </SafeAreaProvider>
-  );
-}
-
-function AppContent() {
-  const safeAreaInsets = useSafeAreaInsets();
-
-  return (
-    <View style={styles.container}>
-      <NewAppScreen
-        templateFileName="App.tsx"
-        safeAreaInsets={safeAreaInsets}
-      />
-    </View>
+    <GestureHandlerRootView style={styles.root}>
+      <Provider store={store}>
+        <SafeAreaProvider>
+          <SafeAreaView style={styles.container} edges={['right', 'left', 'top']}>
+            <MainNavigation />
+          </SafeAreaView>
+        </SafeAreaProvider>
+      </Provider>
+    </GestureHandlerRootView>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
   container: {
     flex: 1,
   },
