@@ -17,10 +17,13 @@ import axios from 'axios';
 import { BASE_URL } from '../../services/api.js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { addNotification } from '../../services/localDriverData';
+import { useDispatch } from 'react-redux';
+import { getProfile } from '../../store/slices/profileSlice';
 
 // const BASE_URL = 'https://porterbackend-iyxh.onrender.com/api/driver'
 
 const LoginScreen = ({ navigation }) => {
+  const dispatch = useDispatch();
   const [mobile, setMobile] = useState('');
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [checked1, setChecked1] = useState(true);
@@ -32,19 +35,25 @@ const LoginScreen = ({ navigation }) => {
   const [phoneError, setPhoneError] = useState('');
 
   const otpInputs = useRef([]);
+  const timerRef = useRef(null);
 
   // Start timer for resend OTP
   const startTimer = () => {
     setTimer(30);
     setCanResend(false);
-    const interval = setInterval(() => {
-      setTimer(prevTimer => {
-        if (prevTimer <= 1) {
-          clearInterval(interval);
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+
+    timerRef.current = setInterval(() => {
+      setTimer(prev => {
+        if (prev <= 1) {
+          clearInterval(timerRef.current);
           setCanResend(true);
           return 0;
         }
-        return prevTimer - 1;
+        return prev - 1;
       });
     }, 1000);
   };
@@ -156,7 +165,6 @@ const LoginScreen = ({ navigation }) => {
     }
   };
 
-
   // Verify OTP
   const verifyOTP = async () => {
     const otpString = otp.join('');
@@ -192,10 +200,7 @@ const LoginScreen = ({ navigation }) => {
         // Store user data if needed
         const user = response.data?.data?.user;
         if (user) {
-          await AsyncStorage.setItem(
-            'userData',
-            JSON.stringify(user),
-          );
+          await AsyncStorage.setItem('userData', JSON.stringify(user));
         }
 
         const driverId =
@@ -204,6 +209,9 @@ const LoginScreen = ({ navigation }) => {
           user?.id ||
           `driver_${mobile}`;
         await AsyncStorage.setItem('driverId', String(driverId));
+
+        // Kick off a profile fetch so profile data is ready across the app.
+        dispatch(getProfile());
 
         await addNotification({
           title: 'Login successful',
@@ -605,7 +613,3 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 });
-
-
-
-

@@ -86,6 +86,16 @@ export const driverApi = {
     return response.data?.data;
   },
 
+  async cancelOrder(orderId, reason = 'Cancelled by driver') {
+    const config = await withAuth();
+    const response = await client.post(
+      `/orders/${orderId}/cancel`,
+      { reason },
+      config,
+    );
+    return response.data?.data;
+  },
+
   async confirmPickup(orderId) {
     const config = await withAuth();
     const response = await client.post(`/orders/${orderId}/pickup`, {}, config);
@@ -113,6 +123,12 @@ export const driverApi = {
   async rechargeWallet(amount) {
     const config = await withAuth();
     const response = await client.post('/wallet/recharge', { amount }, config);
+    return response.data?.data;
+  },
+
+  async getIncentives() {
+    const config = await withAuth();
+    const response = await client.get('/incentives', config);
     return response.data?.data;
   },
 

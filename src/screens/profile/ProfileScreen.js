@@ -13,14 +13,16 @@ import {
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
 import { selectIsOnline } from '../../store/slices/onlineStatusSlice';
-import { useSelector } from 'react-redux';
 import { changeLanguage } from '../../utils/changeLanguage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NotificationService from '../../services/NotificationService';
 import { resetDriverLocalData } from '../../services/localDriverData';
+import { useDispatch, useSelector } from 'react-redux';
+import { clearProfile, getProfile, updateProfile } from '../../store/slices/profileSlice';
 
 const ProfileScreen = ({ navigation }) => {
   const isOnline = useSelector(selectIsOnline);
+  const dispatch = useDispatch();
 
   // State for modals
   const [addressModalVisible, setAddressModalVisible] = useState(false);
@@ -38,6 +40,8 @@ const ProfileScreen = ({ navigation }) => {
   const [otp, setOtp] = useState('');
   const [showOtpField, setShowOtpField] = useState(false);
 
+  const { profile } = useSelector(state => state.profile);
+
   // Bank details state
   const [bankDetails, setBankDetails] = useState({
     accountHolderName: '',
@@ -52,6 +56,21 @@ const ProfileScreen = ({ navigation }) => {
   // Language state
   const [appLanguage, setAppLanguage] = useState('English');
   const [trainingLanguage, setTrainingLanguage] = useState('हिन्दी');
+
+  useEffect(() => {
+    dispatch(getProfile());
+  }, [dispatch]);
+
+  useEffect(() => {
+    if (profile) {
+      setPhoneNumber(profile.phone || '');
+      setSavedAddress(profile.address || '');
+
+      if (profile.bankDetails) {
+        setSavedBankDetails(profile.bankDetails);
+      }
+    }
+  }, [profile]);
 
   // Load language from AsyncStorage
   useEffect(() => {
@@ -72,14 +91,21 @@ const ProfileScreen = ({ navigation }) => {
   // Memoized handlers to prevent unnecessary re-renders
   const handleAddressSave = useCallback(() => {
     if (homeAddress.trim()) {
+      dispatch(
+        updateProfile({
+          address: homeAddress,
+        }),
+      );
+
       setSavedAddress(homeAddress);
       setHomeAddress('');
       setAddressModalVisible(false);
-      Alert.alert('Success', 'Address added successfully!');
+
+      Alert.alert('Success', 'Address updated successfully!');
     } else {
       Alert.alert('Error', 'Please enter an address');
     }
-  }, [homeAddress]);
+  }, [dispatch, homeAddress]);
 
   const handlePhoneSendOTP = useCallback(() => {
     if (newPhoneNumber.length === 10) {
@@ -95,16 +121,23 @@ const ProfileScreen = ({ navigation }) => {
 
   const handlePhoneVerifyOTP = useCallback(() => {
     if (otp.length === 6) {
+      dispatch(
+        updateProfile({
+          phone: newPhoneNumber,
+        }),
+      );
+
       setPhoneNumber(newPhoneNumber);
       setPhoneModalVisible(false);
       setShowOtpField(false);
       setNewPhoneNumber('');
       setOtp('');
+
       Alert.alert('Success', 'Mobile number updated successfully!');
     } else {
       Alert.alert('Error', 'Please enter valid OTP');
     }
-  }, [otp, newPhoneNumber]);
+  }, [dispatch, newPhoneNumber, otp]);
 
   const handleBankSave = useCallback(() => {
     if (
@@ -114,25 +147,23 @@ const ProfileScreen = ({ navigation }) => {
       bankDetails.bankName
     ) {
       if (bankDetails.accountNumber === bankDetails.confirmAccountNumber) {
+        dispatch(
+          updateProfile({
+            bankDetails: bankDetails,
+          }),
+        );
+
         setSavedBankDetails(bankDetails);
         setBankModalVisible(false);
+
         Alert.alert('Success', 'Bank details saved successfully!');
-        // Reset form
-        setBankDetails({
-          accountHolderName: '',
-          accountNumber: '',
-          confirmAccountNumber: '',
-          ifscCode: '',
-          bankName: '',
-          upiId: '',
-        });
       } else {
         Alert.alert('Error', 'Account numbers do not match');
       }
     } else {
       Alert.alert('Error', 'Please fill all required fields');
     }
-  }, [bankDetails]);
+  }, [bankDetails, dispatch]);
 
   const handleLanguageSelect = useCallback((lang, isTraining) => {
     if (!isTraining) {
@@ -199,6 +230,7 @@ const ProfileScreen = ({ navigation }) => {
     await NotificationService.removeToken();
     await AsyncStorage.multiRemove(['userToken', 'userData', 'driverId']);
     await resetDriverLocalData();
+    dispatch(clearProfile());
     Alert.alert('Logged out', 'You have been logged out successfully.');
     navigation.replace('Login');
   };
@@ -418,6 +450,9 @@ const ProfileScreen = ({ navigation }) => {
     [bankModalVisible, bankDetails, savedBankDetails, handleBankSave],
   );
 
+  console.log("check check", profile);
+  
+
   const LanguageModal = useCallback(
     ({ visible, onClose, currentLanguage, onSelect, title, isTraining }) => (
       <Modal
@@ -560,19 +595,21 @@ const ProfileScreen = ({ navigation }) => {
           <View style={styles.profileHeader}>
             <View style={styles.avatarContainer}>
               <View style={styles.avatar}>
-                <Text style={styles.avatarText}>A</Text>
+                <Text style={styles.avatarText}>{profile?.name.slice(0,1)}</Text>
               </View>
               {isOnline && <View style={styles.onlineDot} />}
             </View>
 
             <View style={styles.profileInfo}>
               <View style={styles.nameRow}>
-                <Text style={styles.name}>Arsh</Text>
-                <Text style={styles.starRating}> • ★ 4.8</Text>
+                <Text style={styles.name}>{profile?.name || 'Driver'}</Text>
+                <Text style={styles.starRating}> • ★ {profile?.rating != null ? Number(profile.rating).toFixed(1) : '4.8'}</Text>
               </View>
               <View style={styles.vehicleRow}>
                 <MaterialIcons name="two-wheeler" size={16} color="#666" />
-                <Text style={styles.vehicleText}> Scooter • MP-13-FP-1405</Text>
+                <Text style={styles.vehicleText}>
+                  {profile?.vehicleType} • {profile?.vehicleNumber}
+                </Text>
               </View>
             </View>
 
@@ -1195,5 +1232,3 @@ const styles = StyleSheet.create({
 });
 
 export default ProfileScreen;
-
-

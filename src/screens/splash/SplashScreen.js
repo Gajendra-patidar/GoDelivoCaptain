@@ -11,15 +11,18 @@ const SplashScreen = () => {
       try {
         const token = await AsyncStorage.getItem('userToken');
 
+        console.log("user token", token);
+        
+
         setTimeout(() => {
           if (token) {
             navigation.replace('Map');
           } else {
-            navigation.replace('Map');
+            navigation.replace('Login');
           }
         }, 700);
       } catch {
-        navigation.replace('Map');
+        navigation.replace('Login');
       }
     };
 

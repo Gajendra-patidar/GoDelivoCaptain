@@ -70,7 +70,7 @@ const HelpSupports = ({navigation}) => {
           <Text style={styles.sectionTitle}>{t('help by topic')}</Text>
           
           {helpTopics.map((topic) => (
-            <TouchableOpacity key={topic.id} style={styles.topicItem}>
+            <TouchableOpacity key={topic.id} style={styles.topicItem} onPress={() => navigation.navigate('HelpDetail', { topicId: topic.screen, topicTitle: topic.title })}>
               <View style={styles.topicLeft}>
                 <View style={styles.topicIconContainer}>
                   <Ionicons name={topic.icon} size={22} color="#000" />

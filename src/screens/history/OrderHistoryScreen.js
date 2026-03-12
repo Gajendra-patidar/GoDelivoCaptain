@@ -9,7 +9,35 @@ import {
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useFocusEffect } from '@react-navigation/native';
-import { getOrderHistory } from '../../services/localDriverData';
+import { getOrderHistory, setOrderHistory } from '../../services/localDriverData';
+import { driverApi } from '../../services/driverApi';
+import { theme } from '../../theme';
+import { SkeletonList } from '../../components/SkeletonLoader';
+
+const normalizeOrder = (item = {}) => {
+  const pickupAddress =
+    item.pickupAddress ||
+    item.pickup_location ||
+    item.pickup?.address ||
+    item.pickup?.location ||
+    '--';
+  const dropAddress =
+    item.dropAddress ||
+    item.drop_location ||
+    item.drop?.address ||
+    item.drop?.location ||
+    '--';
+
+  return {
+    ...item,
+    id: item.id || item._id || item.orderId || item.tripId || `${Date.now()}`,
+    amount:
+      Number(item.amount ?? item.fare ?? item.total ?? item.price ?? 0) || 0,
+    pickupAddress,
+    dropAddress,
+    completedAt: item.completedAt || item.deliveredAt || item.updatedAt || item.createdAt,
+  };
+};
 
 const formatTime = value => {
   if (!value) {
@@ -24,10 +52,22 @@ const formatTime = value => {
 
 const OrderHistoryScreen = ({ navigation }) => {
   const [orders, setOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const loadHistory = useCallback(async () => {
-    const history = await getOrderHistory();
-    setOrders(history);
+    try {
+      const remote = await driverApi.getOrderHistory();
+      if (Array.isArray(remote)) {
+        const normalized = remote.map(normalizeOrder);
+        await setOrderHistory(normalized);
+        setOrders(normalized);
+        return;
+      }
+    } catch {}
+
+    const local = await getOrderHistory();
+    setOrders((Array.isArray(local) ? local : []).map(normalizeOrder));
+    setLoading(false);
   }, []);
 
   useFocusEffect(
@@ -38,7 +78,7 @@ const OrderHistoryScreen = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      <StatusBar backgroundColor="#F4C20D" barStyle="dark-content" />
+      <StatusBar backgroundColor={theme.colors.primary} barStyle="dark-content" />
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={24} color="#000" />
@@ -46,9 +86,14 @@ const OrderHistoryScreen = ({ navigation }) => {
         <Text style={styles.headerTitle}>Order History</Text>
       </View>
 
+      {loading ? (
+        <SkeletonList count={5} />
+      ) : (
       <FlatList
         data={orders}
-        keyExtractor={item => item.id}
+        keyExtractor={(item, index) =>
+          String(item?.id || item?._id || item?.orderId || item?.createdAt || index)
+        }
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <View style={styles.emptyState}>
@@ -56,7 +101,11 @@ const OrderHistoryScreen = ({ navigation }) => {
           </View>
         }
         renderItem={({ item }) => (
-          <View style={styles.card}>
+          <TouchableOpacity
+            style={styles.card}
+            onPress={() => navigation.navigate('TripDetail', { order: item })}
+            activeOpacity={0.85}
+          >
             <View style={styles.rowTop}>
               <Text style={styles.orderId}>{item.id}</Text>
               <Text style={styles.amount}>Rs {Number(item.amount || 0).toFixed(2)}</Text>
@@ -68,9 +117,10 @@ const OrderHistoryScreen = ({ navigation }) => {
               Drop: {item.dropAddress || '--'}
             </Text>
             <Text style={styles.timeText}>Delivered: {formatTime(item.completedAt)}</Text>
-          </View>
+          </TouchableOpacity>
         )}
       />
+      )}
     </View>
   );
 };
@@ -80,12 +130,12 @@ export default OrderHistoryScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: theme.colors.bg,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F4C20D',
+    backgroundColor: theme.colors.primary,
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
@@ -93,7 +143,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     marginLeft: 14,
-    color: '#000',
+    color: theme.colors.ink,
   },
   listContent: {
     padding: 16,
@@ -108,10 +158,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: 14,
     marginBottom: 12,
+    ...theme.shadow.card,
   },
   rowTop: {
     flexDirection: 'row',

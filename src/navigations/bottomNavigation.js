@@ -4,6 +4,7 @@ import HomeScreen from '../screens/home/HomeScreen';
 import MoreScreen from '../screens/more/MoreScreen';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import HelpSupports from '../screens/helpsupport/HelpSupports';
+import { theme } from '../theme';
 
 const Tab = createBottomTabNavigator();
 
@@ -17,7 +18,7 @@ function MyTabs() {
 
         tabBarIcon: ({ focused }) => {
           let iconName;
-          let color = focused ? '#F4C20D' : '#9e8e46';
+          let color = focused ? theme.colors.primary : '#9e8e46';
 
           if (route.name === 'Home') {
             iconName = 'home';
@@ -47,17 +48,17 @@ export default MyTabs;
 const styles = StyleSheet.create({
   tabBar: {
     position: 'absolute',
-    bottom: 15,
+    bottom: 2,
     left: 20,
     right: 20,
     height: 55,
     borderRadius: 40,
-    backgroundColor: 'white',
+    backgroundColor: theme.colors.surface,
     borderWidth: 1,
-    borderColor: '#F4C20D',
-    elevation: 0, // no shadow
-    marginHorizontal:15,
-    paddingTop:10
+    borderColor: theme.colors.primaryBorder,
+    marginHorizontal: 15,
+    paddingTop: 10,
+    ...theme.shadow.card,
   },
 
   iconWrapper: {

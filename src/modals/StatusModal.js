@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, Modal, StyleSheet } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { theme } from '../theme';
 
 const StatusModal = ({ visible, onClose, isOnline }) => {
   const [seconds, setSeconds] = useState(3);
@@ -43,7 +44,7 @@ const StatusModal = ({ visible, onClose, isOnline }) => {
           <View
             style={[
               styles.iconWrapper,
-              { backgroundColor: isOnline ? '#16C784' : '#FF4D4D' },
+              isOnline ? styles.iconOnline : styles.iconOffline,
             ]}
           >
             <Ionicons
@@ -85,10 +86,11 @@ const styles = StyleSheet.create({
 
   container: {
     width: '85%',
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.surface,
     borderRadius: 20,
     padding: 25,
     alignItems: 'center',
+    ...theme.shadow.card,
   },
 
   iconWrapper: {
@@ -99,11 +101,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 15,
   },
+  iconOnline: {
+    backgroundColor: theme.colors.success,
+  },
+  iconOffline: {
+    backgroundColor: '#FF4D4D',
+  },
 
   title: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#000',
+    color: theme.colors.ink,
     marginBottom: 8,
   },
 

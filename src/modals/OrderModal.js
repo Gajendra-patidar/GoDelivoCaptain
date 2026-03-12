@@ -8,6 +8,7 @@ import {
   Dimensions,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { theme } from '../theme';
 
 const { width } = Dimensions.get('window');
 
@@ -126,13 +127,14 @@ const styles = StyleSheet.create({
   },
   content: {
     width: width * 0.92,
-    backgroundColor: '#fff',
-    borderRadius: 18,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radii.lg,
     padding: 20,
+    ...theme.shadow.card,
   },
   timerText: {
     textAlign: 'center',
-    color: '#6B7280',
+    color: theme.colors.muted,
     fontSize: 13,
     marginBottom: 8,
   },
@@ -140,7 +142,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 36,
     fontWeight: '800',
-    color: '#111827',
+    color: theme.colors.ink,
     marginBottom: 10,
   },
   pickupChip: {
@@ -172,7 +174,7 @@ const styles = StyleSheet.create({
   rejectButton: {
     width: '48%',
     backgroundColor: '#F3F4F6',
-    borderRadius: 10,
+    borderRadius: theme.radii.sm,
     paddingVertical: 12,
     alignItems: 'center',
   },
@@ -182,36 +184,36 @@ const styles = StyleSheet.create({
   },
   acceptButton: {
     width: '48%',
-    backgroundColor: '#16A34A',
-    borderRadius: 10,
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.radii.sm,
     paddingVertical: 12,
     alignItems: 'center',
   },
   acceptText: {
-    color: '#fff',
+    color: theme.colors.ink,
     fontWeight: '700',
   },
   expiredTitle: {
     textAlign: 'center',
     fontSize: 22,
     fontWeight: '700',
-    color: '#EF4444',
+    color: theme.colors.danger,
     marginTop: 8,
   },
   expiredText: {
     textAlign: 'center',
-    color: '#6B7280',
+    color: theme.colors.muted,
     marginTop: 6,
     marginBottom: 18,
   },
   okButton: {
-    backgroundColor: '#F4C20D',
-    borderRadius: 10,
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.radii.sm,
     paddingVertical: 12,
     alignItems: 'center',
   },
   okText: {
     fontWeight: '700',
-    color: '#000',
+    color: theme.colors.ink,
   },
 });

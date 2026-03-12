@@ -168,15 +168,15 @@ export const createMockNearbyOrder = () => {
     id: orderId,
     amount: baseAmount,
     pickupDistanceKm: Number((Math.random() * 1.8 + 0.3).toFixed(1)),
-    pickupAddress: 'Rajwada Square, Indore',
-    dropAddress: 'Vijay Nagar, Indore',
+    pickupAddress: 'Navneet Darshan Building, Greater Kailash Road, indore',
+    dropAddress: 'Bangali Square, Indore',
     pickup: {
-      latitude: 22.7196,
-      longitude: 75.8577,
+      latitude: 22.72592, //22.725926779392378, 75.89294618232778
+      longitude: 75.89294,
     },
     drop: {
-      latitude: 22.7533,
-      longitude: 75.8937,
+      latitude: 22.72044,//22.72044391492633, 75.90601025591981
+      longitude: 75.90601,
     },
     createdAt: new Date().toISOString(),
   };

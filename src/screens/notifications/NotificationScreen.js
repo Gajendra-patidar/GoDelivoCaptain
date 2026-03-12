@@ -12,14 +12,40 @@ import { useFocusEffect } from '@react-navigation/native';
 import {
   getNotifications,
   markAllNotificationsRead,
+  setNotifications as setNotificationsStorage,
 } from '../../services/localDriverData';
+import { driverApi } from '../../services/driverApi';
+import { theme } from '../../theme';
+
+const normalizeNotification = (item = {}) => {
+  const data = item.data || item.payload || {};
+  return {
+    ...item,
+    id: item.id || item._id || item.notificationId || `${Date.now()}`,
+    title: item.title || item.heading || data.title || 'Notification',
+    body: item.body || item.message || data.body || '',
+    read: Boolean(item.read ?? item.isRead ?? false),
+    createdAt: item.createdAt || item.timestamp || item.sentAt || new Date().toISOString(),
+    data,
+  };
+};
 
 const NotificationScreen = ({ navigation }) => {
-  const [notifications, setNotifications] = useState([]);
+  const [notifications, setNotificationsState] = useState([]);
 
   const loadNotifications = useCallback(async () => {
+    try {
+      const remote = await driverApi.getNotifications();
+      if (Array.isArray(remote)) {
+        const normalized = remote.map(normalizeNotification);
+        await setNotificationsStorage(normalized);
+        setNotificationsState(normalized);
+        return;
+      }
+    } catch {}
+
     const data = await getNotifications();
-    setNotifications(data);
+    setNotificationsState((Array.isArray(data) ? data : []).map(normalizeNotification));
   }, []);
 
   useFocusEffect(
@@ -29,13 +55,16 @@ const NotificationScreen = ({ navigation }) => {
   );
 
   const handleMarkAllRead = async () => {
+    try {
+      await driverApi.markAllNotificationsRead();
+    } catch {}
     const updated = await markAllNotificationsRead();
-    setNotifications(updated);
+    setNotificationsState(updated);
   };
 
   return (
     <View style={styles.container}>
-      <StatusBar backgroundColor="#F4C20D" barStyle="dark-content" />
+      <StatusBar backgroundColor={theme.colors.primary} barStyle="dark-content" />
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Ionicons name="arrow-back" size={24} color="#000" />
@@ -48,7 +77,7 @@ const NotificationScreen = ({ navigation }) => {
 
       <FlatList
         data={notifications}
-        keyExtractor={item => item.id}
+        keyExtractor={(item, index) => String(item?.id || item?._id || item?.createdAt || index)}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={
           <View style={styles.emptyState}>
@@ -77,20 +106,20 @@ export default NotificationScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F7FA',
+    backgroundColor: theme.colors.bg,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#F4C20D',
+    backgroundColor: theme.colors.primary,
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#000',
+    color: theme.colors.ink,
   },
   markAll: {
     color: '#111827',
@@ -110,14 +139,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: 14,
     marginBottom: 10,
+    ...theme.shadow.card,
   },
   unreadCard: {
     borderWidth: 1,
-    borderColor: '#F4C20D',
+    borderColor: theme.colors.primaryBorder,
   },
   titleRow: {
     flexDirection: 'row',

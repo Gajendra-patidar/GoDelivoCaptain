@@ -10,6 +10,10 @@ import LoginScreen from '../screens/auth/LoginScreen';
 import EarningsScreen from '../screens/earnings/EarningsScreen';
 import OrderHistoryScreen from '../screens/history/OrderHistoryScreen';
 import NotificationScreen from '../screens/notifications/NotificationScreen';
+import TripDetailScreen from '../screens/history/TripDetailScreen';
+import IncentivesScreen from '../screens/incentives/IncentivesScreen';
+import HelpDetailScreen from '../screens/helpsupport/HelpDetailScreen';
+import ReferralScreen from '../screens/referral/ReferralScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -25,6 +29,10 @@ function RootStack() {
       <Stack.Screen name="Earnings" component={EarningsScreen} />
       <Stack.Screen name="OrderHistory" component={OrderHistoryScreen} />
       <Stack.Screen name="Notifications" component={NotificationScreen} />
+      <Stack.Screen name="TripDetail" component={TripDetailScreen} />
+      <Stack.Screen name="Incentives" component={IncentivesScreen} />
+      <Stack.Screen name="HelpDetail" component={HelpDetailScreen} />
+      <Stack.Screen name="Referral" component={ReferralScreen} />
     </Stack.Navigator>
   );
 }

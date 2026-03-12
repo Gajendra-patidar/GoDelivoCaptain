@@ -375,7 +375,6 @@ const DocumentScreen = ({ navigation }) => {
 
   // Submit final application
   const submitApplication = async () => {
-    navigation.navigate('MyTabs')
     try {
       const token = await getToken();
       if (!token) {

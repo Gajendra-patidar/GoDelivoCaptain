@@ -10,7 +10,13 @@ import {
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useFocusEffect } from '@react-navigation/native';
-import { addWalletAmount, getWalletData } from '../../services/localDriverData';
+import {
+  addWalletAmount,
+  getWalletData,
+  setWalletData,
+} from '../../services/localDriverData';
+import { driverApi } from '../../services/driverApi';
+import { theme } from '../../theme';
 
 const QUICK_ADD_AMOUNTS = [100, 250, 500];
 
@@ -24,8 +30,18 @@ const EarningsScreen = ({ navigation }) => {
   const [loadingAmount, setLoadingAmount] = useState(null);
 
   const loadWallet = useCallback(async () => {
-    const walletData = await getWalletData();
-    setWallet(walletData);
+    try {
+      const earnings = await driverApi.getEarnings();
+      const nextWallet = earnings?.wallet;
+      if (nextWallet) {
+        const local = await setWalletData(nextWallet);
+        setWallet(local);
+        return;
+      }
+    } catch {}
+
+    const fallback = await getWalletData();
+    setWallet(fallback);
   }, []);
 
   useFocusEffect(
@@ -37,9 +53,19 @@ const EarningsScreen = ({ navigation }) => {
   const handleQuickAdd = async amount => {
     try {
       setLoadingAmount(amount);
+      try {
+        const walletResponse = await driverApi.rechargeWallet(amount);
+        if (walletResponse) {
+          const updated = await setWalletData(walletResponse);
+          setWallet(updated);
+          Alert.alert('Wallet Updated', `Rs ${amount} added to wallet balance.`);
+          return;
+        }
+      } catch {}
+
       const updatedWallet = await addWalletAmount(amount);
       setWallet(updatedWallet);
-      Alert.alert('Wallet Updated', `Rs ${amount} added to wallet balance.`);
+      Alert.alert('Offline Recharge', `Backend not reachable. Rs ${amount} added locally.`);
     } finally {
       setLoadingAmount(null);
     }
@@ -47,7 +73,7 @@ const EarningsScreen = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      <StatusBar backgroundColor="#F4C20D" barStyle="dark-content" />
+      <StatusBar backgroundColor={theme.colors.primary} barStyle="dark-content" />
 
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -113,19 +139,19 @@ export default EarningsScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F6F7FB',
+    backgroundColor: theme.colors.bg,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F4C20D',
+    backgroundColor: theme.colors.primary,
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#000',
+    color: theme.colors.ink,
     marginLeft: 14,
   },
   content: {
@@ -133,10 +159,11 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
   },
   walletCard: {
-    backgroundColor: '#111827',
+    backgroundColor: theme.colors.ink,
     borderRadius: 16,
     padding: 20,
     marginBottom: 14,
+    ...theme.shadow.card,
   },
   cardLabel: {
     color: '#D1D5DB',
@@ -155,15 +182,17 @@ const styles = StyleSheet.create({
   },
   statCard: {
     width: '48%',
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: 16,
+    ...theme.shadow.card,
   },
   statCardFull: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: 16,
     marginBottom: 14,
+    ...theme.shadow.card,
   },
   statLabel: {
     color: '#6B7280',
@@ -176,10 +205,11 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   section: {
-    backgroundColor: '#fff',
+    backgroundColor: theme.colors.surface,
     borderRadius: 12,
     padding: 16,
     marginBottom: 14,
+    ...theme.shadow.card,
   },
   sectionTitle: {
     fontSize: 15,
@@ -193,7 +223,7 @@ const styles = StyleSheet.create({
   },
   amountButton: {
     width: '31%',
-    backgroundColor: '#FFF7D6',
+    backgroundColor: theme.colors.primarySoft,
     borderRadius: 10,
     paddingVertical: 12,
     alignItems: 'center',
@@ -204,7 +234,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   historyButton: {
-    backgroundColor: '#F4C20D',
+    backgroundColor: theme.colors.primary,
     borderRadius: 12,
     paddingVertical: 14,
     paddingHorizontal: 16,
@@ -213,7 +243,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   historyButtonText: {
-    color: '#000',
+    color: theme.colors.ink,
     fontWeight: '700',
     fontSize: 15,
   },

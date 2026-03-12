@@ -5,10 +5,27 @@ import {
   StyleSheet,
   TouchableOpacity,
   Modal,
+  Linking,
+  Alert,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const EmergencyModal = ({ visible, onClose }) => {
+  const handleCall = (number, label) => {
+    const url = `tel:${number}`;
+    Linking.canOpenURL(url)
+      .then(supported => {
+        if (supported) {
+          Linking.openURL(url);
+        } else {
+          Alert.alert('Cannot make call', `Unable to call ${label}. Please dial ${number} manually.`);
+        }
+      })
+      .catch(() => {
+        Alert.alert('Error', `Failed to initiate call to ${label}.`);
+      });
+  };
+
   return (
     <Modal
       animationType="slide"
@@ -39,7 +56,7 @@ const EmergencyModal = ({ visible, onClose }) => {
           <View style={styles.row}>
             
             {/* Police Card */}
-            <TouchableOpacity style={styles.card}>
+            <TouchableOpacity style={styles.card} onPress={() => handleCall('100', 'Police')}>
               <Ionicons name="car-outline" size={28} color="#1c1c1c" />
               <Text style={styles.cardText}>Call</Text>
               <Text style={styles.cardText}>Police</Text>
@@ -52,7 +69,7 @@ const EmergencyModal = ({ visible, onClose }) => {
             </TouchableOpacity>
 
             {/* Ambulance Card */}
-            <TouchableOpacity style={styles.card}>
+            <TouchableOpacity style={styles.card} onPress={() => handleCall('102', 'Ambulance')}>
               <Ionicons name="medkit-outline" size={28} color="#464545" />
               <Text style={styles.cardText}>Call</Text>
               <Text style={styles.cardText}>Ambulance</Text>
