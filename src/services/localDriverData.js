@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import SocketService from './socketService';
 
 const KEYS = {
   ACTIVE_ORDER: 'activeOrder',
@@ -8,7 +9,7 @@ const KEYS = {
 };
 
 const DEFAULT_WALLET = {
-  balance: 23.25,
+  balance: 0,
   todayEarnings: 0,
   totalEarnings: 0,
   totalDeliveries: 0,
@@ -72,19 +73,33 @@ export const creditOnDelivery = async amount => {
 
 export const getActiveOrder = async () => {
   const raw = await AsyncStorage.getItem(KEYS.ACTIVE_ORDER);
-  return safeParse(raw, null);
+  const parsed = safeParse(raw, null);
+
+  // Anti-zombie protection: if it was saved by the old bug, it won't have an ID
+  if (parsed && !parsed.id && !parsed.rideId) {
+    await clearActiveOrder();
+    return null;
+  }
+
+  return parsed;
 };
 
 export const setActiveOrder = async order => {
+  if (!order) {
+    await clearActiveOrder();
+    return;
+  }
   await saveJSON(KEYS.ACTIVE_ORDER, {
     ...order,
     acceptedAt: order?.acceptedAt || new Date().toISOString(),
     status: order?.status || 'accepted',
   });
+  SocketService.setActiveRide(order.rideId || order.id);
 };
 
 export const clearActiveOrder = async () => {
   await AsyncStorage.removeItem(KEYS.ACTIVE_ORDER);
+  SocketService.clearActiveRide();
 };
 
 export const getOrderHistory = async () => {

@@ -74,9 +74,9 @@ const MoreScreen = ({ navigation }) => {
 
       <View style={styles.header}>
         <Text style={styles.headerTitle}>{t('more')}</Text>
-        <TouchableOpacity style={styles.settingsButton}>
+        {/* <TouchableOpacity style={styles.settingsButton}>
           <Ionicons name="settings-outline" size={24} color="#000" />
-        </TouchableOpacity>
+        </TouchableOpacity> */}
       </View>
 
       <ScrollView

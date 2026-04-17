@@ -1,9 +1,9 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_HOST } from '../../services/api';
+import { BASE_URL } from '../../services/api';
 
-const PROFILE_URL = `${API_HOST}/api/auth/mobile/profile`;
+const PROFILE_URL = `${BASE_URL}/profile`;
 
 const extractProfile = payload => {
   return (

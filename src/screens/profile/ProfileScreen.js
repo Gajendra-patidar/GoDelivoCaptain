@@ -9,6 +9,7 @@ import {
   Modal,
   TextInput,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
@@ -16,13 +17,17 @@ import { selectIsOnline } from '../../store/slices/onlineStatusSlice';
 import { changeLanguage } from '../../utils/changeLanguage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NotificationService from '../../services/NotificationService';
-import { resetDriverLocalData } from '../../services/localDriverData';
+import SocketService from '../../services/socketService';
+import { resetDriverLocalData, getActiveOrder } from '../../services/localDriverData';
 import { useDispatch, useSelector } from 'react-redux';
-import { clearProfile, getProfile, updateProfile } from '../../store/slices/profileSlice';
+import { clearProfile, getProfile, updateProfile, selectProfile, selectProfileLoading } from '../../store/slices/profileSlice';
+import { theme } from '../../theme';
 
 const ProfileScreen = ({ navigation }) => {
   const isOnline = useSelector(selectIsOnline);
   const dispatch = useDispatch();
+  const profile = useSelector(selectProfile);
+  const loading = useSelector(selectProfileLoading);
 
   // State for modals
   const [addressModalVisible, setAddressModalVisible] = useState(false);
@@ -35,12 +40,10 @@ const ProfileScreen = ({ navigation }) => {
   // State for form data
   const [homeAddress, setHomeAddress] = useState('');
   const [savedAddress, setSavedAddress] = useState('');
-  const [phoneNumber, setPhoneNumber] = useState('9876543210');
+  const [phoneNumber, setPhoneNumber] = useState('0000000000');
   const [newPhoneNumber, setNewPhoneNumber] = useState('');
   const [otp, setOtp] = useState('');
   const [showOtpField, setShowOtpField] = useState(false);
-
-  const { profile } = useSelector(state => state.profile);
 
   // Bank details state
   const [bankDetails, setBankDetails] = useState({
@@ -64,10 +67,23 @@ const ProfileScreen = ({ navigation }) => {
   useEffect(() => {
     if (profile) {
       setPhoneNumber(profile.phone || '');
-      setSavedAddress(profile.address || '');
 
+      // Handle address - it's an object in the API response
+      if (profile.address) {
+        const addressObj = profile.address;
+        const formattedAddress = `${addressObj.street || ''}, ${addressObj.city || ''}, ${addressObj.state || ''} - ${addressObj.pincode || ''}`;
+        setSavedAddress(formattedAddress);
+      }
+
+      // Handle bank details
       if (profile.bankDetails) {
-        setSavedBankDetails(profile.bankDetails);
+        setSavedBankDetails({
+          accountHolderName: profile.bankDetails.accountHolderName || '',
+          accountNumber: profile.bankDetails.accountNumber || '',
+          ifscCode: profile.bankDetails.ifscCode || '',
+          bankName: profile.bankDetails.bankName || '',
+          upiId: profile.bankDetails.upiId || '',
+        });
       }
     }
   }, [profile]);
@@ -88,12 +104,21 @@ const ProfileScreen = ({ navigation }) => {
     loadLanguage();
   }, []);
 
-  // Memoized handlers to prevent unnecessary re-renders
   const handleAddressSave = useCallback(() => {
     if (homeAddress.trim()) {
+      // Parse the address input (you might want to improve this parsing)
+      const addressParts = homeAddress.split(',').map(part => part.trim());
+
+      const addressObj = {
+        street: addressParts[0] || '',
+        city: addressParts[1] || profile?.address?.city || '',
+        state: addressParts[2] || profile?.address?.state || '',
+        pincode: addressParts[3] || profile?.address?.pincode || '',
+      };
+
       dispatch(
         updateProfile({
-          address: homeAddress,
+          address: addressObj,
         }),
       );
 
@@ -105,7 +130,7 @@ const ProfileScreen = ({ navigation }) => {
     } else {
       Alert.alert('Error', 'Please enter an address');
     }
-  }, [dispatch, homeAddress]);
+  }, [dispatch, homeAddress, profile]);
 
   const handlePhoneSendOTP = useCallback(() => {
     if (newPhoneNumber.length === 10) {
@@ -147,13 +172,16 @@ const ProfileScreen = ({ navigation }) => {
       bankDetails.bankName
     ) {
       if (bankDetails.accountNumber === bankDetails.confirmAccountNumber) {
+        // Remove confirmAccountNumber before sending to API
+        const { confirmAccountNumber, ...bankDataToSave } = bankDetails;
+
         dispatch(
           updateProfile({
-            bankDetails: bankDetails,
+            bankDetails: bankDataToSave,
           }),
         );
 
-        setSavedBankDetails(bankDetails);
+        setSavedBankDetails(bankDataToSave);
         setBankModalVisible(false);
 
         Alert.alert('Success', 'Bank details saved successfully!');
@@ -174,7 +202,6 @@ const ProfileScreen = ({ navigation }) => {
     }
   }, []);
 
-  // Memoized modal components to prevent recreation
   const AddressModal = useMemo(
     () => (
       <Modal
@@ -192,14 +219,36 @@ const ProfileScreen = ({ navigation }) => {
               </TouchableOpacity>
             </View>
 
+            <Text style={styles.inputLabel}>Street Address *</Text>
             <TextInput
               style={styles.modalInput}
-              placeholder="Enter your complete address"
+              placeholder="Enter street address"
               value={homeAddress}
               onChangeText={setHomeAddress}
-              multiline
-              numberOfLines={3}
-              textAlignVertical="top"
+            />
+
+            <Text style={styles.inputLabel}>City</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="City"
+              value={profile?.address?.city || ''}
+              editable={false}
+            />
+
+            <Text style={styles.inputLabel}>State</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="State"
+              value={profile?.address?.state || ''}
+              editable={false}
+            />
+
+            <Text style={styles.inputLabel}>Pincode</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Pincode"
+              value={profile?.address?.pincode || ''}
+              editable={false}
             />
 
             <View style={styles.modalButtons}>
@@ -223,13 +272,26 @@ const ProfileScreen = ({ navigation }) => {
         </View>
       </Modal>
     ),
-    [addressModalVisible, homeAddress, handleAddressSave],
+    [addressModalVisible, homeAddress, handleAddressSave, profile],
   );
 
   const handleLogout = async () => {
+    // Check if there's an active order
+    const activeOrder = await getActiveOrder();
+    if (activeOrder) {
+      console.log('⛔ Cannot logout: Active order in progress', activeOrder.id);
+      Alert.alert(
+        'Order in Progress',
+        'You cannot logout while an order is active. Please complete or cancel the current order.',
+        [{ text: 'OK' }],
+      );
+      return;
+    }
+
     await NotificationService.removeToken();
     await AsyncStorage.multiRemove(['userToken', 'userData', 'driverId']);
     await resetDriverLocalData();
+    SocketService.cleanup();
     dispatch(clearProfile());
     Alert.alert('Logged out', 'You have been logged out successfully.');
     navigation.replace('Login');
@@ -268,6 +330,7 @@ const ProfileScreen = ({ navigation }) => {
 
             {!showOtpField ? (
               <>
+                <Text style={styles.inputLabel}>New Mobile Number</Text>
                 <TextInput
                   style={styles.modalInput}
                   placeholder="Enter new mobile number"
@@ -277,13 +340,7 @@ const ProfileScreen = ({ navigation }) => {
                   maxLength={10}
                 />
                 <TouchableOpacity
-                  style={{
-                    backgroundColor: '#F4C20D',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: 10,
-                    borderRadius: 10,
-                  }}
+                  style={styles.fullWidthButton}
                   onPress={handlePhoneSendOTP}
                 >
                   <Text style={styles.saveButtonText}>Send OTP</Text>
@@ -294,6 +351,7 @@ const ProfileScreen = ({ navigation }) => {
                 <Text style={styles.otpSentText}>
                   OTP sent to {newPhoneNumber}
                 </Text>
+                <Text style={styles.inputLabel}>Enter OTP</Text>
                 <TextInput
                   style={styles.modalInput}
                   placeholder="Enter OTP"
@@ -356,6 +414,7 @@ const ProfileScreen = ({ navigation }) => {
                 </TouchableOpacity>
               </View>
 
+              <Text style={styles.inputLabel}>Account Holder Name *</Text>
               <TextInput
                 style={styles.modalInput}
                 placeholder="Account Holder Name"
@@ -365,6 +424,7 @@ const ProfileScreen = ({ navigation }) => {
                 }
               />
 
+              <Text style={styles.inputLabel}>Account Number *</Text>
               <TextInput
                 style={styles.modalInput}
                 placeholder="Account Number"
@@ -373,9 +433,9 @@ const ProfileScreen = ({ navigation }) => {
                   setBankDetails({ ...bankDetails, accountNumber: text })
                 }
                 keyboardType="numeric"
-                secureTextEntry={true}
               />
 
+              <Text style={styles.inputLabel}>Confirm Account Number *</Text>
               <TextInput
                 style={styles.modalInput}
                 placeholder="Confirm Account Number"
@@ -384,9 +444,9 @@ const ProfileScreen = ({ navigation }) => {
                   setBankDetails({ ...bankDetails, confirmAccountNumber: text })
                 }
                 keyboardType="numeric"
-                secureTextEntry={true}
               />
 
+              <Text style={styles.inputLabel}>IFSC Code *</Text>
               <TextInput
                 style={styles.modalInput}
                 placeholder="IFSC Code"
@@ -400,6 +460,7 @@ const ProfileScreen = ({ navigation }) => {
                 autoCapitalize="characters"
               />
 
+              <Text style={styles.inputLabel}>Bank Name *</Text>
               <TextInput
                 style={styles.modalInput}
                 placeholder="Bank Name"
@@ -409,9 +470,10 @@ const ProfileScreen = ({ navigation }) => {
                 }
               />
 
+              <Text style={styles.inputLabel}>UPI ID (Optional)</Text>
               <TextInput
                 style={styles.modalInput}
-                placeholder="UPI ID (Optional)"
+                placeholder="UPI ID"
                 value={bankDetails.upiId}
                 onChangeText={text =>
                   setBankDetails({ ...bankDetails, upiId: text })
@@ -450,9 +512,6 @@ const ProfileScreen = ({ navigation }) => {
     [bankModalVisible, bankDetails, savedBankDetails, handleBankSave],
   );
 
-  console.log("check check", profile);
-  
-
   const LanguageModal = useCallback(
     ({ visible, onClose, currentLanguage, onSelect, title, isTraining }) => (
       <Modal
@@ -487,7 +546,7 @@ const ProfileScreen = ({ navigation }) => {
                   style={[
                     styles.languageOptionText,
                     currentLanguage === lang &&
-                      styles.selectedLanguageOptionText,
+                    styles.selectedLanguageOptionText,
                   ]}
                 >
                   {lang}
@@ -507,6 +566,11 @@ const ProfileScreen = ({ navigation }) => {
   // Render bank details if saved
   const renderBankDetails = useCallback(() => {
     if (savedBankDetails) {
+      // Mask account number for display
+      const maskedAccountNumber = savedBankDetails.accountNumber
+        ? `••••${savedBankDetails.accountNumber.slice(-4)}`
+        : '';
+
       return (
         <View style={styles.bankDetailsCard}>
           <View style={styles.bankDetailRow}>
@@ -518,7 +582,7 @@ const ProfileScreen = ({ navigation }) => {
           <View style={styles.bankDetailRow}>
             <Text style={styles.bankDetailLabel}>Account No:</Text>
             <Text style={styles.bankDetailValue}>
-              ••••{savedBankDetails.accountNumber.slice(-4)}
+              {maskedAccountNumber}
             </Text>
           </View>
           <View style={styles.bankDetailRow}>
@@ -541,10 +605,33 @@ const ProfileScreen = ({ navigation }) => {
               </Text>
             </View>
           ) : null}
+
+          {/* Verification Status */}
+          {profile?.bankDetails?.verificationStatus && (
+            <View style={styles.verificationStatusRow}>
+              <Text style={styles.bankDetailLabel}>Status:</Text>
+              <View style={[
+                styles.statusBadge,
+                profile.bankDetails.verificationStatus === 'verified' ? styles.statusVerified :
+                  profile.bankDetails.verificationStatus === 'rejected' ? styles.statusRejected :
+                    styles.statusPending
+              ]}>
+                <Text style={styles.statusText}>
+                  {profile.bankDetails.verificationStatus === 'verified' ? '✓ Verified' :
+                    profile.bankDetails.verificationStatus === 'rejected' ? '✗ Rejected' :
+                      '⏳ Pending'}
+                </Text>
+              </View>
+            </View>
+          )}
+
           <TouchableOpacity
             style={styles.editBankButton}
             onPress={() => {
-              setBankDetails(savedBankDetails);
+              setBankDetails({
+                ...savedBankDetails,
+                confirmAccountNumber: savedBankDetails.accountNumber,
+              });
               setBankModalVisible(true);
             }}
           >
@@ -572,7 +659,17 @@ const ProfileScreen = ({ navigation }) => {
         <Text style={styles.addDetailsText}>+ Add Details</Text>
       </TouchableOpacity>
     );
-  }, [savedBankDetails]);
+  }, [savedBankDetails, profile, setBankDetails, setBankModalVisible]);
+
+  // Loading state
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#F4C20D" />
+        <Text style={styles.loadingText}>Loading profile...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -595,7 +692,9 @@ const ProfileScreen = ({ navigation }) => {
           <View style={styles.profileHeader}>
             <View style={styles.avatarContainer}>
               <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{profile?.name.slice(0,1)}</Text>
+                <Text style={styles.avatarText}>
+                  {profile?.name ? profile.name.charAt(0).toUpperCase() : 'U'}
+                </Text>
               </View>
               {isOnline && <View style={styles.onlineDot} />}
             </View>
@@ -603,12 +702,14 @@ const ProfileScreen = ({ navigation }) => {
             <View style={styles.profileInfo}>
               <View style={styles.nameRow}>
                 <Text style={styles.name}>{profile?.name || 'Driver'}</Text>
-                <Text style={styles.starRating}> • ★ {profile?.rating != null ? Number(profile.rating).toFixed(1) : '4.8'}</Text>
+                <View style={styles.ratingBadge}>
+                  <Text style={styles.starRating}>★ 4.8</Text>
+                </View>
               </View>
               <View style={styles.vehicleRow}>
-                <MaterialIcons name="two-wheeler" size={16} color="#666" />
+                <MaterialIcons name="two-wheeler" size={16} color="#64748B" />
                 <Text style={styles.vehicleText}>
-                  {profile?.vehicleType} • {profile?.vehicleNumber}
+                  {profile?.vehicleType || 'Vehicle'} • {profile?.vehicleNumber || '--'}
                 </Text>
               </View>
             </View>
@@ -616,10 +717,10 @@ const ProfileScreen = ({ navigation }) => {
             <TouchableOpacity
               style={styles.editButton}
               onPress={() =>
-                Alert.alert('Edit Profile', 'Edit profile functionality')
+                Alert.alert('Profile Info', 'View full profile details')
               }
             >
-              <Ionicons name="create-outline" size={20} color="#4169E1" />
+              <Ionicons name="chevron-forward" size={24} color="#CBD5E1" />
             </TouchableOpacity>
           </View>
         </View>
@@ -633,7 +734,7 @@ const ProfileScreen = ({ navigation }) => {
             </TouchableOpacity>
           </View>
           <View style={styles.addressBox}>
-            <Text style={styles.addressText}>{savedAddress || '--'}</Text>
+            <Text style={styles.addressText}>{savedAddress || 'No address added'}</Text>
           </View>
         </View>
 
@@ -669,13 +770,6 @@ const ProfileScreen = ({ navigation }) => {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>My Vehicles</Text>
-            <TouchableOpacity
-              onPress={() =>
-                Alert.alert('Add Vehicle', 'Add new vehicle functionality')
-              }
-            >
-              <Ionicons name="add-circle-outline" size={22} color="#4169E1" />
-            </TouchableOpacity>
           </View>
 
           {/* Vehicle Card */}
@@ -685,24 +779,96 @@ const ProfileScreen = ({ navigation }) => {
                 <MaterialIcons name="two-wheeler" size={24} color="#F4C20D" />
               </View>
               <View style={styles.vehicleDetails}>
-                <Text style={styles.vehicleName}>Scooter</Text>
-                <Text style={styles.vehicleNumber}>MP-13-FP-1405</Text>
+                <Text style={styles.vehicleName}>
+                  {profile?.vehicleDetails?.type || 'Vehicle'}
+                </Text>
+                <Text style={styles.vehicleNumber}>
+                  {profile?.vehicleDetails?.number || '--'}
+                </Text>
+                {profile?.vehicleDetails?.model && (
+                  <Text style={styles.vehicleModel}>
+                    {profile.vehicleDetails.model} • {profile.vehicleDetails.year} • {profile.vehicleDetails.color}
+                  </Text>
+                )}
               </View>
-            </View>
-            <View style={styles.vehicleCardRight}>
-              <View style={styles.activeBadge}>
-                <Text style={styles.activeText}>Active</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() =>
-                  Alert.alert('Vehicle Details', 'View vehicle details')
-                }
-              >
-                <Ionicons name="chevron-forward" size={20} color="#666" />
-              </TouchableOpacity>
             </View>
           </View>
         </View>
+
+        {/* Document Status Section */}
+        {profile?.documents && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Document Status</Text>
+            </View>
+
+            {Object.entries(profile.documents).map(([docType, docData]) => {
+              if (docType === 'aadharCard' && docData.front) {
+                return (
+                  <View key={docType} style={styles.documentRow}>
+                    <Text style={styles.documentLabel}>Aadhar Card</Text>
+                    <View style={[
+                      styles.statusBadge,
+                      docData.front.status === 'verified' ? styles.statusVerified :
+                        docData.front.status === 'rejected' ? styles.statusRejected :
+                          styles.statusPending
+                    ]}>
+                      <Text style={styles.statusText}>
+                        {docData.front.status === 'verified' ? '✓ Verified' :
+                          docData.front.status === 'rejected' ? '✗ Rejected' :
+                            '⏳ Pending'}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              } else if (docType !== 'aadharCard') {
+                return (
+                  <View key={docType} style={styles.documentRow}>
+                    <Text style={styles.documentLabel}>
+                      {docType.replace(/([A-Z])/g, ' $1').trim()}
+                    </Text>
+                    <View style={[
+                      styles.statusBadge,
+                      docData.status === 'verified' ? styles.statusVerified :
+                        docData.status === 'rejected' ? styles.statusRejected :
+                          styles.statusPending
+                    ]}>
+                      <Text style={styles.statusText}>
+                        {docData.status === 'verified' ? '✓ Verified' :
+                          docData.status === 'rejected' ? '✗ Rejected' :
+                            '⏳ Pending'}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              }
+              return null;
+            })}
+
+            <View style={styles.applicationStatus}>
+              <Text style={styles.applicationStatusLabel}>Application Status:</Text>
+              <View style={[
+                styles.statusBadge,
+                profile.verificationStatus === 'verified' ? styles.statusVerified :
+                  profile.verificationStatus === 'rejected' ? styles.statusRejected :
+                    styles.statusPending
+              ]}>
+                <Text style={styles.statusText}>
+                  {profile.verificationStatus === 'verified' ? '✓ Verified' :
+                    profile.verificationStatus === 'rejected' ? '✗ Rejected' :
+                      profile.verificationStatus === 'submitted' ? '⏳ Under Review' :
+                        'Pending'}
+                </Text>
+              </View>
+            </View>
+
+            {profile.submittedAt && (
+              <Text style={styles.submittedDate}>
+                Submitted: {new Date(profile.submittedAt).toLocaleDateString()}
+              </Text>
+            )}
+          </View>
+        )}
 
         {/* Language Preferences */}
         <View style={styles.languageSection}>
@@ -867,9 +1033,16 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: '#000',
+    marginRight: 8,
+  },
+  ratingBadge: {
+    backgroundColor: '#FFF9E6',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
   },
   starRating: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#FFD700',
     fontWeight: '600',
   },
@@ -880,6 +1053,7 @@ const styles = StyleSheet.create({
   vehicleText: {
     fontSize: 14,
     color: '#666',
+    marginLeft: 4,
   },
   editButton: {
     padding: 8,
@@ -973,9 +1147,6 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   vehicleCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     backgroundColor: '#F8F9FA',
     padding: 12,
     borderRadius: 8,
@@ -994,7 +1165,7 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   vehicleDetails: {
-    justifyContent: 'center',
+    flex: 1,
   },
   vehicleName: {
     fontSize: 16,
@@ -1003,24 +1174,13 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   vehicleNumber: {
-    fontSize: 12,
+    fontSize: 14,
     color: '#666',
+    marginBottom: 2,
   },
-  vehicleCardRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  activeBadge: {
-    backgroundColor: '#E8F5E9',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    marginRight: 8,
-  },
-  activeText: {
+  vehicleModel: {
     fontSize: 12,
-    color: '#4CAF50',
-    fontWeight: '500',
+    color: '#999',
   },
   languageSection: {
     backgroundColor: '#fff',
@@ -1088,20 +1248,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: '#FEF2F2',
     marginHorizontal: 16,
-    marginTop: 10,
-    marginBottom: 20,
-    padding: 16,
-    borderRadius: 12,
+    marginTop: 20,
+    marginBottom: 40,
+    padding: 18,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#FF5252',
+    borderColor: '#FEE2E2',
+    ...theme.shadow.card,
   },
   logoutText: {
-    color: '#FF5252',
+    color: '#EF4444',
     fontSize: 16,
-    fontWeight: '600',
-    marginLeft: 8,
+    fontWeight: '900',
+    marginLeft: 10,
+    letterSpacing: 1,
   },
   // Modal Styles
   modalOverlay: {
@@ -1131,6 +1293,12 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     color: '#000',
+  },
+  inputLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 4,
+    marginTop: 8,
   },
   modalInput: {
     borderWidth: 1,
@@ -1170,7 +1338,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   fullWidthButton: {
-    marginHorizontal: 0,
+    backgroundColor: '#F4C20D',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 10,
   },
   otpSentText: {
     textAlign: 'center',
@@ -1228,6 +1400,80 @@ const styles = StyleSheet.create({
   selectedLanguageOptionText: {
     color: '#4169E1',
     fontWeight: '500',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#666',
+  },
+  // Document status styles
+  documentRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  documentLabel: {
+    fontSize: 14,
+    color: '#333',
+    textTransform: 'capitalize',
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    minWidth: 70,
+    alignItems: 'center',
+  },
+  statusVerified: {
+    backgroundColor: '#E8F5E9',
+  },
+  statusPending: {
+    backgroundColor: '#FFF9E6',
+  },
+  statusRejected: {
+    backgroundColor: '#FFEBEE',
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  applicationStatus: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+  },
+  applicationStatusLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+  },
+  verificationStatusRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+  },
+  submittedDate: {
+    fontSize: 12,
+    color: '#999',
+    textAlign: 'right',
+    marginTop: 8,
   },
 });
 

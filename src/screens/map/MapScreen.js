@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   StyleSheet,
   View,
@@ -6,7 +12,6 @@ import {
   TouchableOpacity,
   Dimensions,
   Platform,
-  PermissionsAndroid,
   Alert,
   AppState,
   ActivityIndicator,
@@ -15,9 +20,14 @@ import {
   StatusBar,
   ScrollView,
   Linking,
+  Easing,
+  Animated,
+  Image,
 } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE, Polyline } from 'react-native-maps';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { moderateScale } from 'react-native-size-matters';
+import MapViewDirections from 'react-native-maps-directions';
 import Geolocation from '@react-native-community/geolocation';
 import {
   addNotification,
@@ -26,8 +36,20 @@ import {
   setActiveOrder,
 } from '../../services/localDriverData';
 import { driverApi } from '../../services/driverApi';
+import SocketService from '../../services/socketService';
 import { theme } from '../../theme';
 import { GOOGLE_MAPS_APIKEY } from '../../config/api';
+import {
+  updateService,
+  updateServiceBody,
+} from '../../services/foregroundService';
+import { useDispatch, useSelector } from 'react-redux';
+import { setLocationPermission } from '../../store/slices/permissionSlice';
+import { selectProfile } from '../../store/slices/profileSlice';
+import { getLocationPermission } from '../../services/permissionService';
+
+import imgPath from '../../constant/imgPath';
+
 const { width, height } = Dimensions.get('window');
 
 const STAGES = {
@@ -77,56 +99,67 @@ class ErrorBoundary extends React.Component {
 // Manual distance calculation function (Haversine formula)
 const calculateHaversineDistance = (start, end) => {
   if (!start || !end) return 0;
-  
+
   const R = 6371e3; // Earth's radius in meters
   const φ1 = (start.latitude * Math.PI) / 180;
   const φ2 = (end.latitude * Math.PI) / 180;
   const Δφ = ((end.latitude - start.latitude) * Math.PI) / 180;
   const Δλ = ((end.longitude - start.longitude) * Math.PI) / 180;
 
-  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-  
+  const a =
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  
+
   return R * c; // Distance in meters
 };
 
 const calculateBearing = (start, end) => {
   if (!start || !end) return 0;
-  
-  const lat1 = start.latitude * Math.PI / 180;
-  const lat2 = end.latitude * Math.PI / 180;
-  const lng1 = start.longitude * Math.PI / 180;
-  const lng2 = end.longitude * Math.PI / 180;
-  
+
+  const lat1 = (start.latitude * Math.PI) / 180;
+  const lat2 = (end.latitude * Math.PI) / 180;
+  const lng1 = (start.longitude * Math.PI) / 180;
+  const lng2 = (end.longitude * Math.PI) / 180;
+
   const y = Math.sin(lng2 - lng1) * Math.cos(lat2);
-  const x = Math.cos(lat1) * Math.sin(lat2) -
-            Math.sin(lat1) * Math.cos(lat2) * Math.cos(lng2 - lng1);
-  
-  let bearing = Math.atan2(y, x) * 180 / Math.PI;
+  const x =
+    Math.cos(lat1) * Math.sin(lat2) -
+    Math.sin(lat1) * Math.cos(lat2) * Math.cos(lng2 - lng1);
+
+  let bearing = (Math.atan2(y, x) * 180) / Math.PI;
   return (bearing + 360) % 360;
 };
 
 // Function to fetch shortest path from Google Maps API
-const fetchShortestPath = async (origin, destination, mode = TRAVEL_MODES.DRIVING) => {
+const fetchShortestPath = async (
+  origin,
+  destination,
+  mode = TRAVEL_MODES.DRIVING,
+) => {
   try {
     const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin.latitude},${origin.longitude}&destination=${destination.latitude},${destination.longitude}&mode=${mode}&alternatives=true&key=${GOOGLE_MAPS_APIKEY}`;
-    
+
     const response = await fetch(url);
     const data = await response.json();
-    
+
     if (data.status === 'OK' && data.routes && data.routes.length > 0) {
       // Sort routes by distance to find the shortest
       const routesWithDistance = data.routes.map(route => {
-        const distance = route.legs.reduce((sum, leg) => sum + leg.distance.value, 0);
-        const duration = route.legs.reduce((sum, leg) => sum + leg.duration.value, 0);
+        const distance = route.legs.reduce(
+          (sum, leg) => sum + leg.distance.value,
+          0,
+        );
+        const duration = route.legs.reduce(
+          (sum, leg) => sum + leg.duration.value,
+          0,
+        );
         const polyline = route.overview_polyline.points;
-        
+
         // Decode polyline to coordinates
         const coordinates = decodePolyline(polyline);
-        
+
         return {
           ...route,
           distance,
@@ -135,10 +168,10 @@ const fetchShortestPath = async (origin, destination, mode = TRAVEL_MODES.DRIVIN
           summary: route.summary,
         };
       });
-      
+
       // Sort by distance (shortest first)
       routesWithDistance.sort((a, b) => a.distance - b.distance);
-      
+
       return {
         routes: routesWithDistance,
         shortestRoute: routesWithDistance[0],
@@ -153,20 +186,24 @@ const fetchShortestPath = async (origin, destination, mode = TRAVEL_MODES.DRIVIN
 };
 
 // Polyline decoder function
-const decodePolyline = (encoded) => {
+const decodePolyline = encoded => {
   const points = [];
-  let index = 0, lat = 0, lng = 0;
-  
+  let index = 0,
+    lat = 0,
+    lng = 0;
+
   while (index < encoded.length) {
-    let b, shift = 0, result = 0;
+    let b,
+      shift = 0,
+      result = 0;
     do {
       b = encoded.charCodeAt(index++) - 63;
       result |= (b & 0x1f) << shift;
       shift += 5;
     } while (b >= 0x20);
-    const dlat = ((result & 1) ? ~(result >> 1) : (result >> 1));
+    const dlat = result & 1 ? ~(result >> 1) : result >> 1;
     lat += dlat;
-    
+
     shift = 0;
     result = 0;
     do {
@@ -174,50 +211,134 @@ const decodePolyline = (encoded) => {
       result |= (b & 0x1f) << shift;
       shift += 5;
     } while (b >= 0x20);
-    const dlng = ((result & 1) ? ~(result >> 1) : (result >> 1));
+    const dlng = result & 1 ? ~(result >> 1) : result >> 1;
     lng += dlng;
-    
+
     points.push({
-      latitude: (lat / 1e5),
-      longitude: (lng / 1e5),
+      latitude: lat / 1e5,
+      longitude: lng / 1e5,
     });
   }
   return points;
 };
 
+// Normalize coordinates from [lng, lat] to {latitude, longitude}
+const normalizeCoordinates = coords => {
+  if (!coords) return null;
+  if (Array.isArray(coords)) {
+    return { latitude: coords[1], longitude: coords[0] };
+  }
+  if (coords.latitude && coords.longitude) {
+    return coords;
+  }
+  return null;
+};
+
 const MapScreen = ({ navigation, route }) => {
-  // Memoized values
-  const order = useMemo(
-    () => route?.params?.order || createMockNearbyOrder(),
+  const dispatch = useDispatch();
+  const profile = useSelector(selectProfile);
+  const hasPermission = useSelector(
+    state => state.permission?.locationGranted ?? false,
+  );
+  const vehicleType = profile?.vehicleDetails?.type || 'scooter';
+  // Add this with your other refs
+  const cameraUpdateTimeout = useRef(null);
+  const lastCameraUpdate = useRef(null);
+
+  const driverMarkerImage = useMemo(() => {
+    const vType = vehicleType.toLowerCase();
+    if (vType.includes('bike') || vType.includes('motorcycle')) return require('../../assets/bike.png');
+    if (vType.includes('scooter')) return require('../../assets/scooter.png');
+    if (vType.includes('auto') || vType.includes('rickshaw') || vType.includes('riksha')) return require('../../assets/auto.png');
+    if (vType.includes('truck') && vType.includes('mini')) return require('../../assets/truck.png');
+    if (vType.includes('truck')) return require('../../assets/truck.png');
+    return require('../../assets/topscooter.png');
+  }, [vehicleType]);
+
+  // Parse and normalize the incoming order data
+  const rawOrder = useMemo(
+    () => route?.params?.order || null,
     [route?.params?.order],
   );
 
-  const pickup = useMemo(
-    () =>
-      order?.pickup || {
-        latitude: 22.7261,
-        longitude: 75.8931,
-      },
-    [order],
-  );
+  const { order } = route?.params;
 
-  const drop = useMemo(
-    () =>
-      order?.drop || {
-        latitude: 22.7203,
-        longitude: 75.9059,
-      },
-    [order],
-  );
+  const [initialOrder] = useState(() => route?.params?.order || null);
+
+  // console.log('check order data for id:', order);
+
+  // Transform the pending request format to the format expected by the component
+  const normalizedOrder = useMemo(() => {
+    if (!rawOrder) {
+      return createMockNearbyOrder();
+    }
+
+    // Handle the pending request format from your API
+    if (rawOrder.rideId || rawOrder.rideDetails) {
+      return {
+        id: rawOrder.rideId || `ORD${Date.now()}`,
+        status: 'pending',
+        pickupLocation: {
+          coordinates: normalizeCoordinates(
+            rawOrder.pickupLocation?.coordinates,
+          ),
+          address: rawOrder.pickupLocation?.address || 'Pickup location',
+        },
+        dropLocation: {
+          coordinates: normalizeCoordinates(rawOrder.dropLocation?.coordinates),
+          address: rawOrder.dropLocation?.address || 'Drop location',
+        },
+        customer: {
+          name: rawOrder.customerDetails?.name || 'Customer',
+          phone: rawOrder.customerDetails?.phone,
+          rating: rawOrder.customerDetails?.rating || 0,
+        },
+        rideDetails: rawOrder.rideDetails,
+        amount: rawOrder.rideDetails?.estimatedFare || 0,
+        totalAmount: rawOrder.rideDetails?.estimatedFare || 0,
+        paymentMode: 'cash', // Default to cash, can be updated from API
+        requestedAt: rawOrder.requestedAt,
+        distance: rawOrder.rideDetails?.distance || 0,
+        duration: rawOrder.rideDetails?.duration || 0,
+      };
+    }
+
+    // Handle the existing order format
+    return rawOrder;
+  }, [rawOrder]);
+
+  const order_data = rawOrder;
+
+  // console.log('ram ram ram', order);
+
+  const pickup = useMemo(() => {
+    const coords = order?.pickupLocation?.coordinates;
+    return coords
+      ? normalizeCoordinates(coords)
+      : { latitude: 22.7261, longitude: 75.8931 };
+  }, [order]);
+
+  const drop = useMemo(() => {
+    const coords = order?.dropLocation?.coordinates;
+    return coords
+      ? normalizeCoordinates(coords)
+      : { latitude: 22.7203, longitude: 75.9059 };
+  }, [order]);
 
   const pickupAddress = useMemo(
-    () => order?.pickupAddress || 'Pickup address unavailable',
-    [order?.pickupAddress]
+    () =>
+      order?.pickupLocation?.address ||
+      order?.pickupAddress ||
+      'Pickup address unavailable',
+    [order],
   );
-  
+
   const dropAddress = useMemo(
-    () => order?.dropAddress || 'Drop address unavailable',
-    [order?.dropAddress]
+    () =>
+      order?.dropLocation?.address ||
+      order?.dropAddress ||
+      'Drop address unavailable',
+    [order],
   );
 
   // Refs
@@ -230,16 +351,46 @@ const MapScreen = ({ navigation, route }) => {
   // State
   const [tripStage, setTripStage] = useState(STAGES.GOING_TO_PICKUP);
   const [driverCoords, setDriverCoords] = useState(null);
-  const [distance, setDistance] = useState(null);
-  const [duration, setDuration] = useState(null);
-  const [hasPermission, setHasPermission] = useState(false);
+  const [distance, setDistance] = useState(
+    order?.rideDetails?.distance || null,
+  );
+  const [duration, setDuration] = useState(
+    order?.rideDetails?.duration || null,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [locationError, setLocationError] = useState(null);
   const [usingApproximateRoute, setUsingApproximateRoute] = useState(false);
   const [showDropRoute, setShowDropRoute] = useState(false);
+  const [isAtPickup, setIsAtPickup] = useState(false);
+  const [isAtDrop, setIsAtDrop] = useState(false);
+  const [is3DMode, setIs3DMode] = useState(false);
   const [arrowRotation, setArrowRotation] = useState(0);
   const [nextWaypoint, setNextWaypoint] = useState(null);
-  
+
+  // Ripple animation for location marker
+  const rippleAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(rippleAnim, {
+        toValue: 1,
+        duration: 2000,
+        easing: Easing.out(Easing.ease),
+        useNativeDriver: true,
+      }),
+    ).start();
+  }, [rippleAnim]);
+
+  // const rippleScale = rippleAnim.interpolate({
+  //   inputRange: [0, 1],
+  //   outputRange: [1, 2.5],
+  // });
+
+  // const rippleOpacity = rippleAnim.interpolate({
+  //   inputRange: [0, 1],
+  //   outputRange: [0.6, 0],
+  // });
+
   // Route optimization states
   const [routes, setRoutes] = useState([]);
   const [selectedRoute, setSelectedRoute] = useState(null);
@@ -247,7 +398,7 @@ const MapScreen = ({ navigation, route }) => {
   const [showRouteOptions, setShowRouteOptions] = useState(false);
   const [travelMode, setTravelMode] = useState(TRAVEL_MODES.DRIVING);
   const [isFetchingRoutes, setIsFetchingRoutes] = useState(false);
-  
+
   // Modal states
   const [showCashModal, setShowCashModal] = useState(false);
   const [cashCollected, setCashCollected] = useState('');
@@ -263,13 +414,20 @@ const MapScreen = ({ navigation, route }) => {
   // Pickup OTP states
   const [showPickupOtpModal, setShowPickupOtpModal] = useState(false);
   const [pickupOtp, setPickupOtp] = useState('');
+  const [isMapReady, setIsMapReady] = useState(false);
 
   // Memoized destination
   const destination = useMemo(() => {
-    if (tripStage === STAGES.GOING_TO_PICKUP || tripStage === STAGES.ARRIVED_PICKUP) {
+    if (
+      tripStage === STAGES.GOING_TO_PICKUP ||
+      tripStage === STAGES.ARRIVED_PICKUP
+    ) {
       return pickup;
     }
-    if (tripStage === STAGES.GOING_TO_DROP || tripStage === STAGES.ARRIVED_DROP) {
+    if (
+      tripStage === STAGES.GOING_TO_DROP ||
+      tripStage === STAGES.ARRIVED_DROP
+    ) {
       return drop;
     }
     return null;
@@ -279,17 +437,53 @@ const MapScreen = ({ navigation, route }) => {
   useEffect(() => {
     try {
       const status = String(order?.status || '').toLowerCase();
-      if (status === 'picked_up' || status === 'pickedup') {
-        setTripStage(STAGES.GOING_TO_DROP);
+      if (
+        status === 'picked_up' ||
+        status === 'pickedup' ||
+        status === 'accepted'
+      ) {
+        setTripStage(STAGES.GOING_TO_PICKUP);
         setShowDropRoute(true);
       } else {
-        setTripStage(STAGES.GOING_TO_PICKUP);
+        setTripStage(STAGES.GOING_TO_DROP);
         setShowDropRoute(false);
       }
     } catch (error) {
       console.error('Error setting initial stage:', error);
     }
   }, [order?.status]);
+
+  // Initialize socket tracking for the active ride
+  useEffect(() => {
+    if (order && (order.id || order.rideId)) {
+      const rideId = order.rideId || order.id;
+      console.log('🚗 MapScreen: Setting up socket tracking for ride:', rideId);
+      SocketService.setActiveRide(rideId);
+    }
+  }, [order?.id, order?.rideId]);
+
+  // Track pickup/drop proximity for action availability
+  useEffect(() => {
+    if (!driverCoords || !pickup || !drop) return;
+
+    const pickupDistance = calculateHaversineDistance(driverCoords, pickup);
+    const dropDistance = calculateHaversineDistance(driverCoords, drop);
+
+    const reachedPickup = pickupDistance <= 60;
+    const reachedDrop = dropDistance <= 50;
+
+    setIsAtPickup(reachedPickup);
+    setIsAtDrop(reachedDrop);
+
+    if (reachedPickup && tripStage === STAGES.GOING_TO_PICKUP) {
+      setTripStage(STAGES.ARRIVED_PICKUP);
+      setShowDropRoute(true);
+    }
+
+    if (reachedDrop && tripStage === STAGES.GOING_TO_DROP) {
+      setTripStage(STAGES.ARRIVED_DROP);
+    }
+  }, [driverCoords, pickup, drop, tripStage]);
 
   // Fetch shortest path when destination changes
   useEffect(() => {
@@ -300,22 +494,26 @@ const MapScreen = ({ navigation, route }) => {
 
   const fetchAndDisplayShortestPath = async () => {
     if (!driverCoords || !destination) return;
-    
+
     setIsFetchingRoutes(true);
     try {
-      const result = await fetchShortestPath(driverCoords, destination, travelMode);
-      
+      const result = await fetchShortestPath(
+        driverCoords,
+        destination,
+        travelMode,
+      );
+
       if (result) {
         setRoutes(result.routes);
         setSelectedRoute(result.shortestRoute);
         setAlternativeRoutes(result.alternativeRoutes);
-        
+
         // Update distance and duration with shortest route
         if (result.shortestRoute) {
           setDistance(result.shortestRoute.distance / 1000); // Convert to km
           setDuration(Math.round(result.shortestRoute.duration / 60)); // Convert to minutes
           setUsingApproximateRoute(false);
-          
+
           // Fit map to show the selected route
           if (mapRef.current && result.shortestRoute.coordinates.length > 0) {
             mapRef.current.fitToCoordinates(result.shortestRoute.coordinates, {
@@ -345,11 +543,15 @@ const MapScreen = ({ navigation, route }) => {
     if (!driverCoords || !destination) return;
 
     try {
-      if (selectedRoute && selectedRoute.coordinates && selectedRoute.coordinates.length > 1) {
+      if (
+        selectedRoute &&
+        selectedRoute.coordinates &&
+        selectedRoute.coordinates.length > 1
+      ) {
         // Find the closest point on route to current location
         let closestIndex = 0;
         let closestDistance = Infinity;
-        
+
         selectedRoute.coordinates.forEach((point, index) => {
           const dist = calculateHaversineDistance(driverCoords, point);
           if (dist < closestDistance) {
@@ -357,11 +559,14 @@ const MapScreen = ({ navigation, route }) => {
             closestIndex = index;
           }
         });
-        
+
         // Get next point (if available)
-        const nextIndex = Math.min(closestIndex + 1, selectedRoute.coordinates.length - 1);
+        const nextIndex = Math.min(
+          closestIndex + 1,
+          selectedRoute.coordinates.length - 1,
+        );
         const nextPoint = selectedRoute.coordinates[nextIndex] || destination;
-        
+
         const bearing = calculateBearing(driverCoords, nextPoint);
         setArrowRotation(bearing);
         setNextWaypoint(nextPoint);
@@ -380,9 +585,9 @@ const MapScreen = ({ navigation, route }) => {
   useEffect(() => {
     if (driverCoords && destination) {
       updateArrowRotation();
-      
+
       directionInterval.current = setInterval(updateArrowRotation, 1000);
-      
+
       return () => {
         if (directionInterval.current) {
           clearInterval(directionInterval.current);
@@ -391,41 +596,72 @@ const MapScreen = ({ navigation, route }) => {
     }
   }, [driverCoords, destination, updateArrowRotation]);
 
-  // Optimized 3D camera view
-  const updateCamera3D = useCallback((coords, heading = 0, animated = true) => {
-    if (!mapRef.current || !coords) return;
+  // update camera view (2D/3D based on mode)
+  const updateCamera = useCallback(
+    (coords, heading = 0, animated = true) => {
+      if (!mapRef.current || !coords) return;
 
-    try {
-      const tilt = tripStage === STAGES.GOING_TO_DROP || tripStage === STAGES.ARRIVED_DROP ? 65 : 50;
-      
-      const camera = {
-        center: coords,
-        pitch: tilt,
-        heading: heading || arrowRotation || 0,
-        altitude: 600,
-        zoom: 18,
-      };
-
-      if (animated) {
-        mapRef.current.animateCamera(camera, { duration: 500 });
-      } else {
-        mapRef.current.setCamera(camera);
+      // Clear previous timeout
+      if (cameraUpdateTimeout.current) {
+        clearTimeout(cameraUpdateTimeout.current);
       }
-    } catch (error) {
-      console.error('Error updating camera:', error);
-    }
-  }, [tripStage, arrowRotation]);
 
-  // Follow driver with optimized 3D view
+      // Debounce camera updates to prevent rapid successive calls
+      cameraUpdateTimeout.current = setTimeout(() => {
+        try {
+          // Check if coordinates changed significantly before updating
+          if (lastCameraUpdate.current) {
+            const distance = calculateHaversineDistance(
+              lastCameraUpdate.current,
+              coords,
+            );
+            // Only update if moved more than 10 meters
+            if (distance < 10 && !animated) {
+              return;
+            }
+          }
+
+          const camera = {
+            center: coords,
+            pitch: is3DMode ? 60 : 0,
+            heading: heading || 0,
+            altitude: is3DMode ? 1200 : 600,
+            zoom: is3DMode ? 17 : 18,
+          };
+
+          if (animated) {
+            mapRef.current.animateCamera(camera, { duration: 500 });
+          } else {
+            mapRef.current.setCamera(camera);
+          }
+
+          lastCameraUpdate.current = coords;
+        } catch (error) {
+          console.error('Error updating camera:', error);
+        }
+      }, 100); // 100ms debounce
+    },
+    [is3DMode],
+  );
+
+  // Update the useEffect that follows the driver
   useEffect(() => {
-    if (driverCoords && (
-      tripStage === STAGES.GOING_TO_PICKUP || 
-      tripStage === STAGES.GOING_TO_DROP ||
-      tripStage === STAGES.ARRIVED_DROP
-    )) {
-      updateCamera3D(driverCoords, arrowRotation);
+    if (
+      isMapReady &&
+      driverCoords &&
+      (tripStage === STAGES.GOING_TO_PICKUP ||
+        tripStage === STAGES.GOING_TO_DROP ||
+        tripStage === STAGES.ARRIVED_DROP) &&
+      // Only update if driver has moved significantly
+      lastCameraUpdate.current &&
+      calculateHaversineDistance(lastCameraUpdate.current, driverCoords) > 15
+    ) {
+      updateCamera(driverCoords, arrowRotation);
+    } else if (driverCoords && !lastCameraUpdate.current) {
+      // Initial update
+      updateCamera(driverCoords, arrowRotation);
     }
-  }, [driverCoords, tripStage, arrowRotation, updateCamera3D]);
+  }, [driverCoords, tripStage, arrowRotation, updateCamera]);
 
   const stopLocationTracking = useCallback(() => {
     try {
@@ -450,13 +686,16 @@ const MapScreen = ({ navigation, route }) => {
               latitude: position.coords.latitude,
               longitude: position.coords.longitude,
             };
+            console.log("ckeck ram ram", coords);
+            
             setDriverCoords(coords);
             lastKnownCoords.current = coords;
             setIsLoading(false);
-            
+
+            // Only update camera after initial location is set
             setTimeout(() => {
               if (mapRef.current) {
-                updateCamera3D(coords, 0, false);
+                updateCamera(coords, 0, false);
               }
             }, 500);
           } catch (error) {
@@ -486,9 +725,11 @@ const MapScreen = ({ navigation, route }) => {
               latitude: position.coords.latitude,
               longitude: position.coords.longitude,
             };
-            
+
             setDriverCoords(newCoords);
             lastKnownCoords.current = newCoords;
+
+            // Don't update camera here, let the useEffect handle it with debouncing
           } catch (error) {
             console.error('Error processing watch position:', error);
           }
@@ -496,9 +737,9 @@ const MapScreen = ({ navigation, route }) => {
         error => console.log('Watch error:', error),
         {
           enableHighAccuracy: true,
-          distanceFilter: 10,
-          interval: 5000,
-          fastestInterval: 3000,
+          distanceFilter: 10, // Only update when moved 10 meters
+          interval: 3000, // Reduce frequency to 3 seconds
+          fastestInterval: 2000, // Fastest interval 2 seconds
         },
       );
     } catch (error) {
@@ -506,54 +747,43 @@ const MapScreen = ({ navigation, route }) => {
       setIsLoading(false);
       setLocationError('Could not start location tracking');
     }
-  }, [pickup.latitude, pickup.longitude, updateCamera3D]);
-
-  const requestLocationPermission = useCallback(async () => {
-    try {
-      if (Platform.OS === 'ios') {
-        const result = await Geolocation.requestAuthorization('whenInUse');
-        const granted = result === 'granted';
-        setHasPermission(granted);
-        if (granted) {
-          startLocationTracking();
-        } else {
-          setIsLoading(false);
-          setLocationError('Location permission denied');
-        }
-        return;
-      }
-
-      const granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        {
-          title: 'Location Permission',
-          message: 'This app needs location access for live order navigation with 3D maps.',
-          buttonNeutral: 'Ask Me Later',
-          buttonNegative: 'Cancel',
-          buttonPositive: 'OK',
-        },
-      );
-
-      const isGranted = granted === PermissionsAndroid.RESULTS.GRANTED;
-      setHasPermission(isGranted);
-      if (isGranted) {
-        startLocationTracking();
-      } else {
-        setIsLoading(false);
-        setLocationError('Location permission denied');
-      }
-    } catch (error) {
-      console.error('Permission error:', error);
-      setIsLoading(false);
-      setLocationError('Could not access location services');
-    }
-  }, [startLocationTracking]);
+  }, [pickup.latitude, pickup.longitude, updateCamera]);
 
   useEffect(() => {
-    requestLocationPermission();
+    const resolvePermission = async () => {
+      if (!hasPermission) {
+        const granted = await getLocationPermission();
+        dispatch(setLocationPermission(granted));
+      }
+    };
 
+    resolvePermission();
+  }, [hasPermission, dispatch]);
+
+  useEffect(() => {
+    if (hasPermission) {
+      startLocationTracking();
+      
+      // Update foreground service to 'on_trip' mode when trip starts
+      try {
+        updateService('on_trip', {
+          orderId: order?.id || order?.rideId,
+          pickup: pickupAddress,
+          drop: dropAddress,
+        });
+        console.log('🚗 Foreground service updated to on_trip mode');
+      } catch (error) {
+        console.error('Error updating service to on_trip:', error);
+      }
+    }
+  }, [hasPermission]);
+
+  useEffect(() => {
     const subscription = AppState.addEventListener('change', nextAppState => {
-      if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
+      if (
+        appState.current.match(/inactive|background/) &&
+        nextAppState === 'active'
+      ) {
         if (hasPermission) {
           startLocationTracking();
         }
@@ -564,6 +794,10 @@ const MapScreen = ({ navigation, route }) => {
     return () => {
       subscription.remove();
       stopLocationTracking();
+      // Clean up camera timeout
+      if (cameraUpdateTimeout.current) {
+        clearTimeout(cameraUpdateTimeout.current);
+      }
     };
   }, [hasPermission, startLocationTracking, stopLocationTracking]);
 
@@ -572,8 +806,11 @@ const MapScreen = ({ navigation, route }) => {
     if (!driverCoords || !destination) return;
 
     try {
-      const distanceInMeters = calculateHaversineDistance(driverCoords, destination);
-      
+      const distanceInMeters = calculateHaversineDistance(
+        driverCoords,
+        destination,
+      );
+
       if (!isNaN(distanceInMeters) && distanceInMeters >= 0) {
         // Only update distance if we don't have a route-based distance
         if (!selectedRoute) {
@@ -583,37 +820,85 @@ const MapScreen = ({ navigation, route }) => {
         // Arrived at pickup
         if (distanceInMeters <= 60 && tripStage === STAGES.GOING_TO_PICKUP) {
           setTripStage(STAGES.ARRIVED_PICKUP);
-          
+
           if (mapRef.current) {
-            updateCamera3D(pickup, 0);
+            updateCamera(pickup, 0);
           }
-          
-          Alert.alert('📍 Arrived', 'You have reached pickup location. Confirm pickup now.');
+
+          Alert.alert(
+            '📍 Arrived',
+            'You have reached pickup location. Confirm pickup now.',
+          );
         }
-        
+
         // Arrived at drop
         if (distanceInMeters <= 50 && tripStage === STAGES.GOING_TO_DROP) {
           setTripStage(STAGES.ARRIVED_DROP);
-          
+
           if (mapRef.current) {
-            updateCamera3D(drop, 0);
+            updateCamera(drop, 0);
           }
-          
-          Alert.alert('🎯 Arrived', 'You have reached the destination. Complete delivery when ready.');
+
+          Alert.alert(
+            '🎯 Arrived',
+            'You have reached the destination. Complete delivery when ready.',
+          );
         }
       }
     } catch (error) {
       console.error('Error calculating distance:', error);
       setDistance(null);
     }
-  }, [destination, driverCoords, tripStage, pickup, drop, updateCamera3D, selectedRoute]);
+  }, [
+    destination,
+    driverCoords,
+    tripStage,
+    pickup,
+    drop,
+    updateCamera,
+    selectedRoute,
+  ]);
 
-  const handleSelectRoute = (route) => {
+  // Emit location to socket every 3 seconds for real-time tracking
+  useEffect(() => {
+    if (!driverCoords || !tripStage || tripStage === STAGES.COMPLETED) return;
+
+    console.log('⏲️ Starting 3-second location update interval for socket');
+
+    const locationUpdateInterval = setInterval(() => {
+      try {
+        SocketService.emitLocation(
+          driverCoords.latitude,
+          driverCoords.longitude,
+          arrowRotation || 0,
+          0 // Speed - would need to calculate from position deltas if needed
+        );
+        console.log(
+          '✅ Location update check: 3 sec interval',
+          {
+            lat: driverCoords.latitude.toFixed(4),
+            lng: driverCoords.longitude.toFixed(4),
+            stage: tripStage,
+            timestamp: new Date().toLocaleTimeString(),
+          }
+        );
+      } catch (error) {
+        console.error('Error emitting location to socket:', error);
+      }
+    }, 3000); // Update every 3 seconds
+
+    return () => {
+      clearInterval(locationUpdateInterval);
+      console.log('⏲️ Cleared location update interval');
+    };
+  }, [driverCoords, arrowRotation, tripStage]);
+
+  const handleSelectRoute = route => {
     setSelectedRoute(route);
     setDistance(route.distance / 1000);
     setDuration(Math.round(route.duration / 60));
     setShowRouteOptions(false);
-    
+
     if (mapRef.current && route.coordinates.length > 0) {
       mapRef.current.fitToCoordinates(route.coordinates, {
         edgePadding: {
@@ -628,9 +913,12 @@ const MapScreen = ({ navigation, route }) => {
   };
 
   const handleCallCustomer = () => {
-    const phone = order?.customerPhone || order?.customer?.phone;
+    const phone = order?.customer?.phone || order?.customerPhone;
     if (!phone) {
-      Alert.alert('No phone number', 'Customer phone number is not available for this order.');
+      Alert.alert(
+        'No phone number',
+        'Customer phone number is not available for this order.',
+      );
       return;
     }
     const url = `tel:${phone}`;
@@ -639,7 +927,10 @@ const MapScreen = ({ navigation, route }) => {
         if (supported) {
           Linking.openURL(url);
         } else {
-          Alert.alert('Cannot make call', `Unable to call customer. Please dial ${phone} manually.`);
+          Alert.alert(
+            'Cannot make call',
+            `Unable to call customer. Please dial ${phone} manually.`,
+          );
         }
       })
       .catch(() => {
@@ -653,17 +944,23 @@ const MapScreen = ({ navigation, route }) => {
       return;
     }
 
+    const cancelId = order?.rideId || order?.id || initialOrder?.rideId || initialOrder?.id;
+
+    console.log("cancel data check id", cancelId);
+
+
     setIsCancelling(true);
     try {
-      await driverApi.cancelOrder(order.id, cancelReason);
-    } catch {
+      await driverApi.cancelOrder(cancelId, cancelReason);
+    } catch (error) {
+      console.error('Cancel order failed but clearing local state:', error);
       // Proceed even if backend fails — clear local state
     }
 
-    await clearActiveOrder();
+    await setActiveOrder(null);
     await addNotification({
       title: 'Trip Cancelled',
-      body: `Order ${order.id} cancelled: ${cancelReason}`,
+      body: `Order ${cancelId} cancelled: ${cancelReason}`,
       type: 'order',
       data: order,
     });
@@ -672,18 +969,33 @@ const MapScreen = ({ navigation, route }) => {
     setShowCancelModal(false);
     setCancelReason('');
     stopLocationTracking();
+    
+    // Switch foreground notification back to online/waiting mode
+    try {
+      await updateService('online');
+      console.log('🟡 Foreground service restored to online mode after trip cancellation');
+    } catch (error) {
+      console.error('Error updating service after cancellation:', error);
+    }
+    
     navigation.navigate('MyTabs');
   };
 
-  const handlePickupOtpSubmit = () => {
+  const handlePickupOtpSubmit = async () => {
     const expectedCode = order?.pickupCode || order?.otp || order?.pickup_otp;
     // If no OTP is set by backend, allow any 4-digit code
     if (expectedCode && pickupOtp !== String(expectedCode)) {
-      Alert.alert('Invalid Code', 'The pickup verification code is incorrect. Please check with the customer.');
+      Alert.alert(
+        'Invalid Code',
+        'The pickup verification code is incorrect. Please check with the customer.',
+      );
       return;
     }
     if (pickupOtp.length < 4) {
-      Alert.alert('Enter Code', 'Please enter the 4-digit pickup verification code.');
+      Alert.alert(
+        'Enter Code',
+        'Please enter the 4-digit pickup verification code.',
+      );
       return;
     }
     setShowPickupOtpModal(false);
@@ -702,7 +1014,7 @@ const MapScreen = ({ navigation, route }) => {
       setShowDropRoute(true);
 
       const updated = await driverApi.confirmPickup(order.id).catch(() => null);
-      
+
       if (updated) {
         await setActiveOrder(updated);
       } else {
@@ -716,10 +1028,17 @@ const MapScreen = ({ navigation, route }) => {
         data: { ...order, status: 'picked_up' },
       });
 
+      // Update foreground notification to show 'Heading to Drop'
+      await updateServiceBody(
+        `Order #${String(order?.id || '')
+          .slice(-6)
+          .toUpperCase()} — Heading to Drop\n🏁 ${dropAddress}`,
+      );
+
       if (mapRef.current && driverCoords) {
-        updateCamera3D(driverCoords, arrowRotation);
+        updateCamera(driverCoords, arrowRotation);
       }
-      
+
       // Fetch shortest path for drop
       if (driverCoords && drop) {
         fetchAndDisplayShortestPath();
@@ -747,14 +1066,21 @@ const MapScreen = ({ navigation, route }) => {
       setModalError('');
       setIsProcessing(true);
 
-      const amount = paymentMethod === 'cash' ? parseFloat(cashCollected) : (order?.amount || 0);
-      
+      const amount =
+        paymentMethod === 'cash'
+          ? parseFloat(cashCollected)
+          : order?.amount || 0;
+
       let serverCompleted = null;
       try {
-        serverCompleted = await driverApi.completeOrder(order.id, distance || 0, {
-          amount,
-          paymentMethod,
-        });
+        serverCompleted = await driverApi.completeOrder(
+          order.id,
+          distance || 0,
+          {
+            amount,
+            paymentMethod,
+          },
+        );
       } catch (error) {
         console.log('Completion sync failed (offline mode):', error);
       }
@@ -783,15 +1109,20 @@ const MapScreen = ({ navigation, route }) => {
       stopLocationTracking();
       setShowCashModal(false);
 
+      // Switch foreground notification back to online/waiting mode
+      await updateService('online');
+
       Alert.alert(
-        '✅ Delivery Complete', 
-        `Order delivered successfully. ₹${amount} collected.`,
+        'Delivery Complete',
+        `Order delivered successfully. ₹${amount} collected.\nYour earnings: ₹${(
+          amount * 0.8
+        ).toFixed(2)}`,
         [
           {
             text: 'Go Home',
             onPress: () => navigation.navigate('MyTabs'),
           },
-        ]
+        ],
       );
     } catch (error) {
       console.error('Completion error:', error);
@@ -818,87 +1149,84 @@ const MapScreen = ({ navigation, route }) => {
     );
   }
 
-  if (!hasPermission) {
-    return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.errorText}>📍 Location permission denied</Text>
-        <Text style={styles.errorSubtext}>Please enable location access to continue</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={requestLocationPermission}>
-          <Text style={styles.retryButtonText}>Grant Permission</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  if (!driverCoords) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-        <Text style={styles.loadingText}>Waiting for location...</Text>
-      </View>
-    );
-  }
+  const mapCenter = driverCoords || pickup || { latitude: 22.7261, longitude: 75.8931 };
 
   return (
     <ErrorBoundary>
       <View style={styles.container}>
-        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
-        
+        <StatusBar
+          barStyle="dark-content"
+          backgroundColor="transparent"
+          translucent
+        />
+
         <MapView
           ref={mapRef}
           provider={PROVIDER_GOOGLE}
           style={styles.map}
           initialRegion={{
-            latitude: driverCoords.latitude,
-            longitude: driverCoords.longitude,
+            latitude: mapCenter.latitude,
+            longitude: mapCenter.longitude,
             latitudeDelta: 0.01,
             longitudeDelta: 0.01,
           }}
+          onMapReady={() => setIsMapReady(true)}
+          pitchEnabled={is3DMode}
+          rotateEnabled={true}
           showsUserLocation={false}
-          showsMyLocationButton={true}
+          showsMyLocationButton={false}
           showsCompass={true}
-          showsBuildings={true}
-          showsTraffic={true}
-          showsIndoors={true}
-          showsScale={true}
+          showsBuildings={is3DMode}
           loadingEnabled={true}
-          loadingIndicatorColor={theme.colors.primary}
-          loadingBackgroundColor="#f5f5f5"
           moveOnMarkerPress={false}
+          enableHighAccuracy={true}
+          // Add these to prevent unnecessary updates
           toolbarEnabled={false}
+          zoomControlEnabled={false}
+          // Use liteMode for better performance (optional)
+          liteMode={false}
         >
           {/* Direction Arrow Marker with Auto-rotation */}
-          <Marker
-            coordinate={driverCoords}
-            anchor={{ x: 0.5, y: 0.5 }}
-            flat={true}
-            rotation={arrowRotation}
-          >
-            <View style={styles.arrowContainer}>
-              <View style={[styles.arrow, { transform: [{ rotate: `${arrowRotation}deg` }] }]}>
-                <View style={styles.arrowHead} />
-                <View style={styles.arrowLine} />
-                <View style={styles.arrowGlow} />
-              </View>
-              <View style={styles.arrowPulse} />
-            </View>
-          </Marker>
+          {/* Direction Arrow Marker with Proper Rotation */}
+          {driverCoords && (
+            <Marker
+              coordinate={driverCoords}
+              anchor={{ x: 0.5, y: 0.5 }}
+              flat={true}
+              rotation={arrowRotation}
+              tracksViewChanges={true} // Change to true to track view changes for rotation
+            >
+              <Image
+                source={imgPath.ic_bike}
+                style={{
+                  width: 50,
+                  height: 50,
+                  transform: [{ rotate: `${arrowRotation}deg` }]
+                }}
+                resizeMode="contain"
+              />
+            </Marker>
+          )}
 
           {/* Pickup Marker */}
-          <Marker coordinate={pickup} anchor={{ x: 0.5, y: 0.5 }}>
-            <View style={styles.pickupMarker}>
-              <Text style={styles.markerText}>P</Text>
-              <View style={styles.markerPulse} />
-            </View>
-          </Marker>
+          {pickup && (
+            <Marker coordinate={pickup} anchor={{ x: 0.5, y: 1.0 }} tracksViewChanges={false} >
+              <Image
+                source={imgPath.ic_pick}
+                style={{ width: 50, height: 50 }} // ✅ ab kaam karega
+                resizeMode="contain"
+              />
+            </Marker>
+          )}
 
           {/* Drop Marker */}
-          {showDropRoute && (
-            <Marker coordinate={drop} anchor={{ x: 0.5, y: 0.5 }}>
-              <View style={styles.dropMarker}>
-                <Text style={styles.markerText}>D</Text>
-                <View style={styles.markerPulse} />
-              </View>
+          {showDropRoute && drop && (
+            <Marker coordinate={drop} anchor={{ x: 0.5, y: 1.0 }} tracksViewChanges={false} >
+              <Image
+                source={imgPath.ic_drop}
+                style={{ width: 50, height: 50 }} // ✅ ab kaam karega
+                resizeMode="contain"
+              />
             </Marker>
           )}
 
@@ -911,20 +1239,44 @@ const MapScreen = ({ navigation, route }) => {
             </Marker>
           )}
 
+          <MapViewDirections
+            origin={pickup}
+            destination={drop}
+            apikey={GOOGLE_MAPS_APIKEY}
+            strokeWidth={6}
+            strokeColor={theme.colors.primary}
+            optimizeWaypoints={true}
+            lineDashPattern={[0]}
+            lineCap="round"
+            lineJoin="round"
+            onReady={result => {
+              mapRef.current.fitToCoordinates(result.coordinates, {
+                edgePadding: {
+                  top: 50,
+                  bottom: 50,
+                  left: 50,
+                  right: 50,
+                },
+              });
+            }}
+          />
+
           {/* Selected Route Polyline */}
-          {selectedRoute && selectedRoute.coordinates && (
+          {/* {selectedRoute && selectedRoute.coordinates && (
             <Polyline
               coordinates={selectedRoute.coordinates}
               strokeWidth={6}
-              strokeColor={showDropRoute ? theme.colors.path : theme.colors.primary}
+              strokeColor={
+                showDropRoute ? theme.colors.path : theme.colors.primary
+              }
               lineDashPattern={[0]}
               lineCap="round"
               lineJoin="round"
             />
-          )}
+          )} */}
 
           {/* Alternative Routes (dashed lines) */}
-          {alternativeRoutes.map((route, index) => (
+          {/* {alternativeRoutes.map((route, index) => (
             <Polyline
               key={`alt-route-${index}`}
               coordinates={route.coordinates}
@@ -934,30 +1286,32 @@ const MapScreen = ({ navigation, route }) => {
               lineCap="round"
               lineJoin="round"
             />
-          ))}
+          ))} */}
         </MapView>
 
         {/* Route Info and Selection Button */}
-        {selectedRoute && (
+        {/* {selectedRoute && (
           <TouchableOpacity
             style={styles.routeInfoButton}
             onPress={() => setShowRouteOptions(!showRouteOptions)}
           >
             <View style={styles.routeInfoContent}>
               <Text style={styles.routeInfoTitle}>
-                {showDropRoute ? '📍 Shortest Route to Drop' : '📍 Shortest Route to Pickup'}
+                {showDropRoute
+                  ? '📍 Shortest Route to Drop'
+                  : '📍 Shortest Route to Pickup'}
               </Text>
               <Text style={styles.routeInfoDetails}>
-                {selectedRoute.distance / 1000 < 1 
-                  ? `${Math.round(selectedRoute.distance)} m` 
-                  : `${(selectedRoute.distance / 1000).toFixed(1)} km`} • 
-                {Math.round(selectedRoute.duration / 60)} min • 
+                {selectedRoute.distance / 1000 < 1
+                  ? `${Math.round(selectedRoute.distance)} m`
+                  : `${(selectedRoute.distance / 1000).toFixed(1)} km`}{' '}
+                •{Math.round(selectedRoute.duration / 60)} min •
                 {selectedRoute.summary || 'via fastest route'}
               </Text>
             </View>
             <Text style={styles.routeInfoArrow}>▼</Text>
           </TouchableOpacity>
-        )}
+        )} */}
 
         {/* Route Options Modal */}
         <Modal
@@ -969,7 +1323,7 @@ const MapScreen = ({ navigation, route }) => {
           <View style={styles.modalOverlay}>
             <View style={[styles.modalContent, styles.routeModalContent]}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>🛣️ Select Route</Text>
+                <Text style={styles.modalTitle}>Select Route</Text>
                 <TouchableOpacity onPress={() => setShowRouteOptions(false)}>
                   <Text style={styles.closeButton}>✕</Text>
                 </TouchableOpacity>
@@ -987,10 +1341,13 @@ const MapScreen = ({ navigation, route }) => {
                       ]}
                       onPress={() => setTravelMode(mode)}
                     >
-                      <Text style={[
-                        styles.travelModeButtonText,
-                        travelMode === mode && styles.travelModeButtonTextActive,
-                      ]}>
+                      <Text
+                        style={[
+                          styles.travelModeButtonText,
+                          travelMode === mode &&
+                          styles.travelModeButtonTextActive,
+                        ]}
+                      >
                         {mode === 'driving' && '🚗'}
                         {mode === 'walking' && '🚶'}
                         {mode === 'bicycling' && '🚲'}
@@ -1004,8 +1361,13 @@ const MapScreen = ({ navigation, route }) => {
               <ScrollView style={styles.routesList}>
                 {isFetchingRoutes ? (
                   <View style={styles.loadingRoutes}>
-                    <ActivityIndicator size="large" color={theme.colors.primary} />
-                    <Text style={styles.loadingRoutesText}>Finding best routes...</Text>
+                    <ActivityIndicator
+                      size="large"
+                      color={theme.colors.primary}
+                    />
+                    <Text style={styles.loadingRoutesText}>
+                      Finding best routes...
+                    </Text>
                   </View>
                 ) : (
                   routes.map((route, index) => (
@@ -1019,7 +1381,9 @@ const MapScreen = ({ navigation, route }) => {
                     >
                       <View style={styles.routeOptionHeader}>
                         <Text style={styles.routeOptionTitle}>
-                          {index === 0 ? '⭐ Shortest Route' : `🔄 Alternative ${index}`}
+                          {index === 0
+                            ? ' Shortest Route'
+                            : ` Alternative ${index}`}
                         </Text>
                         {selectedRoute === route && (
                           <Text style={styles.routeOptionCheck}>✓</Text>
@@ -1030,10 +1394,10 @@ const MapScreen = ({ navigation, route }) => {
                       </Text>
                       <View style={styles.routeOptionDetails}>
                         <Text style={styles.routeOptionDistance}>
-                          📏 {(route.distance / 1000).toFixed(1)} km
+                          {(route.distance / 1000).toFixed(1)} km
                         </Text>
                         <Text style={styles.routeOptionDuration}>
-                          ⏱️ {Math.round(route.duration / 60)} min
+                          {Math.round(route.duration / 60)} min
                         </Text>
                       </View>
                     </TouchableOpacity>
@@ -1044,105 +1408,195 @@ const MapScreen = ({ navigation, route }) => {
           </View>
         </Modal>
 
-        {/* Error Banners */}
-        {locationError && (
-          <View style={[styles.banner, styles.locationBanner]}>
-            <Text style={styles.bannerText}>⚠️ {locationError}</Text>
-          </View>
-        )}
-
         {usingApproximateRoute && !selectedRoute && (
           <View style={styles.banner}>
             <Text style={styles.bannerText}>
-              ⚠️ Using approximate route. Tap route info to find shortest path.
+              Using approximate route. Tap route info to find shortest path.
             </Text>
           </View>
         )}
 
         {/* Bottom Card */}
-        <View style={styles.bottomCard}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.orderId}>Order #{order.id}</Text>
-            <View style={styles.cardHeaderActions}>
-              {(order?.customerPhone || order?.customer?.phone) && (
-                <TouchableOpacity style={styles.callButton} onPress={handleCallCustomer}>
-                  <Ionicons name="call" size={18} color="#fff" />
-                </TouchableOpacity>
-              )}
-              {(tripStage === STAGES.GOING_TO_PICKUP || tripStage === STAGES.ARRIVED_PICKUP) && (
-                <TouchableOpacity style={styles.cancelTripButton} onPress={() => setShowCancelModal(true)}>
-                  <Ionicons name="close-circle" size={18} color={theme.colors.danger} />
-                </TouchableOpacity>
-              )}
-              <View style={styles.stageBadge}>
-                <Text style={styles.stageBadgeText}>
-                  {tripStage === STAGES.GOING_TO_PICKUP && '🚗 To Pickup'}
-                  {tripStage === STAGES.ARRIVED_PICKUP && '📍 At Pickup'}
-                  {tripStage === STAGES.GOING_TO_DROP && '🚚 To Drop'}
-                  {tripStage === STAGES.ARRIVED_DROP && '🎯 At Drop'}
-                  {tripStage === STAGES.COMPLETED && '✅ Completed'}
-                </Text>
-              </View>
-            </View>
-          </View>
+        {/* Premium Header Overlay */}
+        <View style={styles.mapHeaderOverlay}>
+          <TouchableOpacity
+            style={styles.backBtnRound}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="arrow-back" size={24} color={theme.colors.ink} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.map3DButton,
+              is3DMode && styles.map3DButtonActive,
+            ]}
+            onPress={() => {
+              setIs3DMode(prev => !prev);
+              if (driverCoords) {
+                updateCamera(driverCoords, arrowRotation);
+              }
+            }}
+          >
+            <Text style={styles.map3DButtonText}>
+              {is3DMode ? '2D View' : '3D View'}
+            </Text>
+          </TouchableOpacity>
 
-          <Text style={styles.address} numberOfLines={2}>
-            {tripStage === STAGES.GOING_TO_DROP || tripStage === STAGES.ARRIVED_DROP 
-              ? `📦 Drop: ${dropAddress}` 
-              : `📦 Pickup: ${pickupAddress}`}
-          </Text>
+          {/* <View style={styles.headerTitleCard}>
+            <Text style={styles.headerTripId}>
+              Order #
+              {String(order?.id || '')
+                .slice(-6)
+                .toUpperCase()}
+            </Text>
+            <Text style={styles.headerStageText}>
+              {tripStage === STAGES.GOING_TO_PICKUP
+                ? 'Heading to Pickup'
+                : tripStage === STAGES.ARRIVED_PICKUP
+                ? 'At Pickup'
+                : tripStage === STAGES.GOING_TO_DROP
+                ? 'Heading to Drop'
+                : 'At Destination'}
+            </Text>
+          </View> */}
 
-          {distance !== null && (
-            <View style={styles.infoContainer}>
-              <View style={styles.infoItem}>
-                <Text style={styles.infoLabel}>Distance</Text>
-                <Text style={styles.infoValue}>
-                  {distance < 1 
-                    ? `${Math.round(distance * 1000)} m` 
-                    : `${distance.toFixed(1)} km`}
-                </Text>
-              </View>
-              {duration !== null && (
-                <View style={styles.infoItem}>
-                  <Text style={styles.infoLabel}>ETA</Text>
-                  <Text style={styles.infoValue}>{duration} min</Text>
-                </View>
-              )}
-              <View style={styles.infoItem}>
-                <Text style={styles.infoLabel}>Amount</Text>
-                <Text style={styles.infoValue}>₹{order?.amount || 0}</Text>
-              </View>
-            </View>
-          )}
+          {/* <TouchableOpacity
+            style={styles.helpBtnRound}
+            onPress={() => Alert.alert('Help', 'Contacting support...')}
+          >
+            <Ionicons name="help-buoy" size={24} color={theme.colors.danger} />
+          </TouchableOpacity> */}
+        </View>
 
-          {tripStage === STAGES.ARRIVED_PICKUP && (
-            <TouchableOpacity 
-              style={[styles.button, styles.primaryButton]} 
-              onPress={handlePickupConfirm}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.primaryButtonText}>✅ Confirm Pickup</Text>
-            </TouchableOpacity>
-          )}
-
-          {tripStage === STAGES.ARRIVED_DROP && (
-            <TouchableOpacity 
-              style={[styles.button, styles.successButton]} 
-              onPress={handleCompleteDelivery}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.successButtonText}>💰 Complete & Collect Payment</Text>
-            </TouchableOpacity>
-          )}
-
-          {(tripStage === STAGES.GOING_TO_PICKUP || tripStage === STAGES.GOING_TO_DROP) && (
-            <View style={styles.drivingIndicator}>
-              <ActivityIndicator size="small" color={theme.colors.primary} />
-              <Text style={styles.drivingText}>
-                {tripStage === STAGES.GOING_TO_PICKUP ? 'Heading to pickup...' : 'Heading to drop...'}
+        {/* Navigation Card */}
+        <View style={styles.navCardOverlay}>
+          <View style={styles.navInfoRow}>
+            <View style={styles.navInfoItem}>
+              <Text style={styles.navInfoLabel}>DISTANCE</Text>
+              <Text style={styles.navInfoValue}>
+                {distance ? `${distance.toFixed(1)} km` : '--'}
               </Text>
             </View>
-          )}
+            <View style={styles.navInfoDivider} />
+            <View style={styles.navInfoItem}>
+              <Text style={styles.navInfoLabel}>TIME</Text>
+              <Text style={styles.navInfoValue}>
+                {duration ? `${duration} min` : '--'}
+              </Text>
+            </View>
+            <>
+              <View style={styles.navInfoDivider} />
+              <View style={styles.navInfoItem}>
+                <Text style={styles.navInfoLabel}>Amount</Text>
+                <Text
+                  style={[styles.navInfoValue, { color: theme.colors.success }]}
+                >
+                  ₹{Number(order?.estimatedFare)}
+                </Text>
+              </View>
+            </>
+          </View>
+
+          <View style={styles.addressCard}>
+            <View style={styles.addressIndicatorCol}>
+              <View
+                style={[
+                  styles.addressDot,
+                  {
+                    backgroundColor: tripStage.includes('PICKUP')
+                      ? theme.colors.success
+                      : theme.colors.danger,
+                  },
+                ]}
+              />
+              <View style={styles.addressLine} />
+            </View>
+            <View style={styles.addressTextCol}>
+              <Text style={styles.addressLabel}>
+                {tripStage.includes('PICKUP') ? 'PICKUP FROM' : 'DROP AT'}
+              </Text>
+              <Text style={styles.addressText} numberOfLines={2}>
+                {tripStage.includes('PICKUP') ? pickupAddress : dropAddress}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.phoneCircle}
+              onPress={handleCallCustomer}
+            >
+              <Ionicons name="call" size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.actionRowPrimary}>
+            {tripStage === STAGES.GOING_TO_PICKUP && (
+              isAtPickup ? (
+                <TouchableOpacity
+                  style={styles.primaryActionBtn}
+                  onPress={() => setTripStage(STAGES.ARRIVED_PICKUP)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.primaryActionText}>ARRIVED AT PICKUP</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.disabledActionMsg}>
+                  <Text style={styles.disabledActionText}>
+                    Reach pickup location to mark arrived
+                  </Text>
+                </View>
+              )
+            )}
+            {tripStage === STAGES.ARRIVED_PICKUP && (
+              <TouchableOpacity
+                style={[
+                  styles.primaryActionBtn,
+                  { backgroundColor: theme.colors.success },
+                ]}
+                onPress={handlePickupConfirm}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.primaryActionText}>START TRIP</Text>
+              </TouchableOpacity>
+            )}
+            {tripStage === STAGES.GOING_TO_DROP && isAtDrop && (
+              <TouchableOpacity
+                style={styles.primaryActionBtn}
+                onPress={() => setTripStage(STAGES.ARRIVED_DROP)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.primaryActionText}>ARRIVED AT DROP</Text>
+              </TouchableOpacity>
+            )}
+            {tripStage === STAGES.GOING_TO_DROP && !isAtDrop && (
+              <View style={styles.disabledActionMsg}>
+                <Text style={styles.disabledActionText}>
+                  Reach drop location to mark arrived
+                </Text>
+              </View>
+            )}
+            {tripStage === STAGES.ARRIVED_DROP && (
+              <TouchableOpacity
+                style={[
+                  styles.primaryActionBtn,
+                  { backgroundColor: theme.colors.success },
+                ]}
+                onPress={() => setShowCashModal(true)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.primaryActionText}>COMPLETE ORDER</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <View>
+            {tripStage !== STAGES.COMPLETED && (
+              <TouchableOpacity
+                style={styles.cancelTripButton}
+                onPress={() => setShowCancelModal(true)}
+                activeOpacity={0.8}
+              >
+                <Text style={{ color: '#ff0303', fontSize: 13 }} >Cancel trip</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
 
         {/* Cancel Trip Modal */}
@@ -1156,30 +1610,58 @@ const MapScreen = ({ navigation, route }) => {
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Cancel Trip</Text>
-                <TouchableOpacity onPress={() => !isCancelling && setShowCancelModal(false)}>
+                <TouchableOpacity
+                  onPress={() => !isCancelling && setShowCancelModal(false)}
+                >
                   <Text style={styles.closeButton}>✕</Text>
                 </TouchableOpacity>
               </View>
-              <Text style={styles.cancelSubtext}>Select a reason for cancellation:</Text>
-              {['Vehicle breakdown', 'Customer not reachable', 'Wrong address', 'Personal emergency', 'Other'].map(reason => (
+              <Text style={styles.cancelSubtext}>
+                Select a reason for cancellation:
+              </Text>
+              {[
+                'Vehicle breakdown',
+                'Customer not reachable',
+                'Wrong address',
+                'Personal emergency',
+                'Other',
+              ].map(reason => (
                 <TouchableOpacity
                   key={reason}
-                  style={[styles.cancelReasonItem, cancelReason === reason && styles.cancelReasonActive]}
+                  style={[
+                    styles.cancelReasonItem,
+                    cancelReason === reason && styles.cancelReasonActive,
+                  ]}
                   onPress={() => setCancelReason(reason)}
                   disabled={isCancelling}
                 >
                   <Ionicons
-                    name={cancelReason === reason ? 'radio-button-on' : 'radio-button-off'}
+                    name={
+                      cancelReason === reason
+                        ? 'radio-button-on'
+                        : 'radio-button-off'
+                    }
                     size={20}
-                    color={cancelReason === reason ? theme.colors.danger : '#999'}
+                    color={
+                      cancelReason === reason ? theme.colors.danger : '#999'
+                    }
                   />
-                  <Text style={[styles.cancelReasonText, cancelReason === reason && styles.cancelReasonTextActive]}>
+                  <Text
+                    style={[
+                      styles.cancelReasonText,
+                      cancelReason === reason && styles.cancelReasonTextActive,
+                    ]}
+                  >
                     {reason}
                   </Text>
                 </TouchableOpacity>
               ))}
               <TouchableOpacity
-                style={[styles.button, styles.dangerButton, isCancelling && styles.disabledButton]}
+                style={[
+                  styles.button,
+                  styles.dangerButton,
+                  isCancelling && styles.disabledButton,
+                ]}
                 onPress={handleCancelTrip}
                 disabled={isCancelling}
               >
@@ -1208,7 +1690,10 @@ const MapScreen = ({ navigation, route }) => {
                   <Text style={styles.closeButton}>✕</Text>
                 </TouchableOpacity>
               </View>
-              <Text style={styles.cancelSubtext}>Enter the 4-digit code provided by the customer to verify pickup:</Text>
+              <Text style={styles.cancelSubtext}>
+                Enter the 4-digit code provided by the customer to verify
+                pickup:
+              </Text>
               <TextInput
                 style={styles.otpInput}
                 value={pickupOtp}
@@ -1223,7 +1708,9 @@ const MapScreen = ({ navigation, route }) => {
                 style={[styles.button, styles.primaryButton]}
                 onPress={handlePickupOtpSubmit}
               >
-                <Text style={styles.primaryButtonText}>✅ Verify & Confirm Pickup</Text>
+                <Text style={styles.primaryButtonText}>
+                  ✅ Verify & Confirm Pickup
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1240,7 +1727,7 @@ const MapScreen = ({ navigation, route }) => {
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>💰 Payment Collection</Text>
-                <TouchableOpacity 
+                <TouchableOpacity
                   onPress={() => !isProcessing && setShowCashModal(false)}
                   disabled={isProcessing}
                 >
@@ -1251,7 +1738,12 @@ const MapScreen = ({ navigation, route }) => {
               <View style={styles.orderSummary}>
                 <Text style={styles.summaryText}>Order #{order.id}</Text>
                 <Text style={styles.summaryText}>
-                  Distance: {distance ? (distance < 1 ? `${Math.round(distance * 1000)} m` : `${distance.toFixed(1)} km`) : '0 km'}
+                  Distance:{' '}
+                  {distance
+                    ? distance < 1
+                      ? `${Math.round(distance * 1000)} m`
+                      : `${distance.toFixed(1)} km`
+                    : '0 km'}
                 </Text>
               </View>
 
@@ -1269,10 +1761,13 @@ const MapScreen = ({ navigation, route }) => {
                     }}
                     disabled={isProcessing}
                   >
-                    <Text style={[
-                      styles.paymentMethodText,
-                      paymentMethod === method && styles.paymentMethodTextActive,
-                    ]}>
+                    <Text
+                      style={[
+                        styles.paymentMethodText,
+                        paymentMethod === method &&
+                        styles.paymentMethodTextActive,
+                      ]}
+                    >
                       {method === 'cash' && '💵 Cash'}
                       {method === 'card' && '💳 Card'}
                       {method === 'online' && '📱 Online'}
@@ -1285,7 +1780,10 @@ const MapScreen = ({ navigation, route }) => {
                 <View style={styles.amountInputContainer}>
                   <Text style={styles.amountLabel}>Amount Collected (₹)</Text>
                   <TextInput
-                    style={[styles.amountInput, modalError && styles.inputError]}
+                    style={[
+                      styles.amountInput,
+                      modalError && styles.inputError,
+                    ]}
                     value={cashCollected}
                     onChangeText={text => {
                       setCashCollected(text);
@@ -1301,8 +1799,12 @@ const MapScreen = ({ navigation, route }) => {
 
               {paymentMethod !== 'cash' && (
                 <View style={styles.amountDisplay}>
-                  <Text style={styles.amountDisplayLabel}>Amount to collect:</Text>
-                  <Text style={styles.amountDisplayValue}>₹{order?.amount || 0}</Text>
+                  <Text style={styles.amountDisplayLabel}>
+                    Amount to collect:
+                  </Text>
+                  <Text style={styles.amountDisplayValue}>
+                    ₹{order?.amount || 0}
+                  </Text>
                 </View>
               )}
 
@@ -1323,7 +1825,9 @@ const MapScreen = ({ navigation, route }) => {
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <Text style={styles.collectButtonText}>
-                    {paymentMethod === 'cash' ? '✅ Cash Collected' : '✅ Confirm Payment'}
+                    {paymentMethod === 'cash'
+                      ? '✅ Cash Collected'
+                      : '✅ Confirm Payment'}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -1349,6 +1853,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: theme.colors.bg,
     padding: 20,
+  },
+  markerImage: {
+    width: 30,
+    height: 30,
   },
   loadingText: {
     fontSize: 16,
@@ -1393,7 +1901,7 @@ const styles = StyleSheet.create({
   },
   banner: {
     position: 'absolute',
-    top: 50,
+    top: 10,
     left: 20,
     right: 20,
     backgroundColor: theme.colors.primary,
@@ -1421,7 +1929,7 @@ const styles = StyleSheet.create({
   },
   routeInfoButton: {
     position: 'absolute',
-    top: 100,
+    top: '20%',
     left: 20,
     right: 20,
     backgroundColor: '#fff',
@@ -1455,6 +1963,41 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6B7280',
   },
+  disabledActionMsg: {
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#f3f4f6',
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    marginBottom: 8,
+  },
+  disabledActionText: {
+    color: '#6b7280',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  map3DButton: {
+    position: 'absolute',
+    right: 60,
+    top: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#fff',
+    zIndex: 10,
+  },
+  map3DButtonActive: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  map3DButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#1f2937',
+  },
+
   routeInfoArrow: {
     fontSize: 16,
     color: '#6B7280',
@@ -1493,18 +2036,173 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   callButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: theme.colors.success,
     alignItems: 'center',
     justifyContent: 'center',
+    ...theme.shadow.card,
+  },
+
+  // Premium Navigation UI Styles
+  mapHeaderOverlay: {
+    position: 'absolute',
+    top: moderateScale(10),
+    left: moderateScale(16),
+    right: moderateScale(16),
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  backBtnRound: {
+    width: moderateScale(48),
+    height: moderateScale(48),
+    borderRadius: moderateScale(24),
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...theme.shadow.card,
+  },
+  helpBtnRound: {
+    width: moderateScale(48),
+    height: moderateScale(48),
+    borderRadius: moderateScale(24),
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: theme.colors.danger,
+    ...theme.shadow.card,
+  },
+  headerTitleCard: {
+    flex: 1,
+    marginHorizontal: moderateScale(12),
+    backgroundColor: '#fff',
+    paddingVertical: moderateScale(10),
+    paddingHorizontal: moderateScale(16),
+    borderRadius: theme.radii.lg,
+    alignItems: 'center',
+    ...theme.shadow.card,
+  },
+  headerTripId: {
+    fontSize: moderateScale(12),
+    fontWeight: '800',
+    color: theme.colors.muted,
+  },
+  headerStageText: {
+    fontSize: moderateScale(15),
+    fontWeight: '900',
+    color: theme.colors.ink,
+    marginTop: 2,
+  },
+
+  navCardOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: theme.radii.xl,
+    borderTopRightRadius: theme.radii.xl,
+    padding: moderateScale(20),
+    paddingBottom:
+      Platform.OS === 'ios' ? moderateScale(40) : moderateScale(25),
+    ...theme.shadow.card,
+    elevation: 20,
+  },
+  navInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: moderateScale(18),
+  },
+  navInfoItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  navInfoLabel: {
+    fontSize: moderateScale(10),
+    fontWeight: '800',
+    color: theme.colors.muted,
+    marginBottom: 4,
+  },
+  navInfoValue: {
+    fontSize: moderateScale(16),
+    fontWeight: '900',
+    color: theme.colors.ink,
+  },
+  navInfoDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: theme.colors.border,
+  },
+
+  addressCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.bg,
+    borderRadius: theme.radii.lg,
+    padding: moderateScale(12),
+    marginBottom: moderateScale(20),
+  },
+  addressIndicatorCol: {
+    alignItems: 'center',
+    marginRight: moderateScale(12),
+  },
+  addressDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  addressLine: {
+    width: 2,
+    height: 20,
+    backgroundColor: theme.colors.border,
+    marginTop: 4,
+  },
+  addressTextCol: {
+    flex: 1,
+  },
+  addressLabel: {
+    fontSize: moderateScale(10),
+    fontWeight: '800',
+    color: theme.colors.muted,
+  },
+  addressText: {
+    fontSize: moderateScale(13),
+    fontWeight: '700',
+    color: theme.colors.ink,
+    marginTop: 2,
+  },
+  phoneCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: theme.colors.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 10,
+  },
+
+  actionRowPrimary: {
+    width: '100%',
+  },
+  primaryActionBtn: {
+    backgroundColor: theme.colors.ink,
+    borderRadius: theme.radii.md,
+    paddingVertical: moderateScale(16),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryActionText: {
+    color: '#fff',
+    fontWeight: '900',
+    fontSize: moderateScale(16),
+    letterSpacing: 1.2,
   },
   cancelTripButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#FEE2E2',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1734,7 +2432,7 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: 'rgba(59, 130, 246, 0.8)',
+    backgroundColor: 'rgba(212, 246, 59, 0.8)',
     borderWidth: 2,
     borderColor: '#fff',
   },

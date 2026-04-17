@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -20,8 +20,6 @@ import { addNotification } from '../../services/localDriverData';
 import { useDispatch } from 'react-redux';
 import { getProfile } from '../../store/slices/profileSlice';
 
-// const BASE_URL = 'https://porterbackend-iyxh.onrender.com/api/driver'
-
 const LoginScreen = ({ navigation }) => {
   const dispatch = useDispatch();
   const [mobile, setMobile] = useState('');
@@ -33,9 +31,31 @@ const LoginScreen = ({ navigation }) => {
   const [timer, setTimer] = useState(30);
   const [canResend, setCanResend] = useState(false);
   const [phoneError, setPhoneError] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false); // Prevent multiple auto-verification calls
 
   const otpInputs = useRef([]);
   const timerRef = useRef(null);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, []);
+
+  // Auto-verify OTP when all digits are filled
+  useEffect(() => {
+    const otpString = otp.join('');
+    if (otpString.length === 6 && showOTP && !loading && !isVerifying) {
+      // Small delay to ensure the last digit is properly set
+      const timer = setTimeout(() => {
+        verifyOTP();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [otp, showOTP]);
 
   // Start timer for resend OTP
   const startTimer = () => {
@@ -133,6 +153,7 @@ const LoginScreen = ({ navigation }) => {
         startTimer();
         // Clear OTP inputs
         setOtp(['', '', '', '', '', '']);
+        setIsVerifying(false); // Reset verifying flag
         otpInputs.current[0]?.focus();
         Alert.alert('Success', 'OTP resent successfully');
         console.log('📱 OTP resent to:', mobile);
@@ -147,6 +168,36 @@ const LoginScreen = ({ navigation }) => {
 
   // Handle OTP input change
   const handleOtpChange = (text, index) => {
+    // Handle autofill/paste - if text length is more than 1, it's likely a paste/autofill
+    if (text.length > 1) {
+      // Split the pasted text into individual digits
+      const pastedDigits = text.split('').slice(0, 6);
+      const newOtp = [...otp];
+
+      // Fill the OTP array with pasted digits
+      pastedDigits.forEach((digit, i) => {
+        if (i < 6) {
+          newOtp[i] = digit;
+        }
+      });
+
+      setOtp(newOtp);
+
+      // Focus on the appropriate input after paste
+      if (pastedDigits.length === 6) {
+        // If all digits are filled, focus on the last input or trigger verification
+        otpInputs.current[5]?.focus();
+      } else if (pastedDigits.length < 6) {
+        // Focus on the next empty input
+        const nextEmptyIndex = newOtp.findIndex(d => !d);
+        if (nextEmptyIndex !== -1) {
+          otpInputs.current[nextEmptyIndex]?.focus();
+        }
+      }
+      return;
+    }
+
+    // Normal single character input
     const newOtp = [...otp];
     newOtp[index] = text;
 
@@ -174,9 +225,15 @@ const LoginScreen = ({ navigation }) => {
       return;
     }
 
+    // Prevent multiple verification calls
+    if (isVerifying) return;
+
+    setIsVerifying(true);
     setLoading(true);
+
     try {
       console.log('📤 Verifying OTP for:', mobile);
+      console.log('🔑 OTP:', otpString);
 
       const response = await axios.post(`${BASE_URL}/verify-otp`, {
         phone: mobile,
@@ -187,28 +244,26 @@ const LoginScreen = ({ navigation }) => {
 
       // Check different possible success indicators
       if (response.data.success || response.data.status === 'success') {
-        console.log('✅ OTP verified successfully');
+        console.log('✅ OTP verified successfully', response.data);
 
         // Store token if returned
-        const token =
-          response.data?.data?.tempToken || response.data?.tempToken;
+        const token = response.data?.data?.token || response.data?.token;
         if (token) {
           await AsyncStorage.setItem('userToken', token);
+          await AsyncStorage.setItem('userPhone', response?.data?.data?.phone);
           console.log('🔑 Token stored successfully');
         }
 
         // Store user data if needed
-        const user = response.data?.data?.user;
+        const user = response?.data?.data;
         if (user) {
           await AsyncStorage.setItem('userData', JSON.stringify(user));
         }
 
-        const driverId =
-          response.data?.data?.driverId ||
-          user?._id ||
-          user?.id ||
-          `driver_${mobile}`;
-        await AsyncStorage.setItem('driverId', String(driverId));
+        console.log('check driver id', response?.data?.data?.driverId);
+
+        const driverId = response.data?.data?.driverId || `driver_${mobile}`;
+        await AsyncStorage.setItem('driverId', driverId);
 
         // Kick off a profile fetch so profile data is ready across the app.
         dispatch(getProfile());
@@ -219,16 +274,32 @@ const LoginScreen = ({ navigation }) => {
           type: 'auth',
         });
 
-        Alert.alert('Success', 'Login successful!', [
+        console.log('check check', response?.data?.data?.requiresRegistration);
+
+        Alert.alert('Success', 'Login Successfully', [
           {
             text: 'OK',
-            onPress: () => navigation.navigate('Docs'),
+            onPress: () => {
+              if (response?.data?.data?.requiresRegistration) {
+                navigation.navigate('Docs', {
+                  phone: response?.data?.data?.phone,
+                  data: response?.data?.data,
+                });
+                // console.log("login data", response?.data?.data?.requiresRegistration);
+                
+              } else {
+                navigation.navigate('MyTabs');
+                // console.log("login else data", response?.data?.data);
+                
+              }
+            },
           },
         ]);
       } else {
         Alert.alert('Error', response.data.message || 'Invalid OTP');
         // Clear OTP on invalid attempt
         setOtp(['', '', '', '', '', '']);
+        setIsVerifying(false); // Reset verifying flag
         otpInputs.current[0]?.focus();
       }
     } catch (error) {
@@ -254,6 +325,7 @@ const LoginScreen = ({ navigation }) => {
 
       // Clear OTP on error
       setOtp(['', '', '', '', '', '']);
+      setIsVerifying(false); // Reset verifying flag
       otpInputs.current[0]?.focus();
     } finally {
       setLoading(false);
@@ -266,14 +338,29 @@ const LoginScreen = ({ navigation }) => {
     setOtp(['', '', '', '', '', '']);
     setTimer(30);
     setCanResend(false);
+    setIsVerifying(false); // Reset verifying flag
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+  };
+
+  const dummyFuc = async () => {
+    try {
+      const token =
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY5YmQzNDIzNmIxOTJmNjFlNTEwNjZmOSIsInBob25lIjoiNjI2MzM1MjQ5NiIsInR5cGUiOiJkcml2ZXJfYXV0aCIsInJvbGUiOiJkcml2ZXIiLCJpYXQiOjE3NzQwMDczMzEsImV4cCI6MTc3NjU5OTMzMX0.cMSvLVfR31Qoa9aKTRe5hzRXb3Rgh7Roa5SbIJoa49M';
+      await AsyncStorage.setItem('userToken', token);
+      navigation.navigate('MyTabs');
+    } catch (error) {
+      console.log('dummy error', error);
+    }
   };
 
   // Render OTP Input Screen
   const renderOTPScreen = () => (
     <>
-      <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+      {/* <TouchableOpacity onPress={handleBack} style={styles.backButton}>
         <Icon name="arrow-back" size={24} color="#333" />
-      </TouchableOpacity>
+      </TouchableOpacity> */}
 
       <Text style={styles.otpTitle}>Enter OTP</Text>
       <Text style={styles.otpSubtitle}>
@@ -308,13 +395,14 @@ const LoginScreen = ({ navigation }) => {
         )}
       </View>
 
+      {/* Optional: Manual Verify Button - can be hidden if you want only auto-verify */}
       <TouchableOpacity
         style={[
           styles.loginBtn,
           otp.join('').length !== 6 && styles.loginBtnDisabled,
         ]}
         onPress={verifyOTP}
-        disabled={loading || otp.join('').length !== 6}
+        disabled={loading || otp.join('').length !== 6 || isVerifying}
       >
         {loading ? (
           <ActivityIndicator color="#fff" />

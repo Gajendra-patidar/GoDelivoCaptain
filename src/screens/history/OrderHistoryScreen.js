@@ -107,16 +107,37 @@ const OrderHistoryScreen = ({ navigation }) => {
             activeOpacity={0.85}
           >
             <View style={styles.rowTop}>
-              <Text style={styles.orderId}>{item.id}</Text>
-              <Text style={styles.amount}>Rs {Number(item.amount || 0).toFixed(2)}</Text>
+              <View style={styles.idCol}>
+                 <Text style={styles.orderIdLabel}>Order ID</Text>
+                 <Text style={styles.orderId}>{item.id}</Text>
+              </View>
+              <Text style={styles.amount}>₹{Number(item.amount || 0).toLocaleString('en-IN')}</Text>
             </View>
-            <Text style={styles.address} numberOfLines={1}>
-              Pickup: {item.pickupAddress || '--'}
-            </Text>
-            <Text style={styles.address} numberOfLines={1}>
-              Drop: {item.dropAddress || '--'}
-            </Text>
-            <Text style={styles.timeText}>Delivered: {formatTime(item.completedAt)}</Text>
+            
+            <View style={styles.routeContainer}>
+               <View style={styles.routeLine}>
+                  <View style={[styles.dot, { backgroundColor: '#10B981' }]} />
+                  <View style={styles.line} />
+                  <View style={[styles.dot, { backgroundColor: '#EF4444' }]} />
+               </View>
+               <View style={styles.addressCol}>
+                  <View style={styles.addressBlock}>
+                     <Text style={styles.addressLabel}>PICKUP</Text>
+                     <Text style={styles.addressText} numberOfLines={1}>{item.pickupAddress || '--'}</Text>
+                  </View>
+                  <View style={styles.addressBlock}>
+                     <Text style={styles.addressLabel}>DROP</Text>
+                     <Text style={styles.addressText} numberOfLines={1}>{item.dropAddress || '--'}</Text>
+                  </View>
+               </View>
+            </View>
+
+            <View style={styles.cardFooter}>
+               <Text style={styles.timeText}>{formatTime(item.completedAt)}</Text>
+               <View style={styles.statusBadge}>
+                  <Text style={styles.statusText}>Completed</Text>
+               </View>
+            </View>
           </TouchableOpacity>
         )}
       />
@@ -130,64 +151,137 @@ export default OrderHistoryScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.bg,
+    backgroundColor: '#F8FAFC',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.primary,
+    backgroundColor: '#fff',
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 22,
+    fontWeight: '900',
     marginLeft: 14,
-    color: theme.colors.ink,
+    color: '#1a1c1e',
   },
   listContent: {
     padding: 16,
-    paddingBottom: 24,
+    paddingBottom: 40,
   },
   emptyState: {
     alignItems: 'center',
-    marginTop: 60,
+    marginTop: 100,
   },
   emptyText: {
-    color: '#6B7280',
-    fontSize: 15,
+    color: '#94A3B8',
+    fontSize: 16,
+    fontWeight: '600',
   },
   card: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 16,
     ...theme.shadow.card,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
   },
   rowTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F1F5F9',
+  },
+  idCol: {
+    flex: 1,
+  },
+  orderIdLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94A3B8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   orderId: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111827',
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#1E293B',
+    marginTop: 2,
   },
   amount: {
-    fontSize: 16,
-    color: '#0F766E',
-    fontWeight: '700',
+    fontSize: 22,
+    color: '#0F172A',
+    fontWeight: '900',
   },
-  address: {
-    color: '#374151',
-    fontSize: 13,
-    marginBottom: 4,
+  routeContainer: {
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
+  routeLine: {
+    alignItems: 'center',
+    marginRight: 12,
+    paddingTop: 6,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  line: {
+    width: 2,
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 4,
+  },
+  addressCol: {
+    flex: 1,
+  },
+  addressBlock: {
+    marginBottom: 12,
+  },
+  addressLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94A3B8',
+    marginBottom: 2,
+  },
+  addressText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#334155',
+    lineHeight: 18,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 6,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#F8FAFC',
   },
   timeText: {
-    color: '#6B7280',
-    fontSize: 12,
-    marginTop: 4,
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  statusBadge: {
+    backgroundColor: '#F0FDF4',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 20,
+  },
+  statusText: {
+    color: '#10B981',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
   },
 });

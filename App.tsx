@@ -10,22 +10,40 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import NotificationService from './src/services/NotificationService';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import { OfflineQueue } from './src/services/offlineQueue';
+import SocketService from './src/services/socketService';
 
 function App() {
   useEffect(() => {
-    const initNotifications = async () => {
+    const initApp = async () => {
       try {
         const driverId = await AsyncStorage.getItem('driverId');
+        const token = await AsyncStorage.getItem('userToken');
+
+        // Initialize notifications
         if (driverId) {
           await NotificationService.initialize(driverId);
         }
-      } catch {}
+
+        // Initialize socket connection for real-time updates
+        if (driverId && token) {
+          console.log('🚀 Initializing socket connection...');
+          await SocketService.connect();
+        }
+
+        // Start offline queue
+        OfflineQueue.startListening();
+
+      } catch (error) {
+        console.error('❌ App initialization error:', error);
+      }
     };
 
-    initNotifications();
-    OfflineQueue.startListening();
+    initApp();
 
-    return () => OfflineQueue.stopListening();
+    return () => {
+      OfflineQueue.stopListening();
+      SocketService.cleanup();
+    };
   }, []);
 
   return (

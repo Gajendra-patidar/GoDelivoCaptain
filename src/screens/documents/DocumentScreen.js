@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -21,107 +21,173 @@ import LinearGradient from 'react-native-linear-gradient';
 import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from '../../services/api';
+import { theme } from '../../theme';
 
 const { width } = Dimensions.get('window');
 
-// const BASE_URL = 'https://porterbackend-iyxh.onrender.com/api/driver';
+const VEHICLE_TYPES = [
+  'Bike',
+  'Scooter',
+  'Auto Rickshaw',
+  'Mini Truck',
+  'Pickup Truck',
+  'Truck',
+];
 
-const ICONS = {
-  'two-wheeler': require('../../assets/motor.png'),
-  'three-wheeler': require('../../assets/riksha_dark.png'),
-  motorcycle: require('../../assets/motorcycle.png'),
-  'electric-scooter': require('../../assets/scooter.png'),
-  scooter: require('../../assets/scooter.png'),
-  riksha: require('../../assets/riksha_dark.png'),
-  'mini-truck': require('../../assets/mini-truck.png'),
-  truck: require('../../assets/truck.png'),
-};
-
-// Vehicle data with categories, body types, and icons
-const VEHICLE_DATA = {
-  '2 Wheeler': {
-    icon: 'two-wheeler',
-    bodyTypes: [
-      { id: 'scooter', name: 'Scooter', icon: 'scooter' },
-      { id: 'bike', name: 'Bike', icon: 'motorcycle' },
-    ],
-  },
-  '3 Wheeler': {
-    icon: 'three-wheeler',
-    bodyTypes: [
-      { id: 'tuktuk', name: 'Tuk Tuk', icon: 'riksha' },
-      { id: 'loader', name: 'Loader', icon: 'riksha' },
-    ],
-  },
-  truck: {
-    icon: 'truck',
-    bodyTypes: [
-      { id: 'mini-truck', name: 'Mini Truck', icon: 'mini-truck' },
-      { id: 'heavy-truck', name: 'Heavy Truck', icon: 'truck' },
-    ],
-  },
-};
-
-const DocumentScreen = ({ navigation }) => {
+const DocumentScreen = ({ navigation, route }) => {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const scrollViewRef = useRef(null);
   const fadeAnim = useRef(new Animated.Value(1)).current;
+  const [verifyStatus, setVerifyStatusVal] = useState('PENDING');
+  const [rejectReason, setRejectReason] = useState('');
+  const [userPhone, setUserPhone] = useState('');
+  const phoneData = route?.params?.phone;
+  const statusData = route?.params?.data;
+
+  useEffect(() => {
+  if (statusData) {
+    if(verifyStatus === 'submitted' || verifyStatus === 'partially_verified') {
+      return;
+    }
+    handleStatus(statusData);
+  } else {
+    checkStatus();
+  }
+}, []);
+  
+  
+  const handleStatus = (data) => {
+  console.log("Driver Status:", data);
+
+  // 🆕 NEW DRIVER → FORM SHOW
+  if (data?.requiresRegistration === true) {
+    setVerifyStatusVal('NEW');
+    return;
+  }
+
+  // 📄 Already Uploaded → check status
+  const status = data?.applicationStatus;
+
+  if (status === 'PENDING') {
+    setVerifyStatusVal('PENDING');
+  } 
+  else if (status === 'REJECTED') {
+    setVerifyStatusVal('REJECTED');
+    setRejectReason(data?.statusMessage || '');
+  } 
+  else if (status === 'VERIFIED') {
+    navigation.replace('MyTabs');
+  }
+};
+
+  const checkStatus = async () => {
+    try {
+      setLoading(true);
+      const token = await AsyncStorage.getItem('userToken');
+      const phone = await AsyncStorage.getItem('userPhone');
+      if (phone) setUserPhone(phone);
+
+      console.log('phone number', phone, phoneData);
+
+      if (token) {
+        const response = await axios
+          .get(`${BASE_URL}/status/${phone}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          })
+          .catch(err => ({
+            data: { verifyStatus: 'PENDING', rejectReason: '' },
+          }));
+
+        console.log('status data', response.data);
+
+        setVerifyStatusVal(
+          response?.data?.data?.verificationStatus ||
+            response?.data?.verifyStatus ||
+            'PENDING',
+        );
+        setRejectReason(response?.data?.rejectReason || response?.data?.data?.statusMessage || '');
+        //VERIFIED
+        if (response?.data?.data?.verificationStatus === 'verified') {
+          navigation.replace('MyTabs');
+        }
+      }
+    } catch (error) {
+      console.log('Error checking status:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const [form, setForm] = useState({
-    // Personal Information
+    // Phone (from stored login)
+    phone: '',
+
+    // Personal Info
     fullName: '',
     email: '',
     dateOfBirth: '',
-    address: {
-      street: '',
-      city: '',
-      state: '',
-      pincode: '',
-    },
+    address: '',
+    city: '',
+    state: '',
+    pincode: '',
 
-    // Owner Details - Documents (Backend expects single aadharCard)
-    aadharCard: null, // Changed from aadharCardFront/aadharCardBack
-    aadharNumber: '',
-    panCard: null,
-    panNumber: '', // Added PAN number field
-    selfie: null,
-
-    // Vehicle Details - Documents
-    vehicleRC: null,
-    rcNumber: '',
-    drivingLicense: null,
-    licenseNumber: '',
-    licenseExpiryDate: '',
-    vehicleInsurance: null,
-    insurancePolicyNumber: '',
-    insuranceExpiryDate: '',
-    vehiclePhoto: null,
-
-    // Vehicle Details - Info
-    vehicleCategory: '',
-    vehicleBodyType: '',
+    // Vehicle Info
+    vehicleType: '',
     vehicleNumber: '',
     vehicleModel: '',
     vehicleYear: '',
     vehicleColor: '',
 
-    // Bank Details
-    bankDetails: {
-      accountHolderName: '',
-      accountNumber: '',
-      ifscCode: '',
-      bankName: '',
-      branchName: '',
+    // Bank Info
+    accountHolderName: '',
+    accountNumber: '',
+    ifscCode: '',
+    bankName: '',
+    branchName: '',
+
+    // Document Numbers
+    aadharNumber: '',
+    licenseNumber: '',
+    rcNumber: '',
+
+    // Files
+    profilePhoto: null,
+    aadharFront: null,
+    aadharBack: null,
+    panCard: null,
+    drivingLicense: null,
+    vehicleRC: null,
+    vehiclePhoto: null,
+
+    // Track upload status
+    uploadStatus: {
+      profilePhoto: false,
+      aadharFront: false,
+      aadharBack: false,
+      panCard: false,
+      drivingLicense: false,
+      vehicleRC: false,
+      vehiclePhoto: false,
     },
   });
+
+  // Load phone from storage on mount
+  useEffect(() => {
+    const loadPhone = async () => {
+      const phone = await AsyncStorage.getItem('userPhone');
+      if (phone) {
+        setForm(prev => ({ ...prev, phone }));
+      }
+    };
+    loadPhone();
+  }, []);
 
   // Get token from storage
   const getToken = async () => {
     try {
-      const token = await AsyncStorage.getItem('userToken');
-      return token;
+      return await AsyncStorage.getItem('userToken');
     } catch (error) {
       console.error('Error getting token:', error);
       return null;
@@ -156,7 +222,7 @@ const DocumentScreen = ({ navigation }) => {
       includeBase64: false,
       maxHeight: 2000,
       maxWidth: 2000,
-      quality: 0.9,
+      quality: 0.8,
       saveToPhotos: false,
     };
 
@@ -166,6 +232,14 @@ const DocumentScreen = ({ navigation }) => {
       } else if (response.errorCode) {
         Alert.alert('Error', response.errorMessage || 'Something went wrong');
       } else if (response.assets && response.assets.length > 0) {
+        const asset = response.assets[0];
+
+        // Validate file size (max 5MB)
+        if (asset.fileSize && asset.fileSize > 5 * 1024 * 1024) {
+          Alert.alert('Error', 'File size should be less than 5MB');
+          return;
+        }
+
         Animated.sequence([
           Animated.timing(fadeAnim, {
             toValue: 0.5,
@@ -179,7 +253,14 @@ const DocumentScreen = ({ navigation }) => {
           }),
         ]).start();
 
-        setForm({ ...form, [key]: response.assets[0] });
+        setForm(prev => ({
+          ...prev,
+          [key]: asset,
+          uploadStatus: {
+            ...prev.uploadStatus,
+            [key]: true,
+          },
+        }));
       }
     };
 
@@ -190,322 +271,40 @@ const DocumentScreen = ({ navigation }) => {
     }
   };
 
-  // Upload document to server
-  // Upload document to server
-  const uploadDocument = async (documentType, file, additionalData = {}) => {
-    try {
-      const token = await getToken();
-      if (!token) {
-        Alert.alert('Error', 'Please login again');
-        navigation.navigate('Login');
-        return null;
-      }
-
-      const formData = new FormData();
-
-      // IMPORTANT: Backend expects file in 'file' field
-      formData.append('file', {
-        uri: file.uri,
-        type: file.type || 'image/jpeg',
-        name: file.fileName || `${documentType}.jpg`,
-      });
-
-      // Add additional fields based on document type
-      Object.keys(additionalData).forEach(key => {
-        formData.append(key, additionalData[key]);
-      });
-
-      console.log(`📤 Uploading ${documentType}...`, additionalData);
-
-      const response = await axios.post(
-        `${BASE_URL}/upload-document/${documentType}`,
-        formData,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'multipart/form-data',
-          },
-        },
-      );
-
-      console.log(`✅ ${documentType} uploaded:`, response.data);
-      return response.data;
-    } catch (error) {
-      console.error(
-        `❌ Error uploading ${documentType}:`,
-        error.response?.data || error.message,
-      );
-
-      // Show specific error message from backend
-      if (error.response?.data?.message) {
-        Alert.alert('Upload Failed', error.response.data.message);
-      } else {
-        Alert.alert('Upload Failed', `Failed to upload ${documentType}`);
-      }
-
-      throw error;
-    }
-  };
-
-  // Submit basic info
-  const submitBasicInfo = async () => {
-    try {
-      const token = await getToken();
-      if (!token) {
-        Alert.alert('Error', 'Please login again');
-        navigation.navigate('Login');
-        return false;
-      }
-
-      setLoading(true);
-
-      const payload = {
-        fullName: form.fullName,
-        email: form.email,
-        dateOfBirth: form.dateOfBirth,
-        address: form.address,
-      };
-
-      console.log('📤 Submitting basic info...', payload, token);
-
-      const response = await axios.post(`${BASE_URL}/register`, payload, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      console.log('✅ Basic info submitted:', response.data);
-      return true;
-    } catch (error) {
-      console.error('❌ Error submitting basic info:', error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.message || 'Failed to submit basic info',
-      );
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Submit vehicle details
-  const submitVehicleDetails = async () => {
-    try {
-      const token = await getToken();
-      if (!token) {
-        Alert.alert('Error', 'Please login again');
-        navigation.navigate('Login');
-        return false;
-      }
-
-      setLoading(true);
-      console.log('📤 Submitting vehicle details...');
-
-      const payload = {
-        vehicleType: form.vehicleCategory,
-        vehicleNumber: form.vehicleNumber,
-        vehicleModel: form.vehicleModel,
-        vehicleYear: parseInt(form.vehicleYear),
-        vehicleColor: form.vehicleColor,
-      };
-
-      const response = await axios.post(
-        `${BASE_URL}/vehicle-details`,
-        payload,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        },
-      );
-
-      console.log('✅ Vehicle details submitted:', response.data);
-      return true;
-    } catch (error) {
-      console.error('❌ Error submitting vehicle details:', error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.message || 'Failed to submit vehicle details',
-      );
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Submit bank details
-  const submitBankDetails = async () => {
-    try {
-      const token = await getToken();
-      if (!token) {
-        Alert.alert('Error', 'Please login again');
-        navigation.navigate('Login');
-        return false;
-      }
-
-      setLoading(true);
-      console.log('📤 Submitting bank details...');
-
-      const response = await axios.post(
-        `${BASE_URL}/bank-details`,
-        form.bankDetails,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        },
-      );
-
-      console.log('✅ Bank details submitted:', response.data);
-      return true;
-    } catch (error) {
-      console.error('❌ Error submitting bank details:', error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.message || 'Failed to submit bank details',
-      );
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Submit final application
-  const submitApplication = async () => {
-    try {
-      const token = await getToken();
-      if (!token) {
-        Alert.alert('Error', 'Please login again');
-        navigation.navigate('Login');
-        return false;
-      }
-
-      setLoading(true);
-      console.log('📤 Submitting final application...');
-
-      const response = await axios.post(
-        `${BASE_URL}/submit`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
-
-      console.log('✅ Application submitted:', response.data);
-      return true;
-    } catch (error) {
-      console.error('❌ Error submitting application:', error);
-      Alert.alert(
-        'Error',
-        error.response?.data?.message || 'Failed to submit application',
-      );
-      return false;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Upload all documents
-  // Upload all documents
-  const uploadAllDocuments = async () => {
-    setUploading(true);
-
-    console.log('check all docs', form);
-
-    try {
-      // Upload profile photo (if you have this field)
-      // if (form.profilePhoto) {
-      //   await uploadDocument('profilePhoto', form.profilePhoto);
-      // }
-
-      // Upload Aadhar - combine front and back?
-      // Backend expects a single aadharCard, so you need to decide:
-      // Option 1: Upload only front (or merge both sides into one file)
-      if (form.aadharCard) {
-        await uploadDocument('aadharCard', form.aadharCard, {
-          aadharNumber: form.aadharNumber,
-        });
-      }
-
-      // Upload PAN with PAN number
-      if (form.panCard) {
-        await uploadDocument('panCard', form.panCard, {
-          panNumber: form.panNumber, // Make sure to add this
-        });
-      }
-
-      // Upload Selfie
-      if (form.selfie) {
-        await uploadDocument('profilePhoto', form.selfie); // Changed to profilePhoto as backend expects
-      }
-
-      // Upload Driving License
-      if (form.drivingLicense) {
-        await uploadDocument('drivingLicense', form.drivingLicense, {
-          licenseNumber: form.licenseNumber,
-          licenseExpiryDate: form.licenseExpiryDate,
-        });
-      }
-
-      // Upload Vehicle RC
-      if (form.vehicleRC) {
-        await uploadDocument('vehicleRC', form.vehicleRC, {
-          rcNumber: form.rcNumber,
-        });
-      }
-
-      // Upload Vehicle Insurance
-      if (form.vehicleInsurance) {
-        await uploadDocument('vehicleInsurance', form.vehicleInsurance, {
-          policyNumber: form.insurancePolicyNumber,
-          insuranceExpiryDate: form.insuranceExpiryDate,
-        });
-      }
-
-      // Upload Vehicle Photo
-      if (form.vehiclePhoto) {
-        await uploadDocument('vehiclePhoto', form.vehiclePhoto);
-      }
-
-      return true;
-    } catch (error) {
-      console.error('Error uploading documents:', error);
-      Alert.alert(
-        'Error',
-        'Failed to upload some documents. Please try again.',
-      );
-      return false;
-    } finally {
-      setUploading(false);
-    }
+  const removeFile = key => {
+    setForm(prev => ({
+      ...prev,
+      [key]: null,
+      uploadStatus: {
+        ...prev.uploadStatus,
+        [key]: false,
+      },
+    }));
   };
 
   const detectBank = async ifsc => {
-    setForm({
-      ...form,
-      bankDetails: { ...form.bankDetails, ifscCode: ifsc.toUpperCase() },
-    });
+    setForm(prev => ({
+      ...prev,
+      ifscCode: ifsc.toUpperCase(),
+    }));
 
     if (ifsc.length === 11) {
       setLoading(true);
       try {
         const res = await axios.get(`https://ifsc.razorpay.com/${ifsc}`);
-        setForm({
-          ...form,
-          bankDetails: {
-            ...form.bankDetails,
-            bankName: res.data.BANK,
-            branchName: res.data.BRANCH,
-            ifscCode: ifsc.toUpperCase(),
-          },
-        });
+        setForm(prev => ({
+          ...prev,
+          bankName: res.data.BANK || '',
+          branchName: res.data.BRANCH || '',
+          ifscCode: ifsc.toUpperCase(),
+        }));
       } catch (err) {
-        Alert.alert('Invalid IFSC', 'Please enter a valid IFSC code');
+        // Don't show alert for every keystroke, just clear the auto-filled data
+        setForm(prev => ({
+          ...prev,
+          bankName: '',
+          branchName: '',
+        }));
       } finally {
         setLoading(false);
       }
@@ -532,12 +331,12 @@ const DocumentScreen = ({ navigation }) => {
 
   const validateStep = () => {
     switch (step) {
-      case 1:
-        if (!form.fullName) {
+      case 1: // Personal Info
+        if (!form.fullName?.trim()) {
           showError('Please enter your full name');
           return false;
         }
-        if (!form.email || !form.email.includes('@')) {
+        if (!form.email?.trim() || !form.email.includes('@')) {
           showError('Please enter a valid email address');
           return false;
         }
@@ -545,123 +344,93 @@ const DocumentScreen = ({ navigation }) => {
           showError('Please enter your date of birth');
           return false;
         }
-        if (
-          !form.address.street ||
-          !form.address.city ||
-          !form.address.state ||
-          !form.address.pincode
-        ) {
-          showError('Please fill complete address');
+        if (!form.address?.trim()) {
+          showError('Please enter your address');
           return false;
         }
+        if (!form.city?.trim()) {
+          showError('Please enter your city');
+          return false;
+        }
+        if (!form.state?.trim()) {
+          showError('Please enter your state');
+          return false;
+        }
+        if (!form.pincode?.trim() || form.pincode.length !== 6) {
+          showError('Please enter a valid 6-digit pincode');
+          return false;
+        }
+        if (!form.profilePhoto) {
+          showError('Please upload your profile photo');
+          return false;
+        }
+        return true;
 
-        // Aadhar validation - backend expects aadharCard
-        if (!form.aadharCard) {
-          showError('Please upload your Aadhaar card');
+      case 2: // Identity Documents
+        if (!form.aadharFront) {
+          showError('Please upload Aadhar front image');
+          return false;
+        }
+        if (!form.aadharBack) {
+          showError('Please upload Aadhar back image');
           return false;
         }
         if (!form.aadharNumber || form.aadharNumber.length !== 12) {
-          showError('Please enter valid 12-digit Aadhaar number');
+          showError('Please enter valid 12-digit Aadhar number');
           return false;
         }
-
-        // PAN validation with PAN number
         if (!form.panCard) {
-          showError('Please upload your PAN card');
-          return false;
-        }
-        if (!form.panNumber || form.panNumber.length < 10) {
-          showError('Please enter valid PAN number (10 characters)');
-          return false;
-        }
-
-        // Selfie validation
-        if (!form.selfie) {
-          showError('Please take a clear selfie');
-          return false;
-        }
-        return true;
-
-      case 2:
-        if (!form.vehicleRC) {
-          showError('Please upload your RC');
-          return false;
-        }
-        if (!form.rcNumber) {
-          showError('Please enter your RC number');
+          showError('Please upload PAN card');
           return false;
         }
         if (!form.drivingLicense) {
-          showError('Please upload your Driving License');
+          showError('Please upload driving license');
           return false;
         }
-        if (!form.licenseNumber) {
-          showError('Please enter your license number');
-          return false;
-        }
-        if (!form.licenseExpiryDate) {
-          showError('Please enter license expiry date');
-          return false;
-        }
-        if (!form.vehicleInsurance) {
-          showError('Please upload vehicle insurance');
-          return false;
-        }
-        if (!form.insurancePolicyNumber) {
-          showError('Please enter insurance policy number');
-          return false;
-        }
-        if (!form.insuranceExpiryDate) {
-          showError('Please enter insurance expiry date');
-          return false;
-        }
-        if (!form.vehicleNumber) {
-          showError('Please enter your vehicle number');
-          return false;
-        }
-        if (!form.vehicleModel) {
-          showError('Please enter vehicle model');
-          return false;
-        }
-        if (!form.vehicleYear) {
-          showError('Please enter vehicle year');
-          return false;
-        }
-        if (!form.vehicleColor) {
-          showError('Please enter vehicle color');
-          return false;
-        }
-        if (!form.vehiclePhoto) {
-          showError('Please upload a clear photo of your vehicle');
-          return false;
-        }
-        if (!form.vehicleCategory) {
-          showError('Please select your vehicle category');
-          return false;
-        }
-        if (!form.vehicleBodyType) {
-          showError('Please select your vehicle body type');
+        if (!form.licenseNumber?.trim()) {
+          showError('Please enter license number');
           return false;
         }
         return true;
 
-      case 3:
-        if (!form.bankDetails.accountHolderName) {
-          showError('Please enter the account holder name');
+      case 3: // Vehicle Details
+        if (!form.vehicleType) {
+          showError('Please select vehicle type');
           return false;
         }
-        if (
-          !form.bankDetails.accountNumber ||
-          form.bankDetails.accountNumber.length < 9
-        ) {
-          showError('Please enter a valid account number');
+        if (!form.vehicleNumber?.trim()) {
+          showError('Please enter vehicle number');
           return false;
         }
-        if (
-          !form.bankDetails.ifscCode ||
-          form.bankDetails.ifscCode.length !== 11
-        ) {
-          showError('Please enter a valid IFSC code');
+        if (!form.vehicleRC) {
+          showError('Please upload vehicle RC');
+          return false;
+        }
+        if (!form.rcNumber?.trim()) {
+          showError('Please enter RC number');
+          return false;
+        }
+        if (!form.vehiclePhoto) {
+          showError('Please upload vehicle photo');
+          return false;
+        }
+        return true;
+
+      case 4: // Bank Details
+        if (!form.accountHolderName?.trim()) {
+          showError('Please enter account holder name');
+          return false;
+        }
+        if (!form.accountNumber?.trim()) {
+          showError('Please enter account number');
+          return false;
+        }
+        if (!form.ifscCode || form.ifscCode.length !== 11) {
+          showError('Please enter valid IFSC code');
+          return false;
+        }
+        if (!form.bankName?.trim()) {
+          showError('Please enter bank name');
           return false;
         }
         return true;
@@ -681,76 +450,144 @@ const DocumentScreen = ({ navigation }) => {
   };
 
   const handleSubmit = async () => {
+    // Validate final step
     if (!validateStep()) return;
 
-    Alert.alert(
-      'Submit Application',
-      'Are you sure all information is correct?',
-      [
-        { text: 'Review', style: 'cancel' },
-        {
-          text: 'Submit',
-          onPress: async () => {
-            setLoading(true);
+    setLoading(true);
 
-            try {
-              // Step 1: Submit basic info
-              const basicInfoSuccess = await submitBasicInfo();
-              if (!basicInfoSuccess) {
-                setLoading(false);
-                return;
-              }
+    try {
+      const token = await getToken();
+      console.log('submit token', token);
 
-              // Step 2: Upload all documents
-              const uploadSuccess = await uploadAllDocuments();
-              if (!uploadSuccess) {
-                setLoading(false);
-                return;
-              }
+      if (!token) {
+        Alert.alert('Error', 'Session expired. Please login again.');
+        navigation.navigate('Login');
+        return;
+      }
 
-              // Step 3: Submit vehicle details
-              const vehicleSuccess = await submitVehicleDetails();
-              if (!vehicleSuccess) {
-                setLoading(false);
-                return;
-              }
+      const formData = new FormData();
 
-              // Step 4: Submit bank details
-              const bankSuccess = await submitBankDetails();
-              if (!bankSuccess) {
-                setLoading(false);
-                return;
-              }
+      console.log('form data', formData);
 
-              // Step 5: Submit final application
-              const finalSuccess = await submitApplication();
+      // Append all text fields
+      const textFields = {
+        fullName: form.fullName,
+        email: form.email,
+        dateOfBirth: form.dateOfBirth,
+        phone: form.phone,
+        vehicleType: form.vehicleType,
+        vehicleNumber: form.vehicleNumber,
+        vehicleModel: form.vehicleModel || '',
+        vehicleYear: form.vehicleYear || '',
+        vehicleColor: form.vehicleColor || '',
+        accountHolderName: form.accountHolderName,
+        accountNumber: form.accountNumber,
+        ifscCode: form.ifscCode,
+        bankName: form.bankName,
+        branchName: form.branchName || '',
+        aadharNumber: form.aadharNumber,
+        licenseNumber: form.licenseNumber,
+        rcNumber: form.rcNumber,
+      };
 
-              if (finalSuccess) {
-                Alert.alert(
-                  'Success!',
-                  'Your application has been submitted successfully.',
-                  [
-                    {
-                      text: 'OK',
-                      onPress: () => navigation.navigate('MyTabs'),
-                    },
-                  ],
-                );
-              }
-            } catch (error) {
-              console.error('Submission error:', error);
-              Alert.alert('Error', 'Something went wrong. Please try again.');
-            } finally {
-              setLoading(false);
-            }
+      // Add address as JSON string
+      const addressObj = {
+        street: form.address,
+        city: form.city,
+        state: form.state,
+        pincode: form.pincode,
+      };
+      formData.append('address', JSON.stringify(addressObj));
+
+      // Append all text fields
+      Object.entries(textFields).forEach(([key, value]) => {
+        if (value) formData.append(key, value);
+      });
+
+      // Append all files
+      const fileFields = [
+        'profilePhoto',
+        'aadharFront',
+        'aadharBack',
+        'panCard',
+        'drivingLicense',
+        'vehicleRC',
+        'vehiclePhoto',
+      ];
+
+      fileFields.forEach(field => {
+        if (form[field]) {
+          formData.append(field, {
+            uri: form[field].uri,
+            type: form[field].type || 'image/jpeg',
+            name: form[field].fileName || `${field}.jpg`,
+          });
+        }
+      });
+
+      console.log('Submitting form data...', formData, token);
+
+      const response = await axios
+        .post(`${BASE_URL}/register`, formData, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'multipart/form-data',
           },
-        },
-      ],
-    );
+          timeout: 30000,
+        })
+    
+      console.log(
+        'final data ka data',
+        response.data,
+      );
+
+      if (response.data?.data?.verificationStatus === 'submitted') {
+        Alert.alert(
+          'Success!',
+          response.data.message ||
+            'Registration successful! Your application is under review.',
+          [
+            {
+              text: 'OK',
+              onPress: () => setVerifyStatusVal('PENDING'),
+            },
+          ],
+        );
+      } else {
+        navigation.navigate('MyTabs');
+      }
+    } catch (error) {
+      console.error('Submission error:', error.response || error.message || error);
+
+      // Safely extract error message
+      let errorMessage = 'Registration failed. Please try again.';
+
+      if (error.response?.data) {
+        const data = error.response.data;
+        if (typeof data.message === 'string') {
+          errorMessage = data.message;
+        } else if (data.message === true) {
+          errorMessage = 'Success';
+        } else if (data.message === false) {
+          errorMessage = 'Failed';
+        } else if (data.error) {
+          errorMessage =
+            typeof data.error === 'string'
+              ? data.error
+              : JSON.stringify(data.error);
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
+      Alert.alert('Error ---', errorMessage);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const renderProgressBar = () => {
-    const progress = (step / 3) * 100;
+    const progress = (step / 4) * 100;
     return (
       <View style={styles.progressBarContainer}>
         <View style={[styles.progressBar, { width: `${progress}%` }]} />
@@ -761,24 +598,24 @@ const DocumentScreen = ({ navigation }) => {
   const renderImagePicker = (
     title,
     key,
-    showCamera = false,
-    isRequired = true,
+    showCamera = true,
+    required = true,
   ) => (
     <View style={styles.uploadCard}>
       <View style={styles.uploadHeader}>
         <View style={styles.uploadTitleContainer}>
           <Icon
-            name={form[key] ? 'check-circle' : 'cloud-upload'}
+            name={form.uploadStatus[key] ? 'check-circle' : 'cloud-upload'}
             size={20}
-            color={form[key] ? '#4CAF50' : '#666'}
+            color={form.uploadStatus[key] ? '#4CAF50' : '#666'}
           />
           <Text style={styles.uploadTitle}>
-            {title} {isRequired && <Text style={styles.requiredStar}>*</Text>}
+            {title} {required && <Text style={styles.requiredStar}>*</Text>}
           </Text>
         </View>
-        {form[key] && (
+        {form.uploadStatus[key] && (
           <TouchableOpacity
-            onPress={() => setForm({ ...form, [key]: null })}
+            onPress={() => removeFile(key)}
             style={styles.removeBtn}
           >
             <Icon name="close" size={18} color="#FF3B30" />
@@ -793,7 +630,7 @@ const DocumentScreen = ({ navigation }) => {
             onPress={() => pickImage(key, false)}
           >
             <Icon name="photo-library" size={24} color="#F4C20D" />
-            <Text style={styles.uploadBtnText}>Upload</Text>
+            <Text style={styles.uploadBtnText}>Gallery</Text>
           </TouchableOpacity>
 
           {showCamera && (
@@ -827,104 +664,89 @@ const DocumentScreen = ({ navigation }) => {
     </View>
   );
 
-  const renderVehicleCategorySelector = () => (
-    <View style={styles.selectorContainer}>
-      <Text style={styles.label}>
-        Vehicle Category <Text style={styles.requiredStar}>*</Text>
-      </Text>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.categoryScrollContent}
-      >
-        {Object.keys(VEHICLE_DATA).map(category => (
-          <TouchableOpacity
-            key={category}
-            style={[
-              styles.categoryCard,
-              form.vehicleCategory === category && styles.categoryCardActive,
-            ]}
-            onPress={() => {
-              setForm({
-                ...form,
-                vehicleCategory: category,
-                vehicleBodyType: '', // Reset body type when category changes
-              });
-            }}
-          >
-            <View
-              style={[
-                styles.categoryIconContainer,
-                form.vehicleCategory === category &&
-                  styles.categoryIconContainerActive,
-              ]}
-            >
-              <Image
-                source={ICONS[VEHICLE_DATA[category].icon]}
-                style={{ width: 50, height: 50 }}
-              />
-            </View>
-            <Text
-              style={[
-                styles.categoryText,
-                form.vehicleCategory === category && styles.categoryTextActive,
-              ]}
-            >
-              {category}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+  const renderCustomAlert = ({ title, message, type }) => (
+    <View
+      style={[
+        styles.customAlert,
+        type === 'success' && styles.customAlertSuccess,
+      ]}
+    >
+      <Icon
+        name={type === 'success' ? 'check-circle' : 'info'}
+        size={20}
+        color={type === 'success' ? '#4CAF50' : '#F4C20D'}
+      />
+      <View style={styles.customAlertContent}>
+        <Text style={styles.customAlertTitle}>{title}</Text>
+        <Text style={styles.customAlertMessage}>{message}</Text>
+      </View>
     </View>
   );
 
-  const renderVehicleBodyTypeSelector = () => {
-    if (!form.vehicleCategory) return null;
-
-    const bodyTypes = VEHICLE_DATA[form.vehicleCategory]?.bodyTypes || [];
-
+  // Status check screens
+  if (verifyStatus === 'PENDING' || verifyStatus === 'submitted') {
     return (
-      <View style={styles.selectorContainer}>
-        <Text style={styles.label}>
-          Vehicle Body Type <Text style={styles.requiredStar}>*</Text>
-        </Text>
-        <View style={styles.bodyTypeGrid}>
-          {bodyTypes.map(type => (
-            <TouchableOpacity
-              key={type.id}
-              style={[
-                styles.bodyTypeCard,
-                form.vehicleBodyType === type.id && styles.bodyTypeCardActive,
-              ]}
-              onPress={() => setForm({ ...form, vehicleBodyType: type.id })}
-            >
-              <View
-                style={[
-                  styles.bodyTypeIconContainer,
-                  form.vehicleBodyType === type.id,
-                ]}
-              >
-                <Image
-                  source={ICONS[type.icon]}
-                  style={{ width: 50, height: 50 }}
-                />
-              </View>
-              <Text
-                style={[
-                  styles.bodyTypeText,
-                  form.vehicleBodyType === type.id && styles.bodyTypeTextActive,
-                ]}
-                numberOfLines={2}
-              >
-                {type.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
+      <View style={styles.reviewContainer}>
+        <StatusBar backgroundColor="#fff" barStyle="dark-content" />
+        <View style={styles.reviewContent}>
+          <View style={styles.statusBadgePending}>
+            <Icon name="hourglass-top" size={48} color="#F4C20D" />
+          </View>
+          <Text style={styles.reviewTitle}>Application Under Review</Text>
+          <Text style={styles.reviewText}>
+            Your documents have been submitted successfully. Our team is
+            currently verifying your details. This usually takes 24-48 hours.
+          </Text>
+          <View style={styles.infoPoint}>
+            <Icon name="info" size={18} color="#666" />
+            <Text style={styles.infoPointText}>
+              We will notify you once verified.
+            </Text>
+          </View>
+          <TouchableOpacity style={styles.refreshBtn} onPress={checkStatus}>
+            <Text style={styles.refreshBtnText}>REFRESH STATUS</Text>
+          </TouchableOpacity>
         </View>
       </View>
     );
-  };
+  }
 
+  if (verifyStatus === 'partially_verified' || verifyStatus === 'rejected') {
+    return (
+      <View style={styles.reviewContainer}>
+        <StatusBar backgroundColor="#fff" barStyle="dark-content" />
+        <View style={styles.reviewContent}>
+          <View style={styles.statusBadgeError}>
+            <Icon name="error-outline" size={48} color="#FF3B30" />
+          </View>
+          <Text style={styles.reviewTitle}>Application Rejected</Text>
+          <Text style={styles.rejectReasonText}>
+            Reason: {rejectReason || 'Document verification failed.'}
+          </Text>
+          <Text style={styles.reviewText}>
+            Please re-submit your documents with correct information to proceed.
+          </Text>
+          <TouchableOpacity
+            style={styles.reSubmitBtn}
+            onPress={() => setVerifyStatusVal('PENDING')}
+          >
+            <Text style={styles.reSubmitBtnText}>RE-SUBMIT DOCUMENTS</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  if (loading && step === 1) {
+    return (
+      <View style={styles.loadingContainerFull}>
+        <ActivityIndicator size="large" color="#F4C20D" />
+        <Text style={styles.loadingTextFull}>Loading...</Text>
+      </View>
+    );
+  }
+
+  // Main Registration Form
   return (
     <View style={styles.container}>
       <StatusBar backgroundColor="#F4C20D" barStyle="dark-content" />
@@ -940,10 +762,12 @@ const DocumentScreen = ({ navigation }) => {
         <View>
           <Text style={styles.headerTitle}>Driver Application</Text>
           <Text style={styles.headerSubtitle}>
-            Step {step} of 3:{' '}
+            Step {step} of 4:{' '}
             {step === 1
-              ? 'Personal Details'
+              ? 'Personal Info'
               : step === 2
+              ? 'Identity Docs'
+              : step === 3
               ? 'Vehicle Details'
               : 'Bank Details'}
           </Text>
@@ -970,15 +794,17 @@ const DocumentScreen = ({ navigation }) => {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.scrollContent}
         >
-          {/* STEP 1 - Owner Details */}
+          {/* STEP 1 - Personal Information */}
           {step === 1 && (
             <View>
-              {/* Personal Information Section */}
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
                   <Icon name="person" size={24} color="#F4C20D" />
                   <Text style={styles.sectionTitle}>Personal Information</Text>
                 </View>
+
+                {/* Profile Photo */}
+                {renderImagePicker('Profile Photo', 'profilePhoto', true, true)}
 
                 <View style={styles.inputContainer}>
                   <Icon
@@ -1030,8 +856,6 @@ const DocumentScreen = ({ navigation }) => {
                   />
                 </View>
 
-                <Text style={styles.sectionSubtitle}>Address</Text>
-
                 <View style={styles.inputContainer}>
                   <Icon
                     name="home"
@@ -1043,13 +867,8 @@ const DocumentScreen = ({ navigation }) => {
                     placeholder="Street Address *"
                     style={styles.input}
                     placeholderTextColor="#999"
-                    value={form.address.street}
-                    onChangeText={v =>
-                      setForm({
-                        ...form,
-                        address: { ...form.address, street: v },
-                      })
-                    }
+                    value={form.address}
+                    onChangeText={v => setForm({ ...form, address: v })}
                   />
                 </View>
 
@@ -1065,13 +884,8 @@ const DocumentScreen = ({ navigation }) => {
                       placeholder="City *"
                       style={styles.input}
                       placeholderTextColor="#999"
-                      value={form.address.city}
-                      onChangeText={v =>
-                        setForm({
-                          ...form,
-                          address: { ...form.address, city: v },
-                        })
-                      }
+                      value={form.city}
+                      onChangeText={v => setForm({ ...form, city: v })}
                     />
                   </View>
 
@@ -1086,13 +900,8 @@ const DocumentScreen = ({ navigation }) => {
                       placeholder="State *"
                       style={styles.input}
                       placeholderTextColor="#999"
-                      value={form.address.state}
-                      onChangeText={v =>
-                        setForm({
-                          ...form,
-                          address: { ...form.address, state: v },
-                        })
-                      }
+                      value={form.state}
+                      onChangeText={v => setForm({ ...form, state: v })}
                     />
                   </View>
                 </View>
@@ -1110,93 +919,222 @@ const DocumentScreen = ({ navigation }) => {
                     placeholderTextColor="#999"
                     keyboardType="numeric"
                     maxLength={6}
-                    value={form.address.pincode}
+                    value={form.pincode}
                     onChangeText={v =>
-                      setForm({
-                        ...form,
-                        address: { ...form.address, pincode: v },
-                      })
+                      setForm({ ...form, pincode: v.replace(/[^0-9]/g, '') })
                     }
                   />
                 </View>
-              </View>
-
-              {/* Documents Section */}
-              {/* Documents Section */}
-              <View style={styles.sectionCard}>
-                <View style={styles.sectionHeader}>
-                  <Icon name="description" size={24} color="#F4C20D" />
-                  <Text style={styles.sectionTitle}>Required Documents</Text>
-                </View>
-
-                {/* Aadhar Card - Single upload as backend expects */}
-                {renderImagePicker(
-                  'Aadhaar Card (Front & Back combined or separate?)',
-                  'aadharCard',
-                  true,
-                  true,
-                )}
-
-                <View style={styles.inputContainer}>
-                  <Icon
-                    name="credit-card"
-                    size={20}
-                    color="#999"
-                    style={styles.inputIcon}
-                  />
-                  <TextInput
-                    placeholder="Aadhaar Number * (12 digits)"
-                    style={styles.input}
-                    placeholderTextColor="#999"
-                    keyboardType="numeric"
-                    maxLength={12}
-                    value={form.aadharNumber}
-                    onChangeText={v => setForm({ ...form, aadharNumber: v })}
-                  />
-                </View>
-
-                {/* PAN Card with number field */}
-                {renderImagePicker('PAN Card', 'panCard', true, true)}
-
-                <View style={styles.inputContainer}>
-                  <Icon
-                    name="credit-card"
-                    size={20}
-                    color="#999"
-                    style={styles.inputIcon}
-                  />
-                  <TextInput
-                    placeholder="PAN Number * (10 characters, e.g., ABCDE1234F)"
-                    style={styles.input}
-                    placeholderTextColor="#999"
-                    autoCapitalize="characters"
-                    maxLength={10}
-                    value={form.panNumber}
-                    onChangeText={v =>
-                      setForm({ ...form, panNumber: v.toUpperCase() })
-                    }
-                  />
-                </View>
-
-                {/* Selfie */}
-                {renderImagePicker('Selfie with ID', 'selfie', true, true)}
               </View>
             </View>
           )}
 
-          {/* STEP 2 - Vehicle Details */}
+          {/* STEP 2 - Identity Documents */}
           {step === 2 && (
+            <View style={styles.sectionCard}>
+              <View style={styles.sectionHeader}>
+                <Icon name="description" size={24} color="#F4C20D" />
+                <Text style={styles.sectionTitle}>Identity Documents</Text>
+              </View>
+
+              {/* Aadhar Front & Back */}
+              {renderImagePicker(
+                'Aadhar Card (Front)',
+                'aadharFront',
+                true,
+                true,
+              )}
+              {renderImagePicker(
+                'Aadhar Card (Back)',
+                'aadharBack',
+                true,
+                true,
+              )}
+
+              <View style={styles.inputContainer}>
+                <Icon
+                  name="credit-card"
+                  size={20}
+                  color="#999"
+                  style={styles.inputIcon}
+                />
+                <TextInput
+                  placeholder="Aadhar Number * (12 digits)"
+                  style={styles.input}
+                  placeholderTextColor="#999"
+                  keyboardType="numeric"
+                  maxLength={12}
+                  value={form.aadharNumber}
+                  onChangeText={v =>
+                    setForm({ ...form, aadharNumber: v.replace(/[^0-9]/g, '') })
+                  }
+                />
+              </View>
+
+              {/* PAN Card */}
+              {renderImagePicker('PAN Card', 'panCard', true, true)}
+
+              {/* Driving License */}
+              {renderImagePicker(
+                'Driving License',
+                'drivingLicense',
+                true,
+                true,
+              )}
+
+              <View style={styles.inputContainer}>
+                <Icon
+                  name="confirmation-number"
+                  size={20}
+                  color="#999"
+                  style={styles.inputIcon}
+                />
+                <TextInput
+                  placeholder="License Number *"
+                  style={styles.input}
+                  placeholderTextColor="#999"
+                  value={form.licenseNumber}
+                  onChangeText={v =>
+                    setForm({ ...form, licenseNumber: v })
+                  }
+                />
+              </View>
+            </View>
+          )}
+
+          {/* STEP 3 - Vehicle Details */}
+          {step === 3 && (
             <View>
-              {/* RC Documents */}
+              <View style={styles.sectionCard}>
+                <View style={styles.sectionHeader}>
+                  <Icon name="directions-car" size={24} color="#F4C20D" />
+                  <Text style={styles.sectionTitle}>Vehicle Information</Text>
+                </View>
+
+                {/* Vehicle Photo */}
+                {renderImagePicker(
+                  'Vehicle Photograph',
+                  'vehiclePhoto',
+                  true,
+                  true,
+                )}
+
+                <View style={styles.selectorContainer}>
+                  <Text style={styles.label}>
+                    Vehicle Type <Text style={styles.requiredStar}>*</Text>
+                  </Text>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.categoryScrollContent}
+                  >
+                    {VEHICLE_TYPES.map(type => (
+                      <TouchableOpacity
+                        key={type}
+                        style={[
+                          styles.typeChip,
+                          form.vehicleType === type && styles.typeChipActive,
+                        ]}
+                        onPress={() => setForm({ ...form, vehicleType: type })}
+                      >
+                        <Text
+                          style={[
+                            styles.typeChipText,
+                            form.vehicleType === type &&
+                              styles.typeChipTextActive,
+                          ]}
+                        >
+                          {type}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Icon
+                    name="local-taxi"
+                    size={20}
+                    color="#999"
+                    style={styles.inputIcon}
+                  />
+                  <TextInput
+                    placeholder="Vehicle Number * (e.g., MH12AB1234)"
+                    style={styles.input}
+                    placeholderTextColor="#999"
+                    value={form.vehicleNumber}
+                    onChangeText={v =>
+                      setForm({ ...form, vehicleNumber: v })
+                    }
+                  />
+                </View>
+
+                <View style={styles.rowContainer}>
+                  <View style={[styles.inputContainer, styles.halfInput]}>
+                    <Icon
+                      name="model-training"
+                      size={20}
+                      color="#999"
+                      style={styles.inputIcon}
+                    />
+                    <TextInput
+                      placeholder="Model"
+                      style={styles.input}
+                      placeholderTextColor="#999"
+                      value={form.vehicleModel}
+                      onChangeText={v => setForm({ ...form, vehicleModel: v })}
+                    />
+                  </View>
+
+                  <View style={[styles.inputContainer, styles.halfInput]}>
+                    <Icon
+                      name="calendar-today"
+                      size={20}
+                      color="#999"
+                      style={styles.inputIcon}
+                    />
+                    <TextInput
+                      placeholder="Year"
+                      style={styles.input}
+                      placeholderTextColor="#999"
+                      keyboardType="numeric"
+                      maxLength={4}
+                      value={form.vehicleYear}
+                      onChangeText={v =>
+                        setForm({
+                          ...form,
+                          vehicleYear: v.replace(/[^0-9]/g, ''),
+                        })
+                      }
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.inputContainer}>
+                  <Icon
+                    name="color-lens"
+                    size={20}
+                    color="#999"
+                    style={styles.inputIcon}
+                  />
+                  <TextInput
+                    placeholder="Color"
+                    style={styles.input}
+                    placeholderTextColor="#999"
+                    value={form.vehicleColor}
+                    onChangeText={v => setForm({ ...form, vehicleColor: v })}
+                  />
+                </View>
+              </View>
+
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
                   <Icon name="assignment" size={24} color="#F4C20D" />
-                  <Text style={styles.sectionTitle}>
-                    Registration Certificate (RC)
-                  </Text>
+                  <Text style={styles.sectionTitle}>Vehicle Documents</Text>
                 </View>
 
-                {renderImagePicker('RC Document', 'vehicleRC', false, true)}
+                {/* Vehicle RC */}
+                {renderImagePicker('Vehicle RC', 'vehicleRC', true, true)}
 
                 <View style={styles.inputContainer}>
                   <Icon
@@ -1211,206 +1149,16 @@ const DocumentScreen = ({ navigation }) => {
                     placeholderTextColor="#999"
                     value={form.rcNumber}
                     onChangeText={v =>
-                      setForm({ ...form, rcNumber: v.toUpperCase() })
+                      setForm({ ...form, rcNumber: v })
                     }
                   />
                 </View>
-              </View>
-
-              {/* Insurance */}
-              <View style={styles.sectionCard}>
-                <View style={styles.sectionHeader}>
-                  <Icon name="security" size={24} color="#F4C20D" />
-                  <Text style={styles.sectionTitle}>Insurance</Text>
-                </View>
-
-                {renderImagePicker(
-                  'Insurance Document',
-                  'vehicleInsurance',
-                  false,
-                  true,
-                )}
-
-                <View style={styles.inputContainer}>
-                  <Icon
-                    name="policy"
-                    size={20}
-                    color="#999"
-                    style={styles.inputIcon}
-                  />
-                  <TextInput
-                    placeholder="Policy Number *"
-                    style={styles.input}
-                    placeholderTextColor="#999"
-                    value={form.insurancePolicyNumber}
-                    onChangeText={v =>
-                      setForm({ ...form, insurancePolicyNumber: v })
-                    }
-                  />
-                </View>
-
-                <View style={styles.inputContainer}>
-                  <Icon
-                    name="event"
-                    size={20}
-                    color="#999"
-                    style={styles.inputIcon}
-                  />
-                  <TextInput
-                    placeholder="Insurance Expiry Date * (YYYY-MM-DD)"
-                    style={styles.input}
-                    placeholderTextColor="#999"
-                    value={form.insuranceExpiryDate}
-                    onChangeText={v =>
-                      setForm({ ...form, insuranceExpiryDate: v })
-                    }
-                  />
-                </View>
-              </View>
-
-              {/* Driving License */}
-              <View style={styles.sectionCard}>
-                <View style={styles.sectionHeader}>
-                  <Icon name="credit-card" size={24} color="#F4C20D" />
-                  <Text style={styles.sectionTitle}>Driving License</Text>
-                </View>
-
-                {renderImagePicker(
-                  'Driving License',
-                  'drivingLicense',
-                  false,
-                  true,
-                )}
-
-                <View style={styles.inputContainer}>
-                  <Icon
-                    name="confirmation-number"
-                    size={20}
-                    color="#999"
-                    style={styles.inputIcon}
-                  />
-                  <TextInput
-                    placeholder="License Number *"
-                    style={styles.input}
-                    placeholderTextColor="#999"
-                    value={form.licenseNumber}
-                    onChangeText={v =>
-                      setForm({ ...form, licenseNumber: v.toUpperCase() })
-                    }
-                  />
-                </View>
-
-                <View style={styles.inputContainer}>
-                  <Icon
-                    name="event"
-                    size={20}
-                    color="#999"
-                    style={styles.inputIcon}
-                  />
-                  <TextInput
-                    placeholder="License Expiry Date * (YYYY-MM-DD)"
-                    style={styles.input}
-                    placeholderTextColor="#999"
-                    value={form.licenseExpiryDate}
-                    onChangeText={v =>
-                      setForm({ ...form, licenseExpiryDate: v })
-                    }
-                  />
-                </View>
-              </View>
-
-              {/* Vehicle Information */}
-              <View style={styles.sectionCard}>
-                <View style={styles.sectionHeader}>
-                  <Icon name="directions-car" size={24} color="#F4C20D" />
-                  <Text style={styles.sectionTitle}>Vehicle Information</Text>
-                </View>
-
-                <View style={styles.inputContainer}>
-                  <Icon
-                    name="local-taxi"
-                    size={20}
-                    color="#999"
-                    style={styles.inputIcon}
-                  />
-                  <TextInput
-                    placeholder="Vehicle Number * (e.g., MH01AB1234)"
-                    style={styles.input}
-                    placeholderTextColor="#999"
-                    value={form.vehicleNumber}
-                    onChangeText={v =>
-                      setForm({ ...form, vehicleNumber: v.toUpperCase() })
-                    }
-                  />
-                </View>
-
-                <View style={styles.inputContainer}>
-                  <Icon
-                    name="model-training"
-                    size={20}
-                    color="#999"
-                    style={styles.inputIcon}
-                  />
-                  <TextInput
-                    placeholder="Vehicle Model * (e.g., Tata 407)"
-                    style={styles.input}
-                    placeholderTextColor="#999"
-                    value={form.vehicleModel}
-                    onChangeText={v => setForm({ ...form, vehicleModel: v })}
-                  />
-                </View>
-
-                <View style={styles.rowContainer}>
-                  <View style={[styles.inputContainer, styles.halfInput]}>
-                    <Icon
-                      name="calendar-today"
-                      size={20}
-                      color="#999"
-                      style={styles.inputIcon}
-                    />
-                    <TextInput
-                      placeholder="Year *"
-                      style={styles.input}
-                      placeholderTextColor="#999"
-                      keyboardType="numeric"
-                      maxLength={4}
-                      value={form.vehicleYear}
-                      onChangeText={v => setForm({ ...form, vehicleYear: v })}
-                    />
-                  </View>
-
-                  <View style={[styles.inputContainer, styles.halfInput]}>
-                    <Icon
-                      name="color-lens"
-                      size={20}
-                      color="#999"
-                      style={styles.inputIcon}
-                    />
-                    <TextInput
-                      placeholder="Color *"
-                      style={styles.input}
-                      placeholderTextColor="#999"
-                      value={form.vehicleColor}
-                      onChangeText={v => setForm({ ...form, vehicleColor: v })}
-                    />
-                  </View>
-                </View>
-
-                {renderVehicleCategorySelector()}
-                {renderVehicleBodyTypeSelector()}
-
-                {renderImagePicker(
-                  'Vehicle Photograph',
-                  'vehiclePhoto',
-                  true,
-                  true,
-                )}
               </View>
             </View>
           )}
 
-          {/* STEP 3 - Bank Details */}
-          {step === 3 && (
+          {/* STEP 4 - Bank Details */}
+          {step === 4 && (
             <View style={styles.sectionCard}>
               <View style={styles.sectionHeader}>
                 <Icon name="account-balance" size={24} color="#F4C20D" />
@@ -1428,16 +1176,8 @@ const DocumentScreen = ({ navigation }) => {
                   placeholder="Account Holder Name *"
                   style={styles.input}
                   placeholderTextColor="#999"
-                  value={form.bankDetails.accountHolderName}
-                  onChangeText={v =>
-                    setForm({
-                      ...form,
-                      bankDetails: {
-                        ...form.bankDetails,
-                        accountHolderName: v,
-                      },
-                    })
-                  }
+                  value={form.accountHolderName}
+                  onChangeText={v => setForm({ ...form, accountHolderName: v })}
                 />
               </View>
 
@@ -1453,13 +1193,8 @@ const DocumentScreen = ({ navigation }) => {
                   style={styles.input}
                   placeholderTextColor="#999"
                   keyboardType="numeric"
-                  value={form.bankDetails.accountNumber}
-                  onChangeText={v =>
-                    setForm({
-                      ...form,
-                      bankDetails: { ...form.bankDetails, accountNumber: v },
-                    })
-                  }
+                  value={form.accountNumber}
+                  onChangeText={v => setForm({ ...form, accountNumber: v })}
                 />
               </View>
 
@@ -1474,7 +1209,7 @@ const DocumentScreen = ({ navigation }) => {
                   placeholder="IFSC Code *"
                   style={styles.input}
                   placeholderTextColor="#999"
-                  value={form.bankDetails.ifscCode}
+                  value={form.ifscCode}
                   onChangeText={detectBank}
                   autoCapitalize="characters"
                   maxLength={11}
@@ -1501,7 +1236,7 @@ const DocumentScreen = ({ navigation }) => {
                 />
                 <TextInput
                   placeholder="Bank Name"
-                  value={form.bankDetails.bankName}
+                  value={form.bankName}
                   editable={false}
                   style={[styles.input, styles.disabledInput]}
                   placeholderTextColor="#999"
@@ -1519,7 +1254,7 @@ const DocumentScreen = ({ navigation }) => {
                 />
                 <TextInput
                   placeholder="Branch Name"
-                  value={form.bankDetails.branchName}
+                  value={form.branchName}
                   editable={false}
                   style={[styles.input, styles.disabledInput]}
                   placeholderTextColor="#999"
@@ -1550,7 +1285,7 @@ const DocumentScreen = ({ navigation }) => {
           </TouchableOpacity>
         )}
 
-        {step < 3 ? (
+        {step < 4 ? (
           <TouchableOpacity
             style={[
               styles.footerBtn,
@@ -1834,75 +1569,32 @@ const styles = StyleSheet.create({
 
   categoryScrollContent: {
     paddingHorizontal: 5,
-    gap: 12,
+    gap: 8,
+    paddingBottom: 5,
   },
 
-  categoryCard: {
-    alignItems: 'center',
-    width: 96,
+  typeChip: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 25,
+    borderWidth: 1,
+    borderColor: '#E8E8E8',
     marginRight: 8,
   },
 
-  categoryIconContainer: {
-    width: 70,
-    height: 70,
-    borderRadius: 35,
-    backgroundColor: '#F8F9FA',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#E8E8E8',
-    marginBottom: 8,
-  },
-
-  categoryIconContainerActive: {
+  typeChipActive: {
     backgroundColor: '#F4C20D',
     borderColor: '#F4C20D',
   },
 
-  categoryText: {
-    fontSize: 12,
+  typeChipText: {
+    fontSize: 14,
     color: '#666',
-    textAlign: 'center',
     fontWeight: '500',
   },
 
-  categoryTextActive: {
-    color: '#000',
-    fontWeight: '600',
-  },
-
-  bodyTypeGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-
-  bodyTypeCard: {
-    width: (width - 90) / 2,
-    backgroundColor: '#F8F9FA',
-    borderRadius: 12,
-    padding: 12,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E8E8E8',
-  },
-
-  bodyTypeCardActive: {
-    backgroundColor: '#F4C20D',
-    borderColor: '#F4C20D',
-  },
-
-  bodyTypeIconContainer: {},
-
-  bodyTypeText: {
-    fontSize: 11,
-    color: '#666',
-    textAlign: 'center',
-    fontWeight: '500',
-  },
-
-  bodyTypeTextActive: {
+  typeChipTextActive: {
     color: '#000',
     fontWeight: '600',
   },
@@ -2007,6 +1699,163 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#333',
     fontWeight: '500',
+  },
+
+  // Custom Alert Styles
+  customAlert: {
+    flexDirection: 'row',
+    backgroundColor: '#FFF9E6',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#F4C20D',
+  },
+
+  customAlertSuccess: {
+    backgroundColor: '#E8F5E9',
+    borderColor: '#4CAF50',
+  },
+
+  customAlertContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+
+  customAlertTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+
+  customAlertMessage: {
+    fontSize: 12,
+    color: '#666',
+  },
+
+  loadingContainerFull: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+
+  loadingTextFull: {
+    marginTop: 15,
+    fontSize: 16,
+    color: '#666',
+    fontWeight: '500',
+  },
+
+  reviewContainer: {
+    flex: 1,
+    backgroundColor: '#fff',
+    padding: 30,
+    justifyContent: 'center',
+  },
+
+  reviewContent: {
+    alignItems: 'center',
+  },
+
+  reviewLogo: {
+    width: 120,
+    height: 120,
+    marginBottom: 40,
+  },
+
+  statusBadgePending: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#FFF9E6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+
+  statusBadgeError: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#FFE5E5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+
+  reviewTitle: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: '#000',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+
+  reviewText: {
+    fontSize: 15,
+    color: '#666',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 30,
+  },
+
+  rejectReasonText: {
+    fontSize: 14,
+    color: '#FF3B30',
+    fontWeight: '700',
+    marginBottom: 20,
+    textAlign: 'center',
+    backgroundColor: '#FFE5E5',
+    padding: 12,
+    borderRadius: 8,
+    width: '100%',
+  },
+
+  infoPoint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 40,
+  },
+
+  infoPointText: {
+    fontSize: 13,
+    color: '#666',
+    marginLeft: 8,
+    fontWeight: '500',
+  },
+
+  refreshBtn: {
+    width: '100%',
+    backgroundColor: '#F4C20D',
+    paddingVertical: 18,
+    borderRadius: 14,
+    alignItems: 'center',
+    ...theme.shadow.card,
+  },
+
+  refreshBtnText: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#000',
+    letterSpacing: 1,
+  },
+
+  reSubmitBtn: {
+    width: '100%',
+    backgroundColor: '#000',
+    paddingVertical: 18,
+    borderRadius: 14,
+    alignItems: 'center',
+    ...theme.shadow.card,
+  },
+
+  reSubmitBtnText: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#fff',
+    letterSpacing: 1,
   },
 });
 

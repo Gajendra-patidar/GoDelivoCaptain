@@ -7,8 +7,11 @@ import {
   TouchableOpacity,
   ScrollView,
   Alert,
+  Platform,
 } from 'react-native';
+import LinearGradient from 'react-native-linear-gradient';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { moderateScale } from 'react-native-size-matters';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   addWalletAmount,
@@ -71,51 +74,92 @@ const EarningsScreen = ({ navigation }) => {
     }
   };
 
+  const handlePayoutRequest = async () => {
+    try {
+      const result = await driverApi.requestPayout(wallet.balance);
+      if (result) {
+        setWallet({ ...wallet, balance: 0 });
+        Alert.alert('Success', `Payout of ₹${wallet.balance} requested. Funds will be transferred shortly.`);
+      }
+    } catch (err) {
+      if (err.response?.data?.message === 'Incomplete bank details') {
+        Alert.alert('Bank Details Missing', 'Please add bank details before requesting a payout.');
+      } else {
+        Alert.alert('Error', err.response?.data?.message || 'Failed to request payout');
+      }
+    }
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar backgroundColor={theme.colors.primary} barStyle="dark-content" />
 
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={24} color="#000" />
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={24} color={theme.colors.ink} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Earnings and Wallet</Text>
+        <Text style={styles.headerTitle}>Earnings</Text>
+        <TouchableOpacity style={styles.helpBtn} onPress={() => Alert.alert('Help', 'Contacting support...')}>
+          <Ionicons name="help-circle-outline" size={24} color={theme.colors.ink} />
+        </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.walletCard}>
-          <Text style={styles.cardLabel}>Wallet Balance</Text>
-          <Text style={styles.cardAmount}>Rs {wallet.balance.toFixed(2)}</Text>
-        </View>
+      <ScrollView 
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <LinearGradient
+          colors={['#1a1c1e', '#2c2f33']}
+          style={styles.walletCard}
+        >
+          <View>
+            <Text style={styles.cardLabel}>Wallet Balance</Text>
+            <Text style={styles.cardAmount}>₹{Number(wallet?.balance || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</Text>
+          </View>
+          
+          <TouchableOpacity 
+             style={[styles.payoutBtn, wallet.balance <= 0 && { opacity: 0.6 }]} 
+             onPress={handlePayoutRequest}
+             disabled={wallet.balance <= 0}
+          >
+             <Text style={styles.payoutBtnText}>TRANFER TO BANK</Text>
+             <Ionicons name="chevron-forward" size={16} color="#000" />
+          </TouchableOpacity>
+        </LinearGradient>
 
-        <View style={styles.grid}>
+        <View style={styles.statsGrid}>
           <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Today</Text>
-            <Text style={styles.statValue}>Rs {wallet.todayEarnings.toFixed(2)}</Text>
+            <Text style={styles.statLabel}>TODAY</Text>
+            <Text style={styles.statValue}>₹{wallet.todayEarnings.toFixed(2)}</Text>
           </View>
           <View style={styles.statCard}>
-            <Text style={styles.statLabel}>Total</Text>
-            <Text style={styles.statValue}>Rs {wallet.totalEarnings.toFixed(2)}</Text>
+            <Text style={styles.statLabel}>THIS WEEK</Text>
+            <Text style={styles.statValue}>₹{wallet.totalEarnings.toFixed(2)}</Text>
           </View>
         </View>
 
-        <View style={styles.statCardFull}>
-          <Text style={styles.statLabel}>Completed Deliveries</Text>
-          <Text style={styles.statValue}>{wallet.totalDeliveries}</Text>
+        <View style={styles.deliveriesCard}>
+          <View style={styles.deliveriesIcon}>
+            <Ionicons name="cube-outline" size={24} color={theme.colors.primary} />
+          </View>
+          <View>
+            <Text style={styles.statLabel}>TOTAL DELIVERIES</Text>
+            <Text style={styles.statValueLarge}>{wallet.totalDeliveries}</Text>
+          </View>
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Quick Wallet Recharge</Text>
-          <View style={styles.amountRow}>
+          <Text style={styles.sectionTitle}>Add Money to Wallet</Text>
+          <View style={styles.rechargeRow}>
             {QUICK_ADD_AMOUNTS.map(amount => (
               <TouchableOpacity
                 key={amount}
-                style={styles.amountButton}
+                style={styles.rechargeBtn}
                 onPress={() => handleQuickAdd(amount)}
                 disabled={loadingAmount !== null}
               >
-                <Text style={styles.amountButtonText}>
-                  {loadingAmount === amount ? 'Adding...' : `+ Rs ${amount}`}
+                <Text style={styles.rechargeBtnText}>
+                  {loadingAmount === amount ? '...' : `₹${amount}`}
                 </Text>
               </TouchableOpacity>
             ))}
@@ -123,11 +167,14 @@ const EarningsScreen = ({ navigation }) => {
         </View>
 
         <TouchableOpacity
-          style={styles.historyButton}
+          style={styles.historyLink}
           onPress={() => navigation.navigate('OrderHistory')}
         >
-          <Text style={styles.historyButtonText}>View Order History</Text>
-          <Ionicons name="chevron-forward" size={20} color="#000" />
+          <View style={styles.historyIcon}>
+             <Ionicons name="time-outline" size={22} color={theme.colors.ink} />
+          </View>
+          <Text style={styles.historyLinkText}>View Trip History</Text>
+          <Ionicons name="chevron-forward" size={20} color={theme.colors.muted} />
         </TouchableOpacity>
       </ScrollView>
     </View>
@@ -139,112 +186,168 @@ export default EarningsScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.bg,
+    backgroundColor: '#fff',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.primary,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    justifyContent: 'space-between',
+    paddingHorizontal: moderateScale(16),
+    paddingTop: Platform.OS === 'ios' ? moderateScale(50) : moderateScale(20),
+    paddingBottom: moderateScale(15),
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  backBtn: {
+    padding: 4,
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: moderateScale(18),
+    fontWeight: '800',
     color: theme.colors.ink,
-    marginLeft: 14,
+  },
+  helpBtn: {
+    padding: 4,
   },
   content: {
-    padding: 16,
-    paddingBottom: 24,
+    padding: moderateScale(16),
+    paddingBottom: moderateScale(30),
   },
   walletCard: {
-    backgroundColor: theme.colors.ink,
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 14,
+    borderRadius: theme.radii.xl,
+    padding: moderateScale(24),
+    marginBottom: moderateScale(20),
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     ...theme.shadow.card,
   },
   cardLabel: {
-    color: '#D1D5DB',
-    fontSize: 14,
+    color: '#9CA3AF',
+    fontSize: moderateScale(12),
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   cardAmount: {
     color: '#fff',
-    fontSize: 30,
-    fontWeight: '800',
-    marginTop: 8,
+    fontSize: moderateScale(28),
+    fontWeight: '900',
+    marginTop: 4,
   },
-  grid: {
+  payoutBtn: {
+    backgroundColor: theme.colors.primary,
+    paddingVertical: moderateScale(10),
+    paddingHorizontal: moderateScale(14),
+    borderRadius: theme.radii.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  payoutBtnText: {
+    color: '#000',
+    fontWeight: '900',
+    fontSize: moderateScale(11),
+    marginRight: 4,
+  },
+  statsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 12,
+    marginBottom: moderateScale(16),
   },
   statCard: {
     width: '48%',
-    backgroundColor: theme.colors.surface,
-    borderRadius: 12,
-    padding: 16,
-    ...theme.shadow.card,
-  },
-  statCardFull: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 14,
-    ...theme.shadow.card,
+    backgroundColor: '#f9fafb',
+    borderRadius: theme.radii.lg,
+    padding: moderateScale(16),
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
   },
   statLabel: {
-    color: '#6B7280',
-    fontSize: 13,
+    color: theme.colors.muted,
+    fontSize: moderateScale(10),
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
   statValue: {
-    color: '#111827',
-    fontSize: 22,
-    fontWeight: '700',
-    marginTop: 6,
+    color: theme.colors.ink,
+    fontSize: moderateScale(18),
+    fontWeight: '900',
+    marginTop: 4,
+  },
+  deliveriesCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+    borderRadius: theme.radii.lg,
+    padding: moderateScale(16),
+    marginBottom: moderateScale(24),
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+  },
+  deliveriesIcon: {
+    width: moderateScale(48),
+    height: moderateScale(48),
+    borderRadius: moderateScale(12),
+    backgroundColor: theme.colors.primarySoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: moderateScale(16),
+  },
+  statValueLarge: {
+    color: theme.colors.ink,
+    fontSize: moderateScale(22),
+    fontWeight: '900',
+    marginTop: 2,
   },
   section: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 14,
-    ...theme.shadow.card,
+    marginBottom: moderateScale(24),
   },
   sectionTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 10,
-  },
-  amountRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  amountButton: {
-    width: '31%',
-    backgroundColor: theme.colors.primarySoft,
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems: 'center',
-  },
-  amountButtonText: {
-    color: '#7C5E00',
-    fontWeight: '700',
-    fontSize: 12,
-  },
-  historyButton: {
-    backgroundColor: theme.colors.primary,
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  historyButtonText: {
+    fontSize: moderateScale(15),
+    fontWeight: '800',
     color: theme.colors.ink,
+    marginBottom: moderateScale(12),
+  },
+  rechargeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  rechargeBtn: {
+    width: '31%',
+    backgroundColor: '#fff',
+    borderRadius: theme.radii.md,
+    paddingVertical: moderateScale(12),
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: theme.colors.primary,
+  },
+  rechargeBtnText: {
+    color: theme.colors.ink,
+    fontWeight: '800',
+    fontSize: moderateScale(13),
+  },
+  historyLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: theme.radii.lg,
+    padding: moderateScale(16),
+    borderWidth: 1,
+    borderColor: '#f0f0f0',
+  },
+  historyIcon: {
+    width: moderateScale(40),
+    height: moderateScale(40),
+    borderRadius: moderateScale(10),
+    backgroundColor: '#f3f4f6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: moderateScale(12),
+  },
+  historyLinkText: {
+    flex: 1,
+    fontSize: moderateScale(15),
     fontWeight: '700',
-    fontSize: 15,
+    color: theme.colors.ink,
   },
 });

@@ -1,0 +1,42 @@
+import Sound from 'react-native-sound';
+
+Sound.setCategory('Playback');
+
+let soundRef = null;
+
+// ▶️ PLAY SOUND
+export const playOrderSound = () => {
+  // agar already play ho raha hai to dubara mat chalao
+  if (soundRef) {
+    console.log('Sound already playing');
+    return;
+  }
+
+  soundRef = new Sound('order_sound.mp3', Sound.MAIN_BUNDLE, (error) => {
+    if (error) {
+      console.log('Sound error', error);
+      return;
+    }
+
+    soundRef.setNumberOfLoops(-1); // 🔁 infinite loop
+
+    soundRef.play((success) => {
+      if (!success) {
+        console.log('Playback failed');
+      }
+    });
+  });
+};
+
+// ⏹ STOP SOUND
+export const stopOrderSound = () => {
+  if (soundRef) {
+    soundRef.stop(() => {
+      soundRef.release();
+      soundRef = null;
+      console.log('🔇 Sound stopped');
+    });
+  } else {
+    console.log('No sound to stop');
+  }
+};

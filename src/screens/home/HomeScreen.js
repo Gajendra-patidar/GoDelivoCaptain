@@ -10,8 +10,6 @@ import {
   Alert,
   AppState,
   RefreshControl,
-  Animated,
-  PanResponder,
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { useFocusEffect } from '@react-navigation/native';
@@ -19,8 +17,6 @@ import { useTranslation } from 'react-i18next';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { moderateScale } from 'react-native-size-matters';
-import SwitchToggle from 'react-native-switch-toggle';
-
 import NotificationService from '../../services/NotificationService';
 import LocationService from '../../services/locationService';
 import RechargeNowModal from '../../modals/RechargeNowModal';
@@ -32,7 +28,7 @@ import {
   setOffline,
   setOnline,
 } from '../../store/slices/onlineStatusSlice';
-import { selectProfile } from '../../store/slices/profileSlice';
+import { getProfile, selectProfile } from '../../store/slices/profileSlice';
 import {
   addNotification,
   addWalletAmount,
@@ -45,6 +41,16 @@ import {
 import { driverApi } from '../../services/driverApi';
 import { theme } from '../../theme';
 import SwipeToggle from '../../components/SwipeToggle';
+import LinearGradient from 'react-native-linear-gradient';
+import {
+  startService,
+  stopService,
+  updateService,
+} from '../../services/foregroundService';
+import { playOrderSound } from '../../components/playOrderSound';
+import SocketService from '../../services/socketService';
+import {setLocationPermission} from '../../store/slices/permissionSlice';
+import {getLocationPermission} from '../../services/permissionService';
 
 const HomeScreen = ({ navigation }) => {
   const { t } = useTranslation();
@@ -62,17 +68,55 @@ const HomeScreen = ({ navigation }) => {
   const [walletBalance, setWalletBalance] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [toggleBusy, setToggleBusy] = useState(false);
+  const [locationServiceHealthy, setLocationServiceHealthy] = useState(true);
 
   const pollRef = useRef(null);
   const appState = useRef(AppState.currentState);
   const LOW_BALANCE_THRESHOLD = 100;
   const isBalanceLow = Number(walletBalance || 0) < LOW_BALANCE_THRESHOLD;
-  const displayName =
-    profile?.fullName ||
-    profile?.name ||
-    profile?.username ||
-    profile?.phone ||
-    'Captain';
+  const displayName = profile?.name || 'Captain';
+
+  useEffect(() => {
+    const initPermission = async () => {
+      const granted = await getLocationPermission();
+      dispatch(setLocationPermission(granted));
+    };
+
+    initPermission();
+  }, []);
+
+  useEffect(() => {
+    dispatch(getProfile());
+  }, [dispatch]);
+
+  // Health check for location service
+  const checkLocationHealth = useCallback(async () => {
+    try {
+      const status = LocationService.getConnectionStatus();
+      const coords = LocationService.getLastCoords();
+
+      console.log('Location health check:', {
+        isConnected: status.isConnected,
+        hasLocation: status.hasLocation,
+        lastLocationAge: status.lastLocationAge,
+      });
+
+      const isStale = status.lastLocationAge && status.lastLocationAge > 30000;
+
+      if (!status.hasLocation || isStale) {
+        console.warn('Location service unhealthy (no location or stale).');
+        setLocationServiceHealthy(false);
+        return false;
+      }
+
+      setLocationServiceHealthy(true);
+      return true;
+    } catch (error) {
+      console.error('Health check error:', error);
+      setLocationServiceHealthy(false);
+      return false;
+    }
+  }, []);
 
   const syncWallet = useCallback(async () => {
     try {
@@ -95,23 +139,26 @@ const HomeScreen = ({ navigation }) => {
     }
 
     try {
+      const activeOrder = await getActiveOrder();
+      if (activeOrder) return;
+
       const order = await driverApi.getNearbyOrder();
-      if (!order) {
-        return;
-      }
+      if (!order) return;
 
       if (order.status === 'accepted' || order.status === 'picked_up') {
         await setActiveOrder(order);
-        navigation.navigate('Map', { order });
+        navigation.navigate('Map', { order: order });
         return;
       }
 
-      if (order.status === 'new') {
+      if (order != null) {
         setNotificationData(order);
         setOrderComing(true);
+        playOrderSound();
+        console.log('Play Sound in checkNearbyOrders');
       }
-    } catch {
-      // keep silent for polling
+    } catch (error) {
+      console.log('Check nearby orders error:', error);
     }
   }, [isOnline, navigation, orderComing]);
 
@@ -120,6 +167,7 @@ const HomeScreen = ({ navigation }) => {
 
     const activeOrder = await getActiveOrder();
     if (activeOrder) {
+      SocketService.setActiveRide(activeOrder.rideId || activeOrder.id);
       navigation.navigate('Map', { order: activeOrder });
       return;
     }
@@ -131,16 +179,58 @@ const HomeScreen = ({ navigation }) => {
     try {
       setRefreshing(true);
       await loadHomeData();
+      if (isOnline) {
+        await checkLocationHealth();
+      }
     } finally {
       setRefreshing(false);
     }
-  }, [loadHomeData]);
+  }, [loadHomeData, isOnline, checkLocationHealth]);
 
   useFocusEffect(
     useCallback(() => {
+      const syncProfileStatus = async () => {
+        try {
+          const profileData = await driverApi.getProfile();
+          if (profileData?.verifyStatus) {
+            setVerifyStatus(profileData.verifyStatus);
+            if (profileData.verifyStatus === 'REJECT') {
+              setDocDes(profileData.rejectionReason || 'Documents rejected');
+            }
+          }
+        } catch (error) {
+          console.log('Error syncing profile status:', error.message);
+        }
+      };
+
       loadHomeData();
-    }, [loadHomeData]),
+      syncProfileStatus();
+
+      if (profile?.homeArea) {
+        setHomeAreaActive(profile.homeArea.isActive);
+        setPreferredArea(profile.homeArea);
+      }
+    }, [loadHomeData, profile]),
   );
+
+  const handleToggleHomeArea = async () => {
+    try {
+      if (!preferredArea && !homeAreaActive) {
+        setShowAreaModal(true);
+        return;
+      }
+
+      const nextStatus = !homeAreaActive;
+      await driverApi.updateHomeArea({ isActive: nextStatus });
+      setHomeAreaActive(nextStatus);
+      Alert.alert(
+        'Filter Updated',
+        `Order filter ${nextStatus ? 'enabled' : 'disabled'}.`,
+      );
+    } catch (error) {
+      Alert.alert('Error', 'Failed to update filter preference.');
+    }
+  };
 
   const handleNotificationPress = useCallback(
     notification => {
@@ -196,9 +286,52 @@ const HomeScreen = ({ navigation }) => {
 
     if (data.type === 'NEW_ORDER' || data.type === 'ORDER') {
       setOrderComing(true);
+      playOrderSound();
+      console.log('Play Sound in handleIncomingMessage');
       setNotificationData(data);
     }
   }, []);
+
+  // Initialize Socket.io event listeners
+  const initializeSocketListeners = useCallback(() => {
+    // Listen for new ride requests via Socket.io
+    SocketService.on('new_ride', async rideData => {
+      console.log('New ride via Socket.io:', rideData);
+
+      if (isOnline && !orderComing) {
+        const activeOrder = await getActiveOrder();
+        if (!activeOrder) {
+          setNotificationData(rideData);
+          setOrderComing(true);
+          playOrderSound();
+          console.log('Play Sound in isOnline && !orderComing');
+        }
+      }
+    });
+
+    // Support the new server event name for pending request socket flow
+    SocketService.on('ride:new_request', async rideData => {
+      console.log('🚗 New ride request event via socket:', rideData);
+      if (isOnline && !orderComing) {
+        const activeOrder = await getActiveOrder();
+        if (!activeOrder) {
+          setNotificationData(rideData);
+          setOrderComing(true);
+          playOrderSound();
+          console.log('Play Sound in ride:new_request');
+        }
+      }
+    });
+    SocketService.on('ride_updated', data => {
+      console.log('Ride updated via Socket.io:', data);
+      // Update active order if needed
+    });
+
+    SocketService.on('customer_message', data => {
+      console.log('Customer message:', data);
+      // Handle customer message
+    });
+  }, [isOnline, orderComing, notificationData]);
 
   const initializeNotifications = useCallback(async () => {
     try {
@@ -217,23 +350,40 @@ const HomeScreen = ({ navigation }) => {
       await NotificationService.initialize(userId);
       NotificationService.addListener('press', handleNotificationPress);
       NotificationService.addListener('message', handleIncomingMessage);
+
+      // Initialize Socket.io listeners
+      initializeSocketListeners();
     } catch (error) {
       console.log('Error initializing notifications:', error);
     }
-  }, [handleIncomingMessage, handleNotificationPress]);
+  }, [
+    handleIncomingMessage,
+    handleNotificationPress,
+    initializeSocketListeners,
+  ]);
 
   useEffect(() => {
     initializeNotifications();
 
-    const subscription = AppState.addEventListener('change', nextAppState => {
-      if (
-        appState.current.match(/inactive|background/) &&
-        nextAppState === 'active'
-      ) {
-        loadHomeData();
-      }
-      appState.current = nextAppState;
-    });
+    const subscription = AppState.addEventListener(
+      'change',
+      async nextAppState => {
+        if (
+          appState.current.match(/inactive|background/) &&
+          nextAppState === 'active' &&
+          isOnline
+        ) {
+          await loadHomeData();
+          const isHealthy = await checkLocationHealth();
+          if (!isHealthy) {
+            console.log('Restarting location service...');
+            await LocationService.stop();
+            await LocationService.start();
+          }
+        }
+        appState.current = nextAppState;
+      },
+    );
 
     return () => {
       NotificationService.removeListener('press', handleNotificationPress);
@@ -242,13 +392,49 @@ const HomeScreen = ({ navigation }) => {
         clearInterval(pollRef.current);
       }
       subscription.remove();
+
+      // Cleanup Socket.io listeners
+      SocketService.off('new_ride');
+      SocketService.off('ride:new_request');
+      SocketService.off('ride_cancelled');
+      SocketService.off('ride_updated');
+      SocketService.off('customer_message');
     };
   }, [
     handleIncomingMessage,
     handleNotificationPress,
     initializeNotifications,
     loadHomeData,
+    isOnline,
+    checkLocationHealth,
   ]);
+
+  // Periodic location service health check when online
+  useEffect(() => {
+    let healthInterval;
+
+    if (isOnline) {
+      healthInterval = setInterval(
+        async () => {
+          const isHealthy = await checkLocationHealth();
+          if (!isHealthy) {
+            console.warn(
+              'Location service is currently waiting for valid GPS coords...',
+            );
+            // Removing manual stop and start here so Geolocation and Socket.IO can stabilize natively!
+            setLocationServiceHealthy(false);
+          } else {
+            setLocationServiceHealthy(true);
+          }
+        },
+        locationServiceHealthy ? 30000 : 3000,
+      );
+    }
+
+    return () => {
+      if (healthInterval) clearInterval(healthInterval);
+    };
+  }, [isOnline, checkLocationHealth, locationServiceHealthy]);
 
   useEffect(() => {
     if (pollRef.current) {
@@ -270,39 +456,257 @@ const HomeScreen = ({ navigation }) => {
     };
   }, [checkNearbyOrders, isOnline]);
 
-  const handleToggleOnline = async () => {
-    if (toggleBusy) {
+  const handleToggleOnline = async (targetState) => {
+    // If targetState is provided, validate it's different from current state
+    // If not provided, toggle to opposite of current state
+    const nextStatus = targetState !== undefined ? targetState : !isOnline;
+
+    // Prevent duplicate calls to the same state
+    if (nextStatus === isOnline) {
+      console.log('🔄 Toggle ignored: already in target state', nextStatus);
       return;
     }
-    setToggleBusy(true);
 
-    const nextStatus = !isOnline;
-
-    if (nextStatus) {
-      dispatch(setOnline());
-      LocationService.start();
-    } else {
-      dispatch(setOffline());
-      LocationService.stop();
-      await clearActiveOrder();
-      setOrderComing(false);
-      setNotificationData(null);
+    if (toggleBusy) {
+      console.log('🔄 Toggle ignored: operation already in progress');
+      return;
     }
 
-    setStatusModalVisible(true);
+    console.log('🚀 Starting toggle operation:', isOnline ? 'OFFLINE → ONLINE' : 'ONLINE → OFFLINE');
+    setToggleBusy(true);
+    let locationServiceStarted = false;
+    let foregroundServiceStarted = false;
 
     try {
-      const result = await driverApi.updateOnlineStatus(nextStatus);
-      await NotificationService.updateOnlineStatus(nextStatus);
+      if (nextStatus) {
+        // ========== GOING ONLINE ==========
 
-      if (nextStatus && result?.nearbyOrder) {
-        setNotificationData(result.nearbyOrder);
-        setOrderComing(true);
+        // Start location tracking
+        console.log('Starting location service...');
+        try {
+          await LocationService.start();
+          locationServiceStarted = true;
+          // console.log("location service start");
+
+          // Wait for location service to initialize (max 5 seconds)
+          let retries = 0;
+          while (retries < 10) {
+            const status = LocationService.getConnectionStatus();
+            if (status.hasLocation) {
+              console.log('Location service initialized with coordinates');
+              break;
+            }
+            await new Promise(r => setTimeout(r, 500));
+            retries++;
+          }
+
+          if (retries === 10) {
+            console.warn(
+              'Location service started but no coordinates received yet',
+            );
+          }
+        } catch (locationError) {
+          console.error('Location service start error:', locationError);
+          throw new Error(
+            'Failed to start location service: ' + locationError.message,
+          );
+        }
+
+        // Start foreground service
+        try {
+          console.log('Starting foreground service...');
+          await startService();
+          foregroundServiceStarted = true;
+        } catch (foregroundError) {
+          console.error('Foreground service error:', foregroundError);
+          throw new Error('Failed to start foreground service');
+        }
+
+        // Update Redux state
+        try {
+          dispatch(setOnline());
+        } catch (reduxError) {
+          console.error('Redux update error:', reduxError);
+        }
+
+        // Update server status
+        let serverResult;
+        try {
+          serverResult = await driverApi.updateOnlineStatus(true);
+          console.log('Server status updated:', serverResult);
+        } catch (serverError) {
+          console.error('Server status update error:', serverError);
+          throw new Error('Failed to update server status');
+        }
+
+        // Update notification service
+        try {
+          await NotificationService.updateOnlineStatus(true);
+        } catch (notificationError) {
+          console.error(
+            'Notification service update error:',
+            notificationError,
+          );
+        }
+
+        // Check for nearby orders
+        if (serverResult?.nearbyOrder) {
+          setNotificationData(serverResult.nearbyOrder);
+          setOrderComing(true);
+        }
+      } else {
+        // ========== GOING OFFLINE ==========
+        // Check if there's an active order
+        const activeOrder = await getActiveOrder();
+        if (activeOrder) {
+          console.log('⛔ Cannot go offline: Active order in progress', activeOrder.id);
+          setToggleBusy(false);
+          Alert.alert(
+            'Order in Progress',
+            'You cannot go offline while an order is active. Please complete or cancel the current order.',
+            [{ text: 'OK' }],
+          );
+          return;
+        }
+
+        // Stop location tracking
+        try {
+          console.log('Stopping location service...');
+          await LocationService.stop();
+        } catch (locationError) {
+          console.error('Location service stop error:', locationError);
+        }
+
+        // Stop foreground service
+        try {
+          console.log('Stopping foreground service...');
+          await stopService();
+        } catch (foregroundError) {
+          console.error('Foreground service stop error:', foregroundError);
+        }
+
+        // Update Redux state
+        try {
+          dispatch(setOffline());
+        } catch (reduxError) {
+          console.error('Redux update error:', reduxError);
+        }
+
+        // Update server status
+        try {
+          await driverApi.updateOnlineStatus(false);
+          console.log('Server status updated to offline');
+        } catch (serverError) {
+          console.error('Server status update error:', serverError);
+          throw new Error('Failed to update server status to offline');
+        }
+
+        // Update notification service
+        try {
+          await NotificationService.updateOnlineStatus(false);
+        } catch (notificationError) {
+          console.error(
+            'Notification service update error:',
+            notificationError,
+          );
+        }
+
+        // Clear any pending orders
+        try {
+          await clearActiveOrder();
+          SocketService.clearActiveRide();
+          setOrderComing(false);
+          setNotificationData(null);
+        } catch (clearError) {
+          console.error('Clear orders error:', clearError);
+        }
       }
+
+      setStatusModalVisible(true);
     } catch (error) {
-      Alert.alert('Status update failed', driverApi.safeErrorMessage(error));
+      console.error('Toggle online error:', error);
+
+      let errorMessage = 'Failed to update status. Please try again.';
+      if (error.message.includes('location')) {
+        errorMessage =
+          'Unable to access location. Please check location permissions.';
+      } else if (error.message.includes('server')) {
+        errorMessage = 'Network error. Please check your internet connection.';
+      } else if (error.message.includes('foreground')) {
+        errorMessage =
+          'Unable to start background service. Please restart the app.';
+      }
+
+      Alert.alert('Status Update Failed', errorMessage, [{ text: 'OK' }]);
+
+      // ROLLBACK CHANGES on failure
+      try {
+        if (nextStatus) {
+          console.log('Rolling back online attempt...');
+
+          if (locationServiceStarted) {
+            try {
+              await LocationService.stop();
+              // console.log("location service stop");
+            } catch (stopError) {
+              console.error('Rollback stop error:', stopError);
+            }
+          }
+
+          if (foregroundServiceStarted) {
+            try {
+              await stopService();
+            } catch (stopError) {
+              console.error('Rollback foreground stop error:', stopError);
+            }
+          }
+
+          try {
+            dispatch(setOffline());
+          } catch (reduxError) {
+            console.error('Rollback redux error:', reduxError);
+          }
+
+          try {
+            await NotificationService.updateOnlineStatus(false);
+          } catch (notificationError) {
+            console.error('Rollback notification error:', notificationError);
+          }
+        } else {
+          console.log('Rolling back offline attempt...');
+
+          try {
+            // console.log("location service start");
+
+            await LocationService.start();
+          } catch (startError) {
+            console.error('Rollback start error:', startError);
+          }
+
+          try {
+            await startService();
+          } catch (startError) {
+            console.error('Rollback foreground start error:', startError);
+          }
+
+          try {
+            dispatch(setOnline());
+          } catch (reduxError) {
+            console.error('Rollback redux error:', reduxError);
+          }
+
+          try {
+            await NotificationService.updateOnlineStatus(true);
+          } catch (notificationError) {
+            console.error('Rollback notification error:', notificationError);
+          }
+        }
+      } catch (rollbackError) {
+        console.error('Critical rollback error:', rollbackError);
+      }
     } finally {
       setToggleBusy(false);
+      console.log('✅ Toggle operation completed successfully');
     }
   };
 
@@ -313,19 +717,33 @@ const HomeScreen = ({ navigation }) => {
   const handleOpenDocs = () => navigation.navigate('Docs');
 
   const handleOrderAccept = async order => {
+    console.log('Accept order data:', order);
+
     try {
-      const accepted = await driverApi.acceptOrder(order.id);
-      await setActiveOrder(accepted || order);
+      const accepted = await driverApi.acceptOrder(order?.rideId);
+      const finalOrder =
+        accepted && accepted.rideId
+          ? accepted
+          : { ...order, ...(accepted || {}) };
+
+      await setActiveOrder(finalOrder);
+      SocketService.setActiveRide(finalOrder.rideId || finalOrder.id);
       await addNotification({
         title: 'Order Accepted',
-        body: `You accepted order ${order.id}`,
+        body: `You accepted order ${order?.rideId}`,
         type: 'order',
-        data: accepted || order,
+        data: finalOrder,
+      });
+
+      await updateService('on_trip', {
+        orderId: order?.rideId || order?.id,
+        pickup: order?.pickupAddress,
+        drop: order?.dropAddress,
       });
 
       setOrderComing(false);
       setNotificationData(null);
-      navigation.navigate('Map', { order: accepted || order });
+      navigation.navigate('Map', { order: finalOrder });
     } catch (error) {
       Alert.alert('Accept failed', driverApi.safeErrorMessage(error));
     }
@@ -377,72 +795,76 @@ const HomeScreen = ({ navigation }) => {
         backgroundColor={theme.colors.primary}
         barStyle="dark-content"
       />
+      <ScrollView
+        style={styles.container}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
+        }
+      >
+        <View style={styles.headerWrap}>
+          <View style={styles.headerTopRow}>
+            <View style={styles.headerLeft}>
+              <Text style={styles.brand}>GoDelivo</Text>
+              <Text style={styles.greeting} numberOfLines={1}>
+                Hello, {displayName}
+              </Text>
+            </View>
 
-      {verifyStatus === 'INRIVIEW' ? (
-        <View style={styles.gateScreen}>
-          <View style={styles.gateCard}>
-            <View style={styles.gateIconWrap}>
-              <Ionicons
-                name="time-outline"
-                size={28}
-                color={theme.colors.ink}
-              />
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                style={styles.headerIconButton}
+                onPress={() => setAlertVisible(true)}
+              >
+                <Image
+                  source={require('../../assets/siren.png')}
+                  style={styles.headerSirenIcon}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.headerIconButton, styles.notificationBtn]}
+                onPress={handleOpenNotifications}
+              >
+                <Ionicons
+                  name="notifications"
+                  size={22}
+                  color={theme.colors.ink}
+                />
+                <View style={styles.notificationDot} />
+              </TouchableOpacity>
             </View>
-            <Text style={styles.gateTitle}>Verification in review</Text>
-            <Text style={styles.gateSubTitle}>
-              You will start receiving orders after approval.
-            </Text>
-            <TouchableOpacity
-              style={styles.gateButton}
-              onPress={handleOpenDocs}
-            >
-              <Text style={styles.gateButtonText}>Open Documents</Text>
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={theme.colors.ink}
-              />
-            </TouchableOpacity>
           </View>
-        </View>
-      ) : verifyStatus === 'REJECT' ? (
-        <View style={styles.gateScreen}>
-          <View style={styles.gateCard}>
-            <View style={[styles.gateIconWrap, styles.gateIconDanger]}>
-              <Ionicons name="close" size={28} color="#fff" />
-            </View>
-            <Text style={styles.gateTitle}>Documents rejected</Text>
-            <Text style={styles.gateSubTitle}>
-              {docDes || 'Please re-upload your documents.'}
-            </Text>
-            <TouchableOpacity
-              style={styles.gateButton}
-              onPress={handleOpenDocs}
-            >
-              <Text style={styles.gateButtonText}>Upload Again</Text>
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={theme.colors.ink}
-              />
-            </TouchableOpacity>
-          </View>
-        </View>
-      ) : (
-        <ScrollView
-          style={styles.container}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scrollContent}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
-          }
-        >
-          <View style={styles.headerWrap}>
-            <View style={styles.headerTopRow}>
-              <View style={styles.headerLeft}>
-                <Text style={styles.brand}>GoDelivo</Text>
-                <Text style={styles.greeting} numberOfLines={1}>
-                  Hello, {displayName}
+
+          <TouchableOpacity
+            style={styles.profileCard}
+            onPress={handleOpenProfile}
+            activeOpacity={0.85}
+          >
+            <View style={styles.profileLeft}>
+              <View style={styles.avatarWrap}>
+                <Image
+                  source={require('../../assets/profile.png')}
+                  style={styles.avatar}
+                />
+                {isOnline ? (
+                  <View style={styles.onlinePillDot} />
+                ) : (
+                  <View
+                    style={[
+                      styles.onlinePillDot,
+                      { backgroundColor: '#9ca3af' },
+                    ]}
+                  />
+                )}
+              </View>
+              <View style={styles.profileTextCol}>
+                <Text style={styles.name} numberOfLines={1}>
+                  {displayName}
+                </Text>
+                <Text>
+                  {profile?.vehicleType || 'Vehicle'} •{' '}
+                  {profile?.vehicleNumber || '--'}
                 </Text>
                 <View style={styles.statusPillRow}>
                   <View
@@ -451,208 +873,229 @@ const HomeScreen = ({ navigation }) => {
                       isOnline ? styles.pillOnline : styles.pillOffline,
                     ]}
                   >
-                    <View
-                      style={[
-                        styles.pillDot,
-                        isOnline ? styles.dotOnline : styles.dotOffline,
-                      ]}
-                    />
                     <Text style={styles.statusPillText}>
                       {isOnline ? t('online') : t('offline')}
                     </Text>
                   </View>
+                  {profile?.rating == null && (
+                    <View style={styles.ratingPill}>
+                      <Text style={styles.ratingText}>★ 4.5</Text>
+                    </View>
+                  )}
                 </View>
               </View>
+            </View>
+            <Ionicons
+              name="chevron-forward"
+              size={20}
+              color={theme.colors.muted}
+            />
+          </TouchableOpacity>
+        </View>
 
-              <View style={styles.headerActions}>
-                <TouchableOpacity
-                  style={styles.headerIconButton}
-                  onPress={() => setAlertVisible(true)}
-                >
-                  <Image
-                    source={require('../../assets/siren.png')}
-                    style={styles.headerSirenIcon}
-                  />
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.headerIconButton}
-                  onPress={handleOpenNotifications}
-                >
-                  <Ionicons
-                    name="notifications"
-                    size={22}
-                    color={theme.colors.ink}
-                  />
+        {/* Location Service Health Warning */}
+        {/* {isOnline && !locationServiceHealthy && (
+          <View
+            style={[
+              styles.warningBanner,
+              {
+                backgroundColor: '#FEE2E2',
+                marginHorizontal: 16,
+                marginBottom: 12,
+              },
+            ]}
+          >
+            <Ionicons name="warning" size={18} color="#DC2626" />
+            <Text style={[styles.warningText, { color: '#DC2626' }]}>
+              Location service issue. Tap to retry.
+            </Text>
+            <TouchableOpacity onPress={() => handleToggleOnline()}>
+              <Text
+                style={{ color: '#DC2626', fontWeight: 'bold', marginLeft: 8 }}
+              >
+                Fix
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )} */}
+
+        <View style={styles.walletSection}>
+          <View style={styles.walletCardOuter}>
+            <View style={styles.walletBalanceRow}>
+              <View>
+                <Text style={styles.ledgerLabel}>Total Balance</Text>
+                <Text style={styles.ledgerAmount}>
+                  ₹ {walletBalance.toFixed(2)}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.earningsLink}
+                onPress={handleOpenEarnings}
+              >
+                <Text style={styles.earningsLinkText}>View Earnings</Text>
+                <Ionicons
+                  name="arrow-forward"
+                  size={16}
+                  color={theme.colors.primary}
+                />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.walletDivider} />
+
+            <View style={styles.walletActionRow}>
+              <TouchableOpacity
+                style={styles.walletActionBtn}
+                onPress={() => setModalVisible(true)}
+              >
+                <Ionicons
+                  name="add-circle-outline"
+                  size={20}
+                  color={theme.colors.ink}
+                />
+                <Text style={styles.walletActionText}>Recharge</Text>
+              </TouchableOpacity>
+              <View style={styles.walletActionDivider} />
+              <TouchableOpacity
+                style={styles.walletActionBtn}
+                onPress={handleOpenHistory}
+              >
+                <Ionicons
+                  name="time-outline"
+                  size={20}
+                  color={theme.colors.ink}
+                />
+                <Text style={styles.walletActionText}>History</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {isBalanceLow && (
+            <View style={styles.warningBanner}>
+              <Ionicons name="warning" size={18} color="#92400E" />
+              <Text style={styles.warningText}>
+                Low balance! Online status might be restricted soon.
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.goOnlineWrap}>
+          <Text style={styles.goOnlineHint} numberOfLines={2}>
+            {isOnline
+              ? 'You are online. You will receive new orders.'
+              : 'Go online to start receiving new orders.'}
+          </Text>
+          <SwipeToggle
+            isOnline={isOnline}
+            onToggle={handleToggleOnline}
+            disabled={toggleBusy}
+          />
+        </View>
+
+        {/* Offer Card Section */}
+        <View style={styles.offerCard}>
+          <LinearGradient
+            colors={['#f1cb40', '#f1da7a', '#f7ebaa']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.offerGradient}
+          >
+            <View style={styles.offerContent}>
+              <View style={styles.offerLeft}>
+                <View style={styles.offerIconContainer}>
+                  <Ionicons name="gift-outline" size={28} color="#000" />
+                </View>
+                <View style={styles.offerTextContainer}>
+                  <Text style={styles.offerTitle}>Special Offer!</Text>
+                  <Text style={styles.offerDescription}>
+                    Complete 10 rides this week and get ₹500 bonus
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.offerRight}>
+                <View style={styles.offerProgress}>
+                  <Text style={styles.offerProgressText}>3/10</Text>
+                  <View style={styles.progressBarContainer}>
+                    <View style={[styles.progressBar, { width: '30%' }]} />
+                  </View>
+                </View>
+                <TouchableOpacity style={styles.offerButton}>
+                  <Text style={styles.offerButtonText}>View Details</Text>
+                  <Ionicons name="arrow-forward" size={16} color="#000" />
                 </TouchableOpacity>
               </View>
             </View>
+          </LinearGradient>
+        </View>
 
-            <TouchableOpacity
-              style={styles.profileCard}
-              onPress={handleOpenProfile}
-              activeOpacity={0.85}
-            >
-              <View style={styles.profileLeft}>
-                <View style={styles.avatarWrap}>
-                  <Image
-                    source={require('../../assets/profile.png')}
-                    style={styles.avatar}
-                  />
-                  {isOnline ? <View style={styles.onlineDot} /> : null}
-                </View>
-                <View style={styles.profileTextCol}>
-                  <Text style={styles.name} numberOfLines={1}>
-                    {displayName}
-                  </Text>
-                  <Text style={styles.subLine} numberOfLines={1}>
-                    {profile?.rating != null
-                      ? `★ ${Number(profile.rating).toFixed(1)} • `
-                      : ''}
-                    {profile?.email || profile?.phone || 'Tap to view profile'}
-                  </Text>
-                </View>
-              </View>
+        <View style={styles.quickGrid}>
+          <TouchableOpacity
+            style={styles.quickCard}
+            onPress={handleOpenEarnings}
+          >
+            <View style={styles.quickIconWrap}>
               <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={theme.colors.muted}
+                name="cash-outline"
+                size={22}
+                color={theme.colors.ink}
               />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.walletSection}>
-            {isBalanceLow ? (
-              <View style={styles.lowBalanceCard}>
-                <View style={styles.lowBalanceTop}>
-                  <View style={styles.lowBalanceIconWrap}>
-                    <Ionicons
-                      name="warning-outline"
-                      size={22}
-                      color={theme.colors.ink}
-                    />
-                  </View>
-                  <View style={styles.lowBalanceText}>
-                    <Text style={styles.lowBalanceTitle}>Balance is low</Text>
-                    <Text style={styles.lowBalanceSub} numberOfLines={2}>
-                      Recharge wallet to keep receiving orders smoothly.
-                    </Text>
-                  </View>
-                  <Text style={styles.lowBalanceAmount}>
-                    Rs {walletBalance.toFixed(2)}
-                  </Text>
-                </View>
-
-                <TouchableOpacity
-                  style={styles.rechargeBtn}
-                  onPress={() => setModalVisible(true)}
-                >
-                  <Image
-                    source={require('../../assets/wallet.png')}
-                    style={styles.walletIcon}
-                  />
-                  <Text style={styles.rechargeText}>Recharge</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <TouchableOpacity
-                style={styles.ledgerCard}
-                onPress={handleOpenEarnings}
-                activeOpacity={0.9}
-              >
-                <View style={styles.ledgerLeft}>
-                  <View style={styles.ledgerIconWrap}>
-                    <Ionicons
-                      name="wallet-outline"
-                      size={22}
-                      color={theme.colors.ink}
-                    />
-                  </View>
-                  <Text style={styles.ledgerLabel}>Ledger balance</Text>
-                </View>
-                <Text style={styles.ledgerAmount}>
-                  Rs {walletBalance.toFixed(2)}
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <View style={styles.goOnlineWrap}>
-            <Text style={styles.goOnlineHint} numberOfLines={2}>
-              {isOnline
-                ? 'You are online. You will receive new orders.'
-                : 'Go online to start receiving new orders.'}
+            </View>
+            <Text style={styles.quickTitle}>Earnings</Text>
+            <Text style={styles.quickSub} numberOfLines={1}>
+              Summary and wallet
             </Text>
-            <SwipeToggle isOnline={isOnline} onToggle={handleToggleOnline} />
-          </View>
+          </TouchableOpacity>
 
-          <View style={styles.quickGrid}>
-            <TouchableOpacity
-              style={styles.quickCard}
-              onPress={handleOpenEarnings}
-            >
-              <View style={styles.quickIconWrap}>
-                <Ionicons
-                  name="cash-outline"
-                  size={22}
-                  color={theme.colors.ink}
-                />
-              </View>
-              <Text style={styles.quickTitle}>Earnings</Text>
-              <Text style={styles.quickSub} numberOfLines={1}>
-                Summary and wallet
-              </Text>
-            </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.quickCard}
+            onPress={handleOpenHistory}
+          >
+            <View style={styles.quickIconWrap}>
+              <Ionicons
+                name="time-outline"
+                size={22}
+                color={theme.colors.ink}
+              />
+            </View>
+            <Text style={styles.quickTitle}>Trips</Text>
+            <Text style={styles.quickSub} numberOfLines={1}>
+              Order history
+            </Text>
+          </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.quickCard}
-              onPress={handleOpenHistory}
-            >
-              <View style={styles.quickIconWrap}>
-                <Ionicons
-                  name="time-outline"
-                  size={22}
-                  color={theme.colors.ink}
-                />
-              </View>
-              <Text style={styles.quickTitle}>Trips</Text>
-              <Text style={styles.quickSub} numberOfLines={1}>
-                Order history
-              </Text>
-            </TouchableOpacity>
+          <TouchableOpacity style={styles.quickCard} onPress={handleOpenDocs}>
+            <View style={styles.quickIconWrap}>
+              <Ionicons
+                name="document-text-outline"
+                size={22}
+                color={theme.colors.ink}
+              />
+            </View>
+            <Text style={styles.quickTitle}>Documents</Text>
+            <Text style={styles.quickSub} numberOfLines={1}>
+              KYC and vehicle
+            </Text>
+          </TouchableOpacity>
 
-            <TouchableOpacity style={styles.quickCard} onPress={handleOpenDocs}>
-              <View style={styles.quickIconWrap}>
-                <Ionicons
-                  name="document-text-outline"
-                  size={22}
-                  color={theme.colors.ink}
-                />
-              </View>
-              <Text style={styles.quickTitle}>Documents</Text>
-              <Text style={styles.quickSub} numberOfLines={1}>
-                KYC and vehicle
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.quickCard}
-              onPress={() => navigation.navigate('Help')}
-            >
-              <View style={styles.quickIconWrap}>
-                <Ionicons
-                  name="headset-outline"
-                  size={22}
-                  color={theme.colors.ink}
-                />
-              </View>
-              <Text style={styles.quickTitle}>Support</Text>
-              <Text style={styles.quickSub} numberOfLines={1}>
-                Help center
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </ScrollView>
-      )}
+          <TouchableOpacity
+            style={styles.quickCard}
+            onPress={() => navigation.navigate('Help')}
+          >
+            <View style={styles.quickIconWrap}>
+              <Ionicons
+                name="headset-outline"
+                size={22}
+                color={theme.colors.ink}
+              />
+            </View>
+            <Text style={styles.quickTitle}>Support</Text>
+            <Text style={styles.quickSub} numberOfLines={1}>
+              Help center
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
 
       <RechargeNowModal
         visible={modalVisible}
@@ -703,6 +1146,91 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: theme.radii.xl,
     marginBottom: moderateScale(12),
   },
+  goAreaContainer: {
+    backgroundColor: '#fff',
+    marginHorizontal: moderateScale(18),
+    padding: moderateScale(15),
+    borderRadius: theme.radii.lg,
+    marginBottom: moderateScale(15),
+    ...theme.shadow.card,
+  },
+  goAreaHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: moderateScale(10),
+  },
+  goAreaTextWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  goAreaTitle: {
+    fontSize: moderateScale(14),
+    fontWeight: '800',
+    color: theme.colors.ink,
+  },
+  goAreaSub: {
+    fontSize: moderateScale(12),
+    color: theme.colors.muted,
+  },
+  changeAreaText: {
+    color: theme.colors.primary,
+    fontWeight: '700',
+    fontSize: moderateScale(12),
+    textDecorationLine: 'underline',
+  },
+  switchContainer: {
+    width: moderateScale(40),
+    height: moderateScale(22),
+    borderRadius: moderateScale(11),
+    padding: moderateScale(2),
+  },
+  switchCircle: {
+    width: moderateScale(18),
+    height: moderateScale(18),
+    borderRadius: moderateScale(9),
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 25,
+    borderTopRightRadius: 25,
+    padding: 24,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+  modalSub: {
+    fontSize: 14,
+    color: '#666',
+    marginBottom: 20,
+  },
+  areaItem: {
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  areaItemText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  closeBtn: {
+    marginTop: 20,
+    paddingVertical: 15,
+    alignItems: 'center',
+  },
+  closeBtnText: {
+    fontSize: 16,
+    color: theme.colors.danger,
+    fontWeight: '600',
+  },
   headerTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -728,17 +1256,14 @@ const styles = StyleSheet.create({
   },
   statusPillRow: {
     flexDirection: 'row',
-    marginTop: moderateScale(10),
   },
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: theme.radii.pill,
-    paddingHorizontal: moderateScale(10),
     paddingVertical: moderateScale(6),
   },
   statusPillText: {
-    marginLeft: moderateScale(6),
     fontWeight: '800',
     fontSize: moderateScale(12),
     color: theme.colors.ink,
@@ -768,10 +1293,24 @@ const styles = StyleSheet.create({
     width: moderateScale(42),
     height: moderateScale(42),
     borderRadius: theme.radii.pill,
-    backgroundColor: 'rgba(255,255,255,0.55)',
+    backgroundColor: 'rgba(255,255,255,0.7)',
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: moderateScale(10),
+  },
+  notificationBtn: {
+    paddingHorizontal: 0,
+  },
+  notificationDot: {
+    position: 'absolute',
+    top: moderateScale(10),
+    right: moderateScale(10),
+    width: moderateScale(8),
+    height: moderateScale(8),
+    borderRadius: 4,
+    backgroundColor: theme.colors.danger,
+    borderWidth: 1.5,
+    borderColor: '#fff',
   },
   headerSirenIcon: {
     width: moderateScale(22),
@@ -810,7 +1349,7 @@ const styles = StyleSheet.create({
     height: moderateScale(46),
     borderRadius: theme.radii.pill,
   },
-  onlineDot: {
+  onlinePillDot: {
     position: 'absolute',
     right: moderateScale(-1),
     bottom: moderateScale(-1),
@@ -820,6 +1359,19 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.success,
     borderWidth: 2,
     borderColor: theme.colors.surface,
+  },
+  ratingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(158, 136, 11, 0.12)',
+    borderRadius: theme.radii.pill,
+    paddingHorizontal: moderateScale(8),
+    marginLeft: moderateScale(8),
+  },
+  ratingText: {
+    fontSize: moderateScale(10),
+    fontWeight: '800',
+    color: theme.colors.ink,
   },
   profileTextCol: {
     flex: 1,
@@ -837,117 +1389,76 @@ const styles = StyleSheet.create({
   },
 
   walletSection: {
-    marginTop: moderateScale(12),
-    marginHorizontal: moderateScale(16),
-  },
-  ledgerCard: {
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.radii.lg,
-    paddingHorizontal: moderateScale(16),
-    paddingVertical: moderateScale(14),
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: theme.colors.primaryBorder,
-    ...theme.shadow.card,
-  },
-  ledgerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    paddingRight: moderateScale(10),
-  },
-  ledgerIconWrap: {
-    width: moderateScale(40),
-    height: moderateScale(40),
-    borderRadius: theme.radii.md,
-    backgroundColor: 'rgba(255,255,255,0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: moderateScale(10),
-  },
-  ledgerLabel: {
-    fontSize: moderateScale(13),
-    fontWeight: '900',
-    color: theme.colors.ink,
-  },
-  ledgerAmount: {
-    fontSize: moderateScale(20),
-    fontWeight: '900',
-    color: theme.colors.ink,
+    paddingHorizontal: moderateScale(15),
   },
 
-  lowBalanceCard: {
+  walletCardOuter: {
     backgroundColor: theme.colors.surface,
     borderRadius: theme.radii.xl,
-    padding: moderateScale(16),
-    borderWidth: 1,
-    borderColor: theme.colors.primaryBorder,
+    padding: moderateScale(18),
     ...theme.shadow.card,
-  },
-  lowBalanceTop: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-  },
-  lowBalanceIconWrap: {
-    width: moderateScale(40),
-    height: moderateScale(40),
-    borderRadius: theme.radii.md,
-    backgroundColor: theme.colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: moderateScale(10),
-  },
-  lowBalanceText: {
-    flex: 1,
-    paddingRight: moderateScale(10),
-  },
-  lowBalanceTitle: {
-    fontSize: moderateScale(14),
-    fontWeight: '900',
-    color: theme.colors.ink,
-  },
-  lowBalanceSub: {
-    marginTop: moderateScale(4),
-    fontSize: moderateScale(11),
-    fontWeight: '600',
-    color: theme.colors.muted,
-    lineHeight: moderateScale(16),
-  },
-  lowBalanceAmount: {
-    fontSize: moderateScale(14),
-    fontWeight: '900',
-    color: theme.colors.ink,
-  },
-  rechargeBtn: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    backgroundColor: theme.colors.primarySoft,
-    paddingVertical: moderateScale(12),
     borderWidth: 1,
-    borderColor: theme.colors.primaryBorder,
-    borderRadius: theme.radii.pill,
+    borderColor: theme.colors.border,
+  },
+  walletBalanceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: moderateScale(12),
   },
-  walletIcon: {
-    width: moderateScale(22),
-    height: moderateScale(22),
-    marginRight: moderateScale(10),
+  earningsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.primarySoft,
+    paddingHorizontal: moderateScale(10),
+    paddingVertical: moderateScale(6),
+    borderRadius: theme.radii.pill,
   },
-  rechargeText: {
-    color: theme.colors.ink,
-    fontWeight: '900',
-    fontSize: moderateScale(14),
-  },
-  walletHint: {
-    marginTop: moderateScale(10),
-    color: theme.colors.muted,
+  earningsLinkText: {
     fontSize: moderateScale(11),
-    fontWeight: '600',
-    lineHeight: moderateScale(16),
+    fontWeight: '800',
+    color: theme.colors.ink,
+    marginRight: 4,
+  },
+  walletDivider: {
+    height: 1,
+    backgroundColor: theme.colors.border,
+    marginVertical: moderateScale(16),
+  },
+  walletActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  walletActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  walletActionText: {
+    fontSize: moderateScale(13),
+    fontWeight: '800',
+    color: theme.colors.ink,
+    marginLeft: 8,
+  },
+  walletActionDivider: {
+    width: 1,
+    height: 20,
+    backgroundColor: theme.colors.border,
+  },
+  warningBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF3C7',
+    padding: moderateScale(12),
+    borderRadius: theme.radii.lg,
+    marginTop: moderateScale(10),
+  },
+  warningText: {
+    fontSize: moderateScale(11),
+    fontWeight: '700',
+    color: '#92400E',
+    marginLeft: 8,
+    flex: 1,
   },
 
   quickGrid: {
@@ -1146,5 +1657,89 @@ const styles = StyleSheet.create({
     width: moderateScale(44),
     height: moderateScale(44),
     borderRadius: 22,
+  },
+  offerCard: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+    borderRadius: 16,
+    overflow: 'hidden',
+    ...theme.shadow.card,
+  },
+  offerGradient: {
+    padding: 16,
+  },
+  offerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  offerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  offerIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  offerTextContainer: {
+    flex: 1,
+  },
+  offerTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#000',
+    marginBottom: 4,
+  },
+  offerDescription: {
+    fontSize: 12,
+    color: '#333',
+    opacity: 0.8,
+    lineHeight: 16,
+  },
+  offerRight: {
+    alignItems: 'flex-end',
+  },
+  offerProgress: {
+    alignItems: 'flex-end',
+    marginBottom: 8,
+  },
+  offerProgressText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#000',
+    marginBottom: 4,
+  },
+  progressBarContainer: {
+    width: 80,
+    height: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  progressBar: {
+    height: '100%',
+    backgroundColor: '#000',
+    borderRadius: 2,
+  },
+  offerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    gap: 4,
+  },
+  offerButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#000',
   },
 });

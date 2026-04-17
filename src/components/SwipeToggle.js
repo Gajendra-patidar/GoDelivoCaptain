@@ -1,197 +1,247 @@
-import React, { useRef, useEffect } from "react";
-import { View, Text, StyleSheet, Animated, PanResponder } from "react-native";
-import Ionicons from 'react-native-vector-icons/Ionicons';
+import React, { useRef, useEffect, useCallback, useMemo } from "react";
+import {
+  View,
+  Text,
+  StyleSheet,
+  PanResponder,
+  Animated,
+  Dimensions,
+  Platform,
+} from "react-native";
+import LinearGradient from "react-native-linear-gradient";
+import Ionicons from "react-native-vector-icons/Ionicons";
+import { moderateScale } from "react-native-size-matters";
 
-const SwipeToggle = ({ isOnline, onToggle }) => {
-  const translateX = useRef(new Animated.Value(0)).current;
-  const thumbScale = useRef(new Animated.Value(1)).current;
-  
-  const THUMB_SIZE = 50;
-  const TRACK_PADDING = 10;
-  const MAX_SWIPE = 220; // Maximum swipe distance
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const TOGGLE_WIDTH = SCREEN_WIDTH - 40;
+const THUMB_SIZE = 52;
+const TRACK_HEIGHT = 64;
+const MAX_TRANSLATION = TOGGLE_WIDTH - THUMB_SIZE - 12;
+const THRESHOLD = MAX_TRANSLATION / 2;
+const TAP_THRESHOLD = 5;
 
-  // Update thumb position when isOnline changes (for external toggles)
+const SwipeToggle = ({ onToggle, isOnline, disabled = false }) => {
+  const translateX = useRef(new Animated.Value(isOnline ? MAX_TRANSLATION : 0)).current;
+  const isAnimating = useRef(false);
+  const lastToggleState = useRef(isOnline);
+  const startX = useRef(0);
+  const animationRef = useRef(null);
+
+  // Memoized track color interpolation
+  const trackColor = useMemo(() => {
+    return translateX.interpolate({
+      inputRange: [0, MAX_TRANSLATION],
+      outputRange: ["#FF416C", "#00B09B"],
+    });
+  }, [translateX]);
+
+  // Sync prop changes with spring animation
   useEffect(() => {
-    if (isOnline) {
-      Animated.spring(translateX, {
-        toValue: MAX_SWIPE,
-        useNativeDriver: true,
-        friction: 7,
-        tension: 40,
-      }).start();
-    } else {
-      Animated.spring(translateX, {
-        toValue: 0,
-        useNativeDriver: true,
-        friction: 7,
-        tension: 40,
-      }).start();
+    if (animationRef.current) {
+      animationRef.current.stop();
     }
-  }, [isOnline]);
 
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, gesture) => {
-        return Math.abs(gesture.dx) > 5;
+    // Update the last known state
+    lastToggleState.current = isOnline;
+
+    animationRef.current = Animated.spring(translateX, {
+      toValue: isOnline ? MAX_TRANSLATION : 0,
+      useNativeDriver: true,
+      friction: 7,
+      tension: 50,
+      restSpeedThreshold: 0.1,
+      restDisplacementThreshold: 0.1,
+    });
+
+    animationRef.current.start(() => {
+      isAnimating.current = false;
+    });
+
+    isAnimating.current = true;
+
+    return () => {
+      if (animationRef.current) {
+        animationRef.current.stop();
+      }
+    };
+  }, [isOnline, translateX]);
+
+  const animateToggle = useCallback((toValue, newState) => {
+    if (isAnimating.current || disabled) return;
+
+    // Prevent duplicate calls to the same state
+    if (newState === lastToggleState.current) {
+      console.log('SwipeToggle: Ignoring duplicate toggle to same state', newState);
+      return;
+    }
+
+    isAnimating.current = true;
+    lastToggleState.current = newState;
+
+    Animated.spring(translateX, {
+      toValue,
+      useNativeDriver: true,
+      friction: 7,
+      tension: 50,
+      restSpeedThreshold: 0.1,
+      restDisplacementThreshold: 0.1,
+    }).start(({ finished }) => {
+      if (finished) {
+        isAnimating.current = false;
+        // Always call onToggle when animation completes successfully
+        onToggle?.(newState);
+      } else {
+        // Reset state if animation was interrupted
+        lastToggleState.current = isOnline;
+        isAnimating.current = false;
+      }
+    });
+  }, [translateX, isOnline, onToggle, disabled]);
+
+  const handlePanResponderMove = useCallback((_, gestureState) => {
+    if (isAnimating.current) return;
+
+    let newX = isOnline ? MAX_TRANSLATION + gestureState.dx : gestureState.dx;
+    newX = Math.max(0, Math.min(newX, MAX_TRANSLATION));
+    translateX.setValue(newX);
+  }, [isOnline, translateX]);
+
+  const handlePanResponderRelease = useCallback((_, gestureState) => {
+    if (isAnimating.current) return;
+
+    const currentX = isOnline ? MAX_TRANSLATION + gestureState.dx : gestureState.dx;
+    const isTap = Math.abs(gestureState.dx) < TAP_THRESHOLD &&
+      Math.abs(gestureState.dy) < TAP_THRESHOLD;
+
+    if (isTap) {
+      const newState = !isOnline;
+      animateToggle(newState ? MAX_TRANSLATION : 0, newState);
+      return;
+    }
+
+    if (!isOnline && currentX > THRESHOLD) {
+      animateToggle(MAX_TRANSLATION, true);
+    } else if (isOnline && currentX < THRESHOLD) {
+      animateToggle(0, false);
+    } else {
+      animateToggle(isOnline ? MAX_TRANSLATION : 0, isOnline);
+    }
+  }, [isOnline, animateToggle]);
+
+  const panResponder = useMemo(() => {
+    return PanResponder.create({
+      onStartShouldSetPanResponder: () => !isAnimating.current && !disabled,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return !disabled && Math.abs(gestureState.dx) > 5;
       },
-
-      onPanResponderGrant: () => {
-        // Slightly scale down thumb when pressed
-        Animated.spring(thumbScale, {
-          toValue: 0.9,
-          useNativeDriver: true,
-          friction: 5,
-        }).start();
+      onPanResponderGrant: (_, gestureState) => {
+        startX.current = gestureState.x0;
       },
-
-      onPanResponderMove: (_, gesture) => {
-        // Constrain swipe within bounds
-        const newValue = Math.max(0, Math.min(gesture.dx, MAX_SWIPE));
-        translateX.setValue(newValue);
-      },
-
-      onPanResponderRelease: (_, gesture) => {
-        // Scale thumb back to normal
-        Animated.spring(thumbScale, {
-          toValue: 1,
-          useNativeDriver: true,
-          friction: 5,
-        }).start();
-
-        const swipeThreshold = MAX_SWIPE * 0.4; // 40% threshold
-        const currentValue = translateX._value;
-        
-        // Determine if we should toggle based on swipe distance and direction
-        const shouldToggleOnline = currentValue > swipeThreshold;
-        
-        if ((shouldToggleOnline && !isOnline) || (!shouldToggleOnline && isOnline)) {
-          // Swipe to change state
-          Animated.spring(translateX, {
-            toValue: shouldToggleOnline ? MAX_SWIPE : 0,
-            useNativeDriver: true,
-            friction: 7,
-            tension: 40,
-          }).start(() => {
-            onToggle();
-          });
-        } else {
-          // Return to original position
-          Animated.spring(translateX, {
-            toValue: isOnline ? MAX_SWIPE : 0,
-            useNativeDriver: true,
-            friction: 7,
-            tension: 40,
-          }).start();
+      onPanResponderMove: handlePanResponderMove,
+      onPanResponderRelease: handlePanResponderRelease,
+      onPanResponderTerminate: () => {
+        // Reset to original position if interrupted
+        if (!disabled) {
+          animateToggle(isOnline ? MAX_TRANSLATION : 0, isOnline);
         }
       },
-    })
-  ).current;
+    });
+  }, [handlePanResponderMove, handlePanResponderRelease, isOnline, animateToggle, disabled]);
 
-  // Calculate background color with smooth transition
-  const backgroundColor = translateX.interpolate({
-    inputRange: [0, MAX_SWIPE],
-    outputRange: ["#ff3b30", "#28a745"],
-  });
+  // Memoize text to prevent unnecessary re-renders
+  const toggleText = useMemo(() => {
+    return isOnline ? "SWIPE TO GO OFFLINE" : "SWIPE TO GO ONLINE";
+  }, [isOnline]);
 
-  // Calculate text opacity for smooth transition
-  const onlineTextOpacity = translateX.interpolate({
-    inputRange: [0, MAX_SWIPE * 0.3, MAX_SWIPE * 0.7, MAX_SWIPE],
-    outputRange: [0, 0, 1, 1],
-  });
+  const iconName = useMemo(() => {
+    return isOnline ? "power" : "flash";
+  }, [isOnline]);
 
-  const offlineTextOpacity = translateX.interpolate({
-    inputRange: [0, MAX_SWIPE * 0.3, MAX_SWIPE * 0.7, MAX_SWIPE],
-    outputRange: [1, 1, 0, 0],
-  });
+  const iconColor = useMemo(() => {
+    return isOnline ? "#00B09B" : "#FF416C";
+  }, [isOnline]);
 
   return (
-    <Animated.View
-      style={[
-        styles.track,
-        { backgroundColor },
-      ]}
-    >
-      {/* Online Text */}
-      <Animated.Text style={[styles.text, styles.textOnline, { opacity: onlineTextOpacity }]}>
-        GO OFFLINE
-      </Animated.Text>
-      
-      {/* Offline Text */}
-      <Animated.Text style={[styles.text, styles.textOffline, { opacity: offlineTextOpacity }]}>
-        GO ONLINE
-      </Animated.Text>
+    <View style={styles.container}>
+      <Animated.View style={[styles.track, { backgroundColor: trackColor }]}>
+        <View style={styles.textContainer} pointerEvents="none">
+          <Text style={styles.text}>{toggleText}</Text>
+        </View>
 
-      <Animated.View
-        {...panResponder.panHandlers}
-        style={[
-          styles.thumb,
-          {
-            transform: [
-              { translateX },
-              { scale: thumbScale }
-            ],
-          },
-        ]}
-      >
-        <Ionicons 
-          name={'finger-print-outline'} 
-          size={24} 
-          color="#333"
-        />
+        <Animated.View
+          {...panResponder.panHandlers}
+          style={[
+            styles.thumb,
+            {
+              transform: [{ translateX }],
+              // Optimize for native driver
+              shadowOpacity: 0.3,
+            },
+          ]}
+        >
+          <Ionicons name={iconName} size={24} color={iconColor} />
+        </Animated.View>
       </Animated.View>
-    </Animated.View>
+    </View>
   );
 };
 
 export default SwipeToggle;
 
 const styles = StyleSheet.create({
+  container: {
+    width: TOGGLE_WIDTH,
+    alignSelf: 'center',
+  },
   track: {
     width: "100%",
-    height: 60,
-    borderRadius: 35,
+    height: TRACK_HEIGHT,
+    borderRadius: TRACK_HEIGHT / 2,
     justifyContent: "center",
-    paddingHorizontal: 10,
+    paddingHorizontal: 6,
     overflow: "hidden",
-    elevation: 3,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 4,
+      },
+    }),
   },
-
+  textContainer: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   text: {
-    position: "absolute",
-    alignSelf: "center",
     color: "#fff",
-    fontWeight: "bold",
-    fontSize: 16,
+    fontWeight: "900",
+    fontSize: moderateScale(13),
     letterSpacing: 1,
     textTransform: "uppercase",
+    backgroundColor: "transparent",
   },
-
-  textOnline: {
-    right: '50%',
-  },
-
-  textOffline: {
-    left: '50%',
-  },
-
   thumb: {
-    position: "absolute",
-    left: 30,
-    width: 50,
-    height: 50,
-    borderRadius: 30,
+    width: THUMB_SIZE,
+    height: THUMB_SIZE,
+    borderRadius: THUMB_SIZE / 2,
     backgroundColor: "#fff",
     justifyContent: "center",
     alignItems: "center",
-    elevation: 5,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.3,
+        shadowRadius: 5,
+      },
+      android: {
+        elevation: 8,
+      },
+    }),
   },
 });
