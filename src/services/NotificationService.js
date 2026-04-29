@@ -39,8 +39,7 @@ class NotificationService {
         await this.saveTokenToBackend(this.driverId, token);
       }
     } catch (error) {
-      console.log('Notification init error:', error);
-    }
+          }
   }
 
   async requestPermissions() {
@@ -56,8 +55,7 @@ class NotificationService {
 
       return enabled;
     } catch (error) {
-      console.log('Notification permission error:', error);
-      return false;
+            return false;
     }
   }
 
@@ -175,8 +173,7 @@ class NotificationService {
         },
       });
     } catch (error) {
-      console.log('Display notification error:', error);
-    }
+          }
   }
 
   async getFCMToken() {
@@ -185,8 +182,7 @@ class NotificationService {
       await this.saveToken(token);
       return token;
     } catch (error) {
-      console.log('Get FCM token error:', error);
-      return null;
+            return null;
     }
   }
 
@@ -209,8 +205,7 @@ class NotificationService {
         }),
       });
     } catch (error) {
-      console.log('Save token API error:', error);
-    }
+          }
   }
 
   async updateOnlineStatus(isOnline) {
@@ -230,8 +225,7 @@ class NotificationService {
         }),
       });
     } catch (error) {
-      console.log('Update status API error:', error);
-    }
+          }
   }
 
   async removeToken() {
@@ -249,8 +243,7 @@ class NotificationService {
       await AsyncStorage.removeItem('fcmToken');
       this.driverId = null;
     } catch (error) {
-      console.log('Remove token API error:', error);
-    }
+          }
   }
 
   addListener(event, callback) {

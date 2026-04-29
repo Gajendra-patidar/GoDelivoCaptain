@@ -15,13 +15,11 @@ class LocationService {
 
   async start() {
     if (this.isRunning) {
-      console.log("start location services 1");
-      return;
+            return;
     }
     this.isRunning = true;
 
-    console.log("start location services 2");
-
+    
 
     // Instantiate high-perf socket connection
     await SocketService.connect();

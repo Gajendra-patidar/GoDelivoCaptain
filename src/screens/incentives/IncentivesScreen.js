@@ -23,8 +23,7 @@ const IncentivesScreen = ({ navigation }) => {
       const data = await driverApi.getIncentives();
       setIncentives(data);
     } catch (e) {
-      console.log('Incentives fetch error:', e.message);
-    } finally {
+          } finally {
       setLoading(false);
       setRefreshing(false);
     }

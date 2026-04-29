@@ -124,8 +124,7 @@ const LoginScreen = ({ navigation }) => {
         setShowOTP(true);
         startTimer();
         Alert.alert('Success', 'OTP sent successfully to your mobile');
-        console.log('📱 OTP sent to:', mobile);
-      } else {
+              } else {
         Alert.alert('Error', response.data.message || 'Failed to send OTP');
       }
     } catch (error) {
@@ -156,8 +155,7 @@ const LoginScreen = ({ navigation }) => {
         setIsVerifying(false); // Reset verifying flag
         otpInputs.current[0]?.focus();
         Alert.alert('Success', 'OTP resent successfully');
-        console.log('📱 OTP resent to:', mobile);
-      }
+              }
     } catch (error) {
       console.error('Resend OTP Error:', error);
       Alert.alert('Error', 'Failed to resend OTP. Please try again.');
@@ -232,27 +230,22 @@ const LoginScreen = ({ navigation }) => {
     setLoading(true);
 
     try {
-      console.log('📤 Verifying OTP for:', mobile);
-      console.log('🔑 OTP:', otpString);
-
+            
       const response = await axios.post(`${BASE_URL}/verify-otp`, {
         phone: mobile,
         otp: otpString,
       });
 
-      console.log('✅ Verify OTP Response:', response.data);
-
+      
       // Check different possible success indicators
       if (response.data.success || response.data.status === 'success') {
-        console.log('✅ OTP verified successfully', response.data);
-
+        
         // Store token if returned
         const token = response.data?.data?.token || response.data?.token;
         if (token) {
           await AsyncStorage.setItem('userToken', token);
           await AsyncStorage.setItem('userPhone', response?.data?.data?.phone);
-          console.log('🔑 Token stored successfully');
-        }
+                  }
 
         // Store user data if needed
         const user = response?.data?.data;
@@ -260,8 +253,7 @@ const LoginScreen = ({ navigation }) => {
           await AsyncStorage.setItem('userData', JSON.stringify(user));
         }
 
-        console.log('check driver id', response?.data?.data?.driverId);
-
+        
         const driverId = response.data?.data?.driverId || `driver_${mobile}`;
         await AsyncStorage.setItem('driverId', driverId);
 
@@ -274,8 +266,7 @@ const LoginScreen = ({ navigation }) => {
           type: 'auth',
         });
 
-        console.log('check check', response?.data?.data?.requiresRegistration);
-
+        
         Alert.alert('Success', 'Login Successfully', [
           {
             text: 'OK',
@@ -285,12 +276,10 @@ const LoginScreen = ({ navigation }) => {
                   phone: response?.data?.data?.phone,
                   data: response?.data?.data,
                 });
-                // console.log("login data", response?.data?.data?.requiresRegistration);
-                
+                //                 
               } else {
                 navigation.navigate('MyTabs');
-                // console.log("login else data", response?.data?.data);
-                
+                //                 
               }
             },
           },
@@ -351,8 +340,7 @@ const LoginScreen = ({ navigation }) => {
       await AsyncStorage.setItem('userToken', token);
       navigation.navigate('MyTabs');
     } catch (error) {
-      console.log('dummy error', error);
-    }
+          }
   };
 
   // Render OTP Input Screen

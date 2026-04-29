@@ -71,8 +71,7 @@ const SwipeToggle = ({ onToggle, isOnline, disabled = false }) => {
 
     // Prevent duplicate calls to the same state
     if (newState === lastToggleState.current) {
-      console.log('SwipeToggle: Ignoring duplicate toggle to same state', newState);
-      return;
+            return;
     }
 
     isAnimating.current = true;

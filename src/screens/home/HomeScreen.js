@@ -49,8 +49,8 @@ import {
 } from '../../services/foregroundService';
 import { playOrderSound } from '../../components/playOrderSound';
 import SocketService from '../../services/socketService';
-import {setLocationPermission} from '../../store/slices/permissionSlice';
-import {getLocationPermission} from '../../services/permissionService';
+import { setLocationPermission } from '../../store/slices/permissionSlice';
+import { getLocationPermission } from '../../services/permissionService';
 
 const HomeScreen = ({ navigation }) => {
   const { t } = useTranslation();
@@ -95,16 +95,10 @@ const HomeScreen = ({ navigation }) => {
       const status = LocationService.getConnectionStatus();
       const coords = LocationService.getLastCoords();
 
-      console.log('Location health check:', {
-        isConnected: status.isConnected,
-        hasLocation: status.hasLocation,
-        lastLocationAge: status.lastLocationAge,
-      });
 
       const isStale = status.lastLocationAge && status.lastLocationAge > 30000;
 
       if (!status.hasLocation || isStale) {
-        console.warn('Location service unhealthy (no location or stale).');
         setLocationServiceHealthy(false);
         return false;
       }
@@ -127,7 +121,7 @@ const HomeScreen = ({ navigation }) => {
         setWalletBalance(local.balance);
         return;
       }
-    } catch {}
+    } catch { }
 
     const fallbackWallet = await getWalletData();
     setWalletBalance(fallbackWallet.balance);
@@ -152,13 +146,13 @@ const HomeScreen = ({ navigation }) => {
       }
 
       if (order != null) {
+        console.log("nearbyorder data", order);
+
         setNotificationData(order);
         setOrderComing(true);
         playOrderSound();
-        console.log('Play Sound in checkNearbyOrders');
       }
     } catch (error) {
-      console.log('Check nearby orders error:', error);
     }
   }, [isOnline, navigation, orderComing]);
 
@@ -199,7 +193,6 @@ const HomeScreen = ({ navigation }) => {
             }
           }
         } catch (error) {
-          console.log('Error syncing profile status:', error.message);
         }
       };
 
@@ -251,6 +244,8 @@ const HomeScreen = ({ navigation }) => {
 
       if (data.type === 'NEW_ORDER' || data.type === 'ORDER') {
         setOrderComing(true);
+        console.log("nearbyorder data 2", data);
+
         setNotificationData(data);
         return;
       }
@@ -287,7 +282,6 @@ const HomeScreen = ({ navigation }) => {
     if (data.type === 'NEW_ORDER' || data.type === 'ORDER') {
       setOrderComing(true);
       playOrderSound();
-      console.log('Play Sound in handleIncomingMessage');
       setNotificationData(data);
     }
   }, []);
@@ -296,39 +290,37 @@ const HomeScreen = ({ navigation }) => {
   const initializeSocketListeners = useCallback(() => {
     // Listen for new ride requests via Socket.io
     SocketService.on('new_ride', async rideData => {
-      console.log('New ride via Socket.io:', rideData);
 
       if (isOnline && !orderComing) {
         const activeOrder = await getActiveOrder();
         if (!activeOrder) {
           setNotificationData(rideData);
+          console.log("initialize socket data", rideData);
+
           setOrderComing(true);
           playOrderSound();
-          console.log('Play Sound in isOnline && !orderComing');
         }
       }
     });
 
     // Support the new server event name for pending request socket flow
     SocketService.on('ride:new_request', async rideData => {
-      console.log('🚗 New ride request event via socket:', rideData);
       if (isOnline && !orderComing) {
         const activeOrder = await getActiveOrder();
         if (!activeOrder) {
           setNotificationData(rideData);
+          console.log("initialize socket data 2", rideData);
+
           setOrderComing(true);
           playOrderSound();
-          console.log('Play Sound in ride:new_request');
         }
       }
     });
     SocketService.on('ride_updated', data => {
-      console.log('Ride updated via Socket.io:', data);
       // Update active order if needed
     });
 
     SocketService.on('customer_message', data => {
-      console.log('Customer message:', data);
       // Handle customer message
     });
   }, [isOnline, orderComing, notificationData]);
@@ -354,7 +346,6 @@ const HomeScreen = ({ navigation }) => {
       // Initialize Socket.io listeners
       initializeSocketListeners();
     } catch (error) {
-      console.log('Error initializing notifications:', error);
     }
   }, [
     handleIncomingMessage,
@@ -376,7 +367,6 @@ const HomeScreen = ({ navigation }) => {
           await loadHomeData();
           const isHealthy = await checkLocationHealth();
           if (!isHealthy) {
-            console.log('Restarting location service...');
             await LocationService.stop();
             await LocationService.start();
           }
@@ -418,9 +408,6 @@ const HomeScreen = ({ navigation }) => {
         async () => {
           const isHealthy = await checkLocationHealth();
           if (!isHealthy) {
-            console.warn(
-              'Location service is currently waiting for valid GPS coords...',
-            );
             // Removing manual stop and start here so Geolocation and Socket.IO can stabilize natively!
             setLocationServiceHealthy(false);
           } else {
@@ -463,16 +450,13 @@ const HomeScreen = ({ navigation }) => {
 
     // Prevent duplicate calls to the same state
     if (nextStatus === isOnline) {
-      console.log('🔄 Toggle ignored: already in target state', nextStatus);
       return;
     }
 
     if (toggleBusy) {
-      console.log('🔄 Toggle ignored: operation already in progress');
       return;
     }
 
-    console.log('🚀 Starting toggle operation:', isOnline ? 'OFFLINE → ONLINE' : 'ONLINE → OFFLINE');
     setToggleBusy(true);
     let locationServiceStarted = false;
     let foregroundServiceStarted = false;
@@ -482,18 +466,15 @@ const HomeScreen = ({ navigation }) => {
         // ========== GOING ONLINE ==========
 
         // Start location tracking
-        console.log('Starting location service...');
         try {
           await LocationService.start();
           locationServiceStarted = true;
-          // console.log("location service start");
-
+          // 
           // Wait for location service to initialize (max 5 seconds)
           let retries = 0;
           while (retries < 10) {
             const status = LocationService.getConnectionStatus();
             if (status.hasLocation) {
-              console.log('Location service initialized with coordinates');
               break;
             }
             await new Promise(r => setTimeout(r, 500));
@@ -501,9 +482,6 @@ const HomeScreen = ({ navigation }) => {
           }
 
           if (retries === 10) {
-            console.warn(
-              'Location service started but no coordinates received yet',
-            );
           }
         } catch (locationError) {
           console.error('Location service start error:', locationError);
@@ -514,7 +492,6 @@ const HomeScreen = ({ navigation }) => {
 
         // Start foreground service
         try {
-          console.log('Starting foreground service...');
           await startService();
           foregroundServiceStarted = true;
         } catch (foregroundError) {
@@ -529,11 +506,17 @@ const HomeScreen = ({ navigation }) => {
           console.error('Redux update error:', reduxError);
         }
 
+        // Emit socket events: join driver pool + status change
+        try {
+          SocketService.emitStatusChange(true, true);
+        } catch (socketError) {
+          console.error('Socket status emit error:', socketError);
+        }
+
         // Update server status
         let serverResult;
         try {
           serverResult = await driverApi.updateOnlineStatus(true);
-          console.log('Server status updated:', serverResult);
         } catch (serverError) {
           console.error('Server status update error:', serverError);
           throw new Error('Failed to update server status');
@@ -551,7 +534,9 @@ const HomeScreen = ({ navigation }) => {
 
         // Check for nearby orders
         if (serverResult?.nearbyOrder) {
-          setNotificationData(serverResult.nearbyOrder);
+          setNotificationData(serverResult?.nearbyOrder);
+          console.log("log log data", serverResult?.nearbyOrder);
+
           setOrderComing(true);
         }
       } else {
@@ -559,7 +544,6 @@ const HomeScreen = ({ navigation }) => {
         // Check if there's an active order
         const activeOrder = await getActiveOrder();
         if (activeOrder) {
-          console.log('⛔ Cannot go offline: Active order in progress', activeOrder.id);
           setToggleBusy(false);
           Alert.alert(
             'Order in Progress',
@@ -571,7 +555,6 @@ const HomeScreen = ({ navigation }) => {
 
         // Stop location tracking
         try {
-          console.log('Stopping location service...');
           await LocationService.stop();
         } catch (locationError) {
           console.error('Location service stop error:', locationError);
@@ -579,7 +562,6 @@ const HomeScreen = ({ navigation }) => {
 
         // Stop foreground service
         try {
-          console.log('Stopping foreground service...');
           await stopService();
         } catch (foregroundError) {
           console.error('Foreground service stop error:', foregroundError);
@@ -592,10 +574,16 @@ const HomeScreen = ({ navigation }) => {
           console.error('Redux update error:', reduxError);
         }
 
+        // Emit socket event: driver going offline
+        try {
+          SocketService.emitStatusChange(false, false);
+        } catch (socketError) {
+          console.error('Socket offline emit error:', socketError);
+        }
+
         // Update server status
         try {
           await driverApi.updateOnlineStatus(false);
-          console.log('Server status updated to offline');
         } catch (serverError) {
           console.error('Server status update error:', serverError);
           throw new Error('Failed to update server status to offline');
@@ -617,6 +605,7 @@ const HomeScreen = ({ navigation }) => {
           SocketService.clearActiveRide();
           setOrderComing(false);
           setNotificationData(null);
+
         } catch (clearError) {
           console.error('Clear orders error:', clearError);
         }
@@ -642,12 +631,10 @@ const HomeScreen = ({ navigation }) => {
       // ROLLBACK CHANGES on failure
       try {
         if (nextStatus) {
-          console.log('Rolling back online attempt...');
 
           if (locationServiceStarted) {
             try {
               await LocationService.stop();
-              // console.log("location service stop");
             } catch (stopError) {
               console.error('Rollback stop error:', stopError);
             }
@@ -673,11 +660,9 @@ const HomeScreen = ({ navigation }) => {
             console.error('Rollback notification error:', notificationError);
           }
         } else {
-          console.log('Rolling back offline attempt...');
 
           try {
-            // console.log("location service start");
-
+            // 
             await LocationService.start();
           } catch (startError) {
             console.error('Rollback start error:', startError);
@@ -706,7 +691,6 @@ const HomeScreen = ({ navigation }) => {
       }
     } finally {
       setToggleBusy(false);
-      console.log('✅ Toggle operation completed successfully');
     }
   };
 
@@ -717,17 +701,30 @@ const HomeScreen = ({ navigation }) => {
   const handleOpenDocs = () => navigation.navigate('Docs');
 
   const handleOrderAccept = async order => {
-    console.log('Accept order data:', order);
-
+    // 
     try {
+      // Step 3.2: Accept via HTTP API
       const accepted = await driverApi.acceptOrder(order?.rideId);
+      console.log("dbxs csjkc ", accepted);
+
       const finalOrder =
         accepted && accepted.rideId
           ? accepted
           : { ...order, ...(accepted || {}) };
 
       await setActiveOrder(finalOrder);
-      SocketService.setActiveRide(finalOrder.rideId || finalOrder.id);
+
+      // Step 3.2: Join Socket Tracking after accept
+      const rideId = finalOrder.rideId || finalOrder.id;
+      SocketService.setActiveRide(rideId);
+      // Explicitly emit driver:join-tracking (spec step 3.2)
+      SocketService.joinRideTracking(rideId).catch(err =>
+        console.error('joinRideTracking error:', err),
+      );
+
+      // Mark driver as unavailable (on a ride now)
+      SocketService.emitStatusChange(true, false);
+
       await addNotification({
         title: 'Order Accepted',
         body: `You accepted order ${order?.rideId}`,
@@ -752,7 +749,7 @@ const HomeScreen = ({ navigation }) => {
   const handleOrderReject = async order => {
     try {
       await driverApi.rejectOrder(order.id);
-    } catch {}
+    } catch { }
 
     await addNotification({
       title: 'Order Rejected',

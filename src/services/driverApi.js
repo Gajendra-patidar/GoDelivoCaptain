@@ -14,37 +14,20 @@ const setupInterceptors = (clientInstance, name = 'API') => {
         config.headers.Authorization = `Bearer ${token}`;
       }
 
-      console.log(`🚀 [${name}] Request:`, {
-        url: config.url,
-        method: config.method,
-        data: config.data,
-        token,
-      });
 
       return config;
     },
     error => {
-      console.log(`❌ [${name}] Request Error:`, error);
       return Promise.reject(error);
     },
   );
 
   clientInstance.interceptors.response.use(
     response => {
-      console.log(`✅ [${name}] Response:`, {
-        url: response.config.url,
-        status: response.status,
-        data: response.data,
-      });
 
       return response;
     },
     error => {
-      console.log(`🔥 [${name}] Response Error:`, {
-        url: error?.config?.url,
-        status: error?.response?.status,
-        message: JSON.stringify(error?.response?.data || error.message),
-      });
 
       return Promise.reject(error);
     },
@@ -74,7 +57,8 @@ const getToken = async () => AsyncStorage.getItem('userToken');
 
 const withAuth = async () => {
   const token = await getToken();
-  console.log('check token fg:', token);
+  // console.log("token", token);
+
   return token
     ? {
       headers: {
@@ -131,11 +115,9 @@ export const driverApi = {
     const response = await main_client.get(url, config);
     const pending = response.data?.data?.pendingRequests || [];
 
-    console.log("order data data", response.data);
-
+    // 
 
     if (pending.length > 0) {
-      console.log("ride request data", pending[0]);
     }
 
     if (pending.length > 0) {
@@ -161,7 +143,6 @@ export const driverApi = {
       longitude: coords.longitude
     }, config);
 
-    console.log("toggle response data afdaya ha j", response.data);
 
 
     return response?.data?.data;
@@ -181,7 +162,19 @@ export const driverApi = {
 
   async acceptOrder(orderId) {
     const config = await withAuth();
-    const response = await main_client.post('/rides/accept', { rideId: orderId }, config);
+    console.log("check data", orderId);
+
+    const coords = LocationService.getLastCoords();
+    const payload = {
+      rideId: orderId,
+      driverLocation: coords ? {
+        latitude: coords.latitude,
+        longitude: coords.longitude
+      } : null
+    };
+    console.log("check data", payload);
+
+    const response = await main_client.post('/rides/accept-with-socket', payload, config);
     return response.data?.data;
   },
 
@@ -204,7 +197,6 @@ export const driverApi = {
       config,
     );
 
-    console.log("cancel data", response.data);
 
     return response.data?.data;
   },
@@ -222,6 +214,48 @@ export const driverApi = {
       {
         deliveredDistanceKm,
       },
+      config,
+    );
+    return response.data?.data;
+  },
+
+  /**
+   * Complete ride via the rides API (spec-compliant endpoint).
+   * POST /api/rides/complete { rideId, fare, paymentMethod }
+   */
+  async completeRide(rideId, fare, paymentMethod = 'cash') {
+    const config = await withAuth();
+    const response = await main_client.post(
+      '/rides/complete',
+      { rideId, fare, paymentMethod },
+      config,
+    );
+    return response.data?.data;
+  },
+
+  /**
+   * Notify backend that driver has arrived at pickup.
+   * POST /api/rides/arrived { rideId }
+   */
+  async arrivedAtPickup(rideId) {
+    const config = await withAuth();
+    const response = await main_client.post(
+      '/rides/arrived',
+      { rideId },
+      config,
+    );
+    return response.data?.data;
+  },
+
+  /**
+   * Notify backend that the ride trip has started (pickup confirmed, heading to drop).
+   * POST /api/rides/start { rideId }
+   */
+  async startRide(rideId) {
+    const config = await withAuth();
+    const response = await main_client.post(
+      '/rides/start',
+      { rideId },
       config,
     );
     return response.data?.data;

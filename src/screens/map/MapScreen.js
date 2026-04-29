@@ -247,10 +247,17 @@ const MapScreen = ({ navigation, route }) => {
 
   const driverMarkerImage = useMemo(() => {
     const vType = vehicleType.toLowerCase();
-    if (vType.includes('bike') || vType.includes('motorcycle')) return require('../../assets/bike.png');
+    if (vType.includes('bike') || vType.includes('motorcycle'))
+      return require('../../assets/bike.png');
     if (vType.includes('scooter')) return require('../../assets/scooter.png');
-    if (vType.includes('auto') || vType.includes('rickshaw') || vType.includes('riksha')) return require('../../assets/auto.png');
-    if (vType.includes('truck') && vType.includes('mini')) return require('../../assets/truck.png');
+    if (
+      vType.includes('auto') ||
+      vType.includes('rickshaw') ||
+      vType.includes('riksha')
+    )
+      return require('../../assets/auto.png');
+    if (vType.includes('truck') && vType.includes('mini'))
+      return require('../../assets/truck.png');
     if (vType.includes('truck')) return require('../../assets/truck.png');
     return require('../../assets/topscooter.png');
   }, [vehicleType]);
@@ -265,8 +272,7 @@ const MapScreen = ({ navigation, route }) => {
 
   const [initialOrder] = useState(() => route?.params?.order || null);
 
-  // console.log('check order data for id:', order);
-
+  // 
   // Transform the pending request format to the format expected by the component
   const normalizedOrder = useMemo(() => {
     if (!rawOrder) {
@@ -309,8 +315,7 @@ const MapScreen = ({ navigation, route }) => {
 
   const order_data = rawOrder;
 
-  // console.log('ram ram ram', order);
-
+  // 
   const pickup = useMemo(() => {
     const coords = order?.pickupLocation?.coordinates;
     return coords
@@ -457,7 +462,6 @@ const MapScreen = ({ navigation, route }) => {
   useEffect(() => {
     if (order && (order.id || order.rideId)) {
       const rideId = order.rideId || order.id;
-      console.log('🚗 MapScreen: Setting up socket tracking for ride:', rideId);
       SocketService.setActiveRide(rideId);
     }
   }, [order?.id, order?.rideId]);
@@ -478,6 +482,18 @@ const MapScreen = ({ navigation, route }) => {
     if (reachedPickup && tripStage === STAGES.GOING_TO_PICKUP) {
       setTripStage(STAGES.ARRIVED_PICKUP);
       setShowDropRoute(true);
+
+      // Emit driver:arrived socket event
+      const rideId = order?.rideId || order?.id;
+      SocketService.emitDriverArrived(rideId, {
+        latitude: driverCoords.latitude,
+        longitude: driverCoords.longitude,
+      });
+
+      // HTTP fallback: notify backend driver arrived at pickup
+      driverApi
+        .arrivedAtPickup(rideId)
+        .catch(err => console.error('Arrived at pickup error:', err));
     }
 
     if (reachedDrop && tripStage === STAGES.GOING_TO_DROP) {
@@ -686,8 +702,7 @@ const MapScreen = ({ navigation, route }) => {
               latitude: position.coords.latitude,
               longitude: position.coords.longitude,
             };
-            console.log("ckeck ram ram", coords);
-            
+
             setDriverCoords(coords);
             lastKnownCoords.current = coords;
             setIsLoading(false);
@@ -734,13 +749,15 @@ const MapScreen = ({ navigation, route }) => {
             console.error('Error processing watch position:', error);
           }
         },
-        error => console.log('Watch error:', error),
+        error => {
+          console.error('Watch position error:', error);
+        },
         {
           enableHighAccuracy: true,
-          distanceFilter: 10, // Only update when moved 10 meters
-          interval: 3000, // Reduce frequency to 3 seconds
-          fastestInterval: 2000, // Fastest interval 2 seconds
-        },
+          distanceFilter: 10,
+          interval: 5000,
+          fastestInterval: 2000,
+        }
       );
     } catch (error) {
       console.error('Error starting location tracking:', error);
@@ -763,7 +780,7 @@ const MapScreen = ({ navigation, route }) => {
   useEffect(() => {
     if (hasPermission) {
       startLocationTracking();
-      
+
       // Update foreground service to 'on_trip' mode when trip starts
       try {
         updateService('on_trip', {
@@ -771,7 +788,6 @@ const MapScreen = ({ navigation, route }) => {
           pickup: pickupAddress,
           drop: dropAddress,
         });
-        console.log('🚗 Foreground service updated to on_trip mode');
       } catch (error) {
         console.error('Error updating service to on_trip:', error);
       }
@@ -863,7 +879,6 @@ const MapScreen = ({ navigation, route }) => {
   useEffect(() => {
     if (!driverCoords || !tripStage || tripStage === STAGES.COMPLETED) return;
 
-    console.log('⏲️ Starting 3-second location update interval for socket');
 
     const locationUpdateInterval = setInterval(() => {
       try {
@@ -871,16 +886,7 @@ const MapScreen = ({ navigation, route }) => {
           driverCoords.latitude,
           driverCoords.longitude,
           arrowRotation || 0,
-          0 // Speed - would need to calculate from position deltas if needed
-        );
-        console.log(
-          '✅ Location update check: 3 sec interval',
-          {
-            lat: driverCoords.latitude.toFixed(4),
-            lng: driverCoords.longitude.toFixed(4),
-            stage: tripStage,
-            timestamp: new Date().toLocaleTimeString(),
-          }
+          0, // Speed - would need to calculate from position deltas if needed
         );
       } catch (error) {
         console.error('Error emitting location to socket:', error);
@@ -889,7 +895,6 @@ const MapScreen = ({ navigation, route }) => {
 
     return () => {
       clearInterval(locationUpdateInterval);
-      console.log('⏲️ Cleared location update interval');
     };
   }, [driverCoords, arrowRotation, tripStage]);
 
@@ -944,9 +949,8 @@ const MapScreen = ({ navigation, route }) => {
       return;
     }
 
-    const cancelId = order?.rideId || order?.id || initialOrder?.rideId || initialOrder?.id;
-
-    console.log("cancel data check id", cancelId);
+    const cancelId =
+      order?.rideId || order?.id || initialOrder?.rideId || initialOrder?.id;
 
 
     setIsCancelling(true);
@@ -968,16 +972,21 @@ const MapScreen = ({ navigation, route }) => {
     setIsCancelling(false);
     setShowCancelModal(false);
     setCancelReason('');
-    stopLocationTracking();
-    
+
+    // ── Notify socket & make driver available BEFORE disconnecting ────────
+    SocketService.emitStatusChange(true, true); // back online & available
+    SocketService.clearActiveRide();
+
     // Switch foreground notification back to online/waiting mode
     try {
       await updateService('online');
-      console.log('🟡 Foreground service restored to online mode after trip cancellation');
     } catch (error) {
       console.error('Error updating service after cancellation:', error);
     }
-    
+
+    // Stop GPS LAST (disconnects socket)
+    stopLocationTracking();
+
     navigation.navigate('MyTabs');
   };
 
@@ -1013,7 +1022,15 @@ const MapScreen = ({ navigation, route }) => {
       setTripStage(STAGES.GOING_TO_DROP);
       setShowDropRoute(true);
 
-      const updated = await driverApi.confirmPickup(order.id).catch(() => null);
+      // Emit ride:started socket event — trip to destination begins
+      const rideId = order?.rideId || order?.id;
+      SocketService.emitRideStarted(rideId);
+
+      // HTTP: notify backend ride has started (spec-compliant endpoint)
+      const updated = await driverApi.startRide(rideId).catch(() => {
+        // Fallback to old confirmPickup endpoint if startRide not available
+        return driverApi.confirmPickup(order.id).catch(() => null);
+      });
 
       if (updated) {
         await setActiveOrder(updated);
@@ -1071,20 +1088,37 @@ const MapScreen = ({ navigation, route }) => {
           ? parseFloat(cashCollected)
           : order?.amount || 0;
 
+      const rideId = order?.rideId || order?.id;
+
+      // ── Step 3.3: Notify backend via HTTP FIRST ───────────────────────────
       let serverCompleted = null;
       try {
-        serverCompleted = await driverApi.completeOrder(
-          order.id,
-          distance || 0,
-          {
-            amount,
-            paymentMethod,
-          },
+        // Use spec-compliant POST /rides/complete endpoint
+        serverCompleted = await driverApi.completeRide(
+          rideId,
+          amount,
+          paymentMethod,
         );
       } catch (error) {
-        console.log('Completion sync failed (offline mode):', error);
+        try {
+          // Fallback to old /orders/:id/complete endpoint
+          serverCompleted = await driverApi.completeOrder(
+            order.id,
+            distance || 0,
+          );
+        } catch (fallbackError) {
+        }
       }
 
+      // ── Step 3.3: Emit ride:completed socket event BEFORE disconnecting ───
+      // IMPORTANT: must emit BEFORE stopLocationTracking() which disconnects socket
+      SocketService.emitRideCompleted(rideId, amount, paymentMethod);
+
+      // ── Mark driver available & clear active ride on socket ───────────────
+      // emitRideCompleted already calls emitStatusChange(true, true) internally
+      SocketService.clearActiveRide();
+
+      // ── Update local state ────────────────────────────────────────────────
       const completedOrder = await completeOrder({
         ...order,
         ...(serverCompleted || {}),
@@ -1106,11 +1140,13 @@ const MapScreen = ({ navigation, route }) => {
       });
 
       setTripStage(STAGES.COMPLETED);
-      stopLocationTracking();
       setShowCashModal(false);
 
-      // Switch foreground notification back to online/waiting mode
+      // ── Switch foreground notification back to online/waiting mode ────────
       await updateService('online');
+
+      // ── Stop GPS tracking LAST (disconnects socket) ───────────────────────
+      stopLocationTracking();
 
       Alert.alert(
         'Delivery Complete',
@@ -1149,7 +1185,8 @@ const MapScreen = ({ navigation, route }) => {
     );
   }
 
-  const mapCenter = driverCoords || pickup || { latitude: 22.7261, longitude: 75.8931 };
+  const mapCenter = driverCoords ||
+    pickup || { latitude: 22.7261, longitude: 75.8931 };
 
   return (
     <ErrorBoundary>
@@ -1201,7 +1238,7 @@ const MapScreen = ({ navigation, route }) => {
                 style={{
                   width: 50,
                   height: 50,
-                  transform: [{ rotate: `${arrowRotation}deg` }]
+                  transform: [{ rotate: `${arrowRotation}deg` }],
                 }}
                 resizeMode="contain"
               />
@@ -1210,7 +1247,11 @@ const MapScreen = ({ navigation, route }) => {
 
           {/* Pickup Marker */}
           {pickup && (
-            <Marker coordinate={pickup} anchor={{ x: 0.5, y: 1.0 }} tracksViewChanges={false} >
+            <Marker
+              coordinate={pickup}
+              anchor={{ x: 0.5, y: 1.0 }}
+              tracksViewChanges={false}
+            >
               <Image
                 source={imgPath.ic_pick}
                 style={{ width: 50, height: 50 }} // ✅ ab kaam karega
@@ -1221,7 +1262,11 @@ const MapScreen = ({ navigation, route }) => {
 
           {/* Drop Marker */}
           {showDropRoute && drop && (
-            <Marker coordinate={drop} anchor={{ x: 0.5, y: 1.0 }} tracksViewChanges={false} >
+            <Marker
+              coordinate={drop}
+              anchor={{ x: 0.5, y: 1.0 }}
+              tracksViewChanges={false}
+            >
               <Image
                 source={imgPath.ic_drop}
                 style={{ width: 50, height: 50 }} // ✅ ab kaam karega
@@ -1426,10 +1471,7 @@ const MapScreen = ({ navigation, route }) => {
             <Ionicons name="arrow-back" size={24} color={theme.colors.ink} />
           </TouchableOpacity>
           <TouchableOpacity
-            style={[
-              styles.map3DButton,
-              is3DMode && styles.map3DButtonActive,
-            ]}
+            style={[styles.map3DButton, is3DMode && styles.map3DButtonActive]}
             onPress={() => {
               setIs3DMode(prev => !prev);
               if (driverCoords) {
@@ -1491,7 +1533,7 @@ const MapScreen = ({ navigation, route }) => {
                 <Text
                   style={[styles.navInfoValue, { color: theme.colors.success }]}
                 >
-                  ₹{Number(order?.estimatedFare)}
+                  ₹{Number(order?.fare || 0)}
                 </Text>
               </View>
             </>
@@ -1528,14 +1570,16 @@ const MapScreen = ({ navigation, route }) => {
           </View>
 
           <View style={styles.actionRowPrimary}>
-            {tripStage === STAGES.GOING_TO_PICKUP && (
-              isAtPickup ? (
+            {tripStage === STAGES.GOING_TO_PICKUP &&
+              (isAtPickup ? (
                 <TouchableOpacity
                   style={styles.primaryActionBtn}
                   onPress={() => setTripStage(STAGES.ARRIVED_PICKUP)}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.primaryActionText}>ARRIVED AT PICKUP</Text>
+                  <Text style={styles.primaryActionText}>
+                    ARRIVED AT PICKUP
+                  </Text>
                 </TouchableOpacity>
               ) : (
                 <View style={styles.disabledActionMsg}>
@@ -1543,8 +1587,7 @@ const MapScreen = ({ navigation, route }) => {
                     Reach pickup location to mark arrived
                   </Text>
                 </View>
-              )
-            )}
+              ))}
             {tripStage === STAGES.ARRIVED_PICKUP && (
               <TouchableOpacity
                 style={[
@@ -1593,7 +1636,9 @@ const MapScreen = ({ navigation, route }) => {
                 onPress={() => setShowCancelModal(true)}
                 activeOpacity={0.8}
               >
-                <Text style={{ color: '#ff0303', fontSize: 13 }} >Cancel trip</Text>
+                <Text style={{ color: '#ff0303', fontSize: 13 }}>
+                  Cancel trip
+                </Text>
               </TouchableOpacity>
             )}
           </View>

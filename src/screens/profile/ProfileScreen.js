@@ -279,8 +279,7 @@ const ProfileScreen = ({ navigation }) => {
     // Check if there's an active order
     const activeOrder = await getActiveOrder();
     if (activeOrder) {
-      console.log('⛔ Cannot logout: Active order in progress', activeOrder.id);
-      Alert.alert(
+            Alert.alert(
         'Order in Progress',
         'You cannot logout while an order is active. Please complete or cancel the current order.',
         [{ text: 'OK' }],

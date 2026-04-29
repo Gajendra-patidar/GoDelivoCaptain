@@ -103,10 +103,8 @@ export const startService = async (mode = 'online', tripInfo = null) => {
     });
 
     isServiceRunning = true;
-    console.log(`✅ ForegroundService started [${mode}]`);
-  } catch (error) {
-    console.log('❌ ForegroundService start error:', error);
-  }
+      } catch (error) {
+      }
 };
 
 /**
@@ -149,8 +147,7 @@ export const updateServiceBody = async body => {
       },
     });
   } catch (error) {
-    console.log('❌ ForegroundService update error:', error);
-  }
+      }
 };
 
 /**
@@ -161,10 +158,8 @@ export const stopService = async () => {
     await notifee.stopForegroundService();
     await notifee.cancelNotification(NOTIFICATION_ID);
     isServiceRunning = false;
-    console.log('🛑 ForegroundService stopped');
-  } catch (error) {
-    console.log('❌ ForegroundService stop error:', error);
-  }
+      } catch (error) {
+      }
 };
 
 /**

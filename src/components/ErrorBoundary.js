@@ -27,8 +27,7 @@ class ErrorBoundary extends React.Component {
   componentDidMount() {
     // Subscribe to network state updates
     this.unsubscribeNetInfo = NetInfo.addEventListener(state => {
-      console.log('Network state changed:', state);
-      this.setState({
+            this.setState({
         isConnected: state.isConnected,
         connectionType: state.type,
         isInternetReachable: state.isInternetReachable
@@ -62,8 +61,7 @@ class ErrorBoundary extends React.Component {
   checkNetworkConnection = async () => {
     try {
       const netInfo = await NetInfo.fetch();
-      console.log('Initial network info:', netInfo);
-      this.setState({
+            this.setState({
         isConnected: netInfo.isConnected,
         connectionType: netInfo.type,
         isInternetReachable: netInfo.isInternetReachable

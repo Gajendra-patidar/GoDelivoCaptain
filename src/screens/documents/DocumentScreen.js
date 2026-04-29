@@ -59,8 +59,7 @@ const DocumentScreen = ({ navigation, route }) => {
   
   
   const handleStatus = (data) => {
-  console.log("Driver Status:", data);
-
+  
   // 🆕 NEW DRIVER → FORM SHOW
   if (data?.requiresRegistration === true) {
     setVerifyStatusVal('NEW');
@@ -89,8 +88,7 @@ const DocumentScreen = ({ navigation, route }) => {
       const phone = await AsyncStorage.getItem('userPhone');
       if (phone) setUserPhone(phone);
 
-      console.log('phone number', phone, phoneData);
-
+      
       if (token) {
         const response = await axios
           .get(`${BASE_URL}/status/${phone}`, {
@@ -100,8 +98,7 @@ const DocumentScreen = ({ navigation, route }) => {
             data: { verifyStatus: 'PENDING', rejectReason: '' },
           }));
 
-        console.log('status data', response.data);
-
+        
         setVerifyStatusVal(
           response?.data?.data?.verificationStatus ||
             response?.data?.verifyStatus ||
@@ -114,8 +111,7 @@ const DocumentScreen = ({ navigation, route }) => {
         }
       }
     } catch (error) {
-      console.log('Error checking status:', error);
-    } finally {
+          } finally {
       setLoading(false);
     }
   };
@@ -209,8 +205,7 @@ const DocumentScreen = ({ navigation, route }) => {
         );
         return granted === PermissionsAndroid.RESULTS.GRANTED;
       } catch (err) {
-        console.warn(err);
-        return false;
+                return false;
       }
     }
     return true;
@@ -228,8 +223,7 @@ const DocumentScreen = ({ navigation, route }) => {
 
     const handleResponse = response => {
       if (response.didCancel) {
-        console.log('User cancelled image picker');
-      } else if (response.errorCode) {
+              } else if (response.errorCode) {
         Alert.alert('Error', response.errorMessage || 'Something went wrong');
       } else if (response.assets && response.assets.length > 0) {
         const asset = response.assets[0];
@@ -457,8 +451,7 @@ const DocumentScreen = ({ navigation, route }) => {
 
     try {
       const token = await getToken();
-      console.log('submit token', token);
-
+      
       if (!token) {
         Alert.alert('Error', 'Session expired. Please login again.');
         navigation.navigate('Login');
@@ -467,8 +460,7 @@ const DocumentScreen = ({ navigation, route }) => {
 
       const formData = new FormData();
 
-      console.log('form data', formData);
-
+      
       // Append all text fields
       const textFields = {
         fullName: form.fullName,
@@ -525,8 +517,7 @@ const DocumentScreen = ({ navigation, route }) => {
         }
       });
 
-      console.log('Submitting form data...', formData, token);
-
+      
       const response = await axios
         .post(`${BASE_URL}/register`, formData, {
           headers: {
@@ -536,11 +527,7 @@ const DocumentScreen = ({ navigation, route }) => {
           timeout: 30000,
         })
     
-      console.log(
-        'final data ka data',
-        response.data,
-      );
-
+      
       if (response.data?.data?.verificationStatus === 'submitted') {
         Alert.alert(
           'Success!',

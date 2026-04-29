@@ -8,22 +8,19 @@ let soundRef = null;
 export const playOrderSound = () => {
   // agar already play ho raha hai to dubara mat chalao
   if (soundRef) {
-    console.log('Sound already playing');
-    return;
+        return;
   }
 
   soundRef = new Sound('order_sound.mp3', Sound.MAIN_BUNDLE, (error) => {
     if (error) {
-      console.log('Sound error', error);
-      return;
+            return;
     }
 
     soundRef.setNumberOfLoops(-1); // 🔁 infinite loop
 
     soundRef.play((success) => {
       if (!success) {
-        console.log('Playback failed');
-      }
+              }
     });
   });
 };
@@ -34,9 +31,7 @@ export const stopOrderSound = () => {
     soundRef.stop(() => {
       soundRef.release();
       soundRef = null;
-      console.log('🔇 Sound stopped');
-    });
+          });
   } else {
-    console.log('No sound to stop');
-  }
+      }
 };

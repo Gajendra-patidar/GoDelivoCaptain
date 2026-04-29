@@ -65,7 +65,6 @@ export const OrderModal = ({
 
   const handleAccept = () => {
     onAccept?.(orderData);
-    console.log("modal data", orderData, onAccept?.orderData);
 
     // resetAndClose();
     stopOrderSound();
@@ -77,8 +76,39 @@ export const OrderModal = ({
     stopOrderSound();
   };
 
+  // ── Address resolver: handles both nested API shape and legacy flat shape ──
+  const pickupAddress =
+    orderData?.pickupLocation?.address ||
+    orderData?.pickupAddress ||
+    orderData?.pickup_address ||
+    orderData?.pickup?.address ||
+    'Locating pickup...';
+
+  const dropAddress =
+    orderData?.dropLocation?.address ||
+    orderData?.dropAddress ||
+    orderData?.drop_address ||
+    orderData?.drop?.address ||
+    'Locating drop...';
+
+  // ── Distance: rideDetails.distance (number km) or distanceText (string) ──
+  const rawDistance =
+    orderData?.rideDetails?.distance ||
+    parseFloat(orderData?.rideDetails?.distanceText) ||
+    0;
+  const pickupDistance = Number(rawDistance).toFixed(1);
+
+  // ── Fare ──────────────────────────────────────────────────────────────────
   const amount = Number(orderData?.rideDetails?.estimatedFare || 0).toLocaleString('en-IN');
-  const pickupDistance = Number(orderData?.rideDetails?.distanceText || 0).toFixed(1);
+
+  // ── Duration ─────────────────────────────────────────────────────────────
+  const durationMin = orderData?.rideDetails?.duration
+    ? Math.round(orderData.rideDetails.duration)
+    : null;
+
+  // ── Payment mode ─────────────────────────────────────────────────────────
+  const paymentMode = orderData?.paymentMode || orderData?.payment_mode || 'Cash';
+  const vehicleLabel = orderData?.rideDetails?.vehicleType || orderData?.vehicleType || '2-Wheeler';
 
   if (!visible) return null;
 
@@ -156,13 +186,13 @@ export const OrderModal = ({
                     <View style={styles.addressBlock}>
                       <Text style={styles.addressLabel}>PICKUP • {pickupDistance}km away</Text>
                       <Text style={styles.addressText} numberOfLines={2}>
-                        {orderData?.pickupAddress || 'Locating pickup...'}
+                        {pickupAddress}
                       </Text>
                     </View>
                     <View style={[styles.addressBlock, { marginTop: 20 }]}>
                       <Text style={styles.addressLabel}>DROP LOCATION</Text>
                       <Text style={styles.addressText} numberOfLines={2}>
-                        {orderData?.dropAddress || 'Locating drop...'}
+                        {dropAddress}
                       </Text>
                     </View>
                   </View>
@@ -171,11 +201,17 @@ export const OrderModal = ({
                 <View style={styles.infoRow}>
                   <View style={styles.infoItem}>
                     <Ionicons name="bicycle" size={18} color={theme.colors.muted} />
-                    <Text style={styles.infoValue}>2-Wheeler</Text>
+                    <Text style={styles.infoValue}>{vehicleLabel}</Text>
                   </View>
+                  {durationMin ? (
+                    <View style={styles.infoItem}>
+                      <Ionicons name="time-outline" size={18} color={theme.colors.muted} />
+                      <Text style={styles.infoValue}>{durationMin} min</Text>
+                    </View>
+                  ) : null}
                   <View style={styles.infoItem}>
                     <Ionicons name="wallet-outline" size={18} color={theme.colors.muted} />
-                    <Text style={styles.infoValue}>Cash Trip</Text>
+                    <Text style={styles.infoValue}>{paymentMode}</Text>
                   </View>
                 </View>
 
@@ -307,6 +343,7 @@ const styles = StyleSheet.create({
   },
   addressCol: {
     flex: 1,
+    height: 90
   },
   addressBlock: {
     flex: 1,
@@ -322,7 +359,6 @@ const styles = StyleSheet.create({
     fontSize: moderateScale(15),
     fontWeight: '700',
     color: theme.colors.ink,
-    lineHeight: moderateScale(20),
   },
   infoRow: {
     flexDirection: 'row',

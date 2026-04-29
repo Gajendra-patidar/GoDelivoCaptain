@@ -18,19 +18,16 @@
 //      */
 //     async connect() {
 //         if (this.pusher?.connection?.state === 'connected') {
-//             console.log('Pusher already connected');
-//             return;
+//             //             return;
 //         }
 
 //         try {
 //             const token = await AsyncStorage.getItem('userToken');
 //             const driverId = await AsyncStorage.getItem('driverId');
 
-//             console.log('Pusher driverId:', driverId);
-
+//             
 //             if (!driverId) {
-//                 console.log('Pusher connection skipped: missing driverId');
-//                 return;
+//                 //                 return;
 //             }
 
 //             this.driverId = driverId;
@@ -57,8 +54,7 @@
 //             this.pusher.connection.bind('connected', () => {
 //                 this.isConnected = true;
 //                 this.reconnectAttempts = 0;
-//                 console.log('✅ Pusher connected with socket ID:', this.pusher.connection.socket_id);
-
+//                 
 //                 // Subscribe to driver channel
 //                 this.subscribeToDriverChannel();
 
@@ -68,12 +64,10 @@
 
 //             this.pusher.connection.bind('disconnected', () => {
 //                 this.isConnected = false;
-//                 console.log('⚠️ Pusher disconnected');
-//             });
+//                 //             });
 
 //             this.pusher.connection.bind('state_change', (states) => {
-//                 console.log('Pusher state change:', states.current);
-//             });
+//                 //             });
 
 //             this.pusher.connection.bind('error', (error) => {
 //                 console.error('❌ Pusher connection error:', error);
@@ -104,27 +98,22 @@
 //         this.channel = this.pusher.subscribe(channelName);
 
 //         this.channel.bind('pusher:subscription_succeeded', () => {
-//             console.log(`Subscribed to ${channelName}`);
-
+//             
 //             // Bind to ride assignment events
 //             this.channel.bind('new-ride-request', (data) => {
-//                 console.log('New ride request received:', data);
-//                 this.triggerListener('new_ride', data);
+//                 //                 this.triggerListener('new_ride', data);
 //             });
 
 //             this.channel.bind('ride-cancelled', (data) => {
-//                 console.log('Ride cancelled:', data);
-//                 this.triggerListener('ride_cancelled', data);
+//                 //                 this.triggerListener('ride_cancelled', data);
 //             });
 
 //             this.channel.bind('ride-updated', (data) => {
-//                 console.log('Ride updated:', data);
-//                 this.triggerListener('ride_updated', data);
+//                 //                 this.triggerListener('ride_updated', data);
 //             });
 
 //             this.channel.bind('customer-message', (data) => {
-//                 console.log('Customer message:', data);
-//                 this.triggerListener('customer_message', data);
+//                 //                 this.triggerListener('customer_message', data);
 //             });
 //         });
 
@@ -144,8 +133,7 @@
 //         this.locationChannel = this.pusher.subscribe(locationChannelName);
 
 //         this.locationChannel.bind('pusher:subscription_succeeded', () => {
-//             console.log(`Subscribed to ${locationChannelName}`);
-//         });
+//             //         });
 //     }
 
 //     /**
@@ -170,8 +158,7 @@
 //                 throw new Error('Failed to notify driver online');
 //             }
 
-//             console.log('Driver online notification sent');
-//         } catch (error) {
+//             //         } catch (error) {
 //             console.error('Error notifying driver online:', error);
 //         }
 //     }
@@ -192,8 +179,7 @@
 //                     driverId: this.driverId,
 //                 }),
 //             });
-//             console.log('Driver offline notification sent');
-//         } catch (error) {
+//             //         } catch (error) {
 //             console.error('Error notifying driver offline:', error);
 //         }
 //     }
@@ -228,8 +214,7 @@
 
 //             // Fire and forget - don't wait for response
 //             if (!response.ok) {
-//                 console.warn('Location update failed:', response.status);
-//             }
+//                 //             }
 //         } catch (error) {
 //             // Silent fail for location updates to not spam console
 //             if (__DEV__) {
@@ -323,8 +308,7 @@
 //         this.isConnected = false;
 //         this.driverId = null;
 //         this.listeners.clear();
-//         console.log('Pusher disconnected');
-//     }
+//         //     }
 
 //     /**
 //      * Get connection status

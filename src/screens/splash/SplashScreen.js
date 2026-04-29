@@ -12,16 +12,14 @@ const SplashScreen = () => {
       try {
         const token = await AsyncStorage.getItem('userToken');
 
-        console.log("user token", token);
-
+        
         if (token) {
           navigation.replace('Docs');
         } else {
           navigation.replace('Login');
         }
       } catch (error) {
-        console.log("Splash error:", error);
-        navigation.replace('Login');
+                navigation.replace('Login');
       }
     };
 
