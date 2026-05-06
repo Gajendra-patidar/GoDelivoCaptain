@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import Clipboard from '@react-native-clipboard/clipboard';
+import toast from '../../utils/toast';
 import { useSelector } from 'react-redux';
 import { theme } from '../../theme';
 
@@ -20,9 +21,9 @@ const ReferralScreen = ({ navigation }) => {
   const handleCopy = () => {
     try {
       Clipboard.setString(referralCode);
-      Alert.alert('Copied!', 'Referral code copied to clipboard.');
+      toast.success('Referral code copied to clipboard.');
     } catch {
-      Alert.alert('Error', 'Could not copy code.');
+      toast.error('Could not copy code.');
     }
   };
 

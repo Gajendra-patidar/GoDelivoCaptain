@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
+import toast from '../../utils/toast';
 import { selectIsOnline } from '../../store/slices/onlineStatusSlice';
 import { changeLanguage } from '../../utils/changeLanguage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -28,6 +29,15 @@ const ProfileScreen = ({ navigation }) => {
   const dispatch = useDispatch();
   const profile = useSelector(selectProfile);
   const loading = useSelector(selectProfileLoading);
+
+  const profileAddress = profile?.address || profile?.applicationDetails?.address;
+  const profileBankDetails = profile?.bankDetails || profile?.applicationDetails?.bankDetails;
+  const profileVehicleDetails = profile?.vehicleDetails || profile?.applicationDetails?.vehicleDetails ||{
+    type: profile?.vehicleType,
+    number: profile?.vehicleNumber,
+  };
+  const profileStats = profile?.stats || {};
+  const applicationDetails = profile?.applicationDetails || {};
 
   // State for modals
   const [addressModalVisible, setAddressModalVisible] = useState(false);
@@ -65,24 +75,26 @@ const ProfileScreen = ({ navigation }) => {
   }, [dispatch]);
 
   useEffect(() => {
+    console.log("profiledata", profile);
+    
     if (profile) {
       setPhoneNumber(profile.phone || '');
 
-      // Handle address - it's an object in the API response
-      if (profile.address) {
-        const addressObj = profile.address;
+      // Handle address - it may come from applicationDetails.address
+      if (profileAddress) {
+        const addressObj = profileAddress;
         const formattedAddress = `${addressObj.street || ''}, ${addressObj.city || ''}, ${addressObj.state || ''} - ${addressObj.pincode || ''}`;
         setSavedAddress(formattedAddress);
       }
 
-      // Handle bank details
-      if (profile.bankDetails) {
+      // Handle bank details from either root or nested applicationDetails
+      if (profileBankDetails) {
         setSavedBankDetails({
-          accountHolderName: profile.bankDetails.accountHolderName || '',
-          accountNumber: profile.bankDetails.accountNumber || '',
-          ifscCode: profile.bankDetails.ifscCode || '',
-          bankName: profile.bankDetails.bankName || '',
-          upiId: profile.bankDetails.upiId || '',
+          accountHolderName: profileBankDetails.accountHolderName || '',
+          accountNumber: profileBankDetails.accountNumber || '',
+          ifscCode: profileBankDetails.ifscCode || '',
+          bankName: profileBankDetails.bankName || '',
+          upiId: profileBankDetails.upiId || '',
         });
       }
     }
@@ -126,21 +138,18 @@ const ProfileScreen = ({ navigation }) => {
       setHomeAddress('');
       setAddressModalVisible(false);
 
-      Alert.alert('Success', 'Address updated successfully!');
+      toast.success('Address updated successfully!');
     } else {
-      Alert.alert('Error', 'Please enter an address');
+      toast.error('Please enter an address');
     }
   }, [dispatch, homeAddress, profile]);
 
   const handlePhoneSendOTP = useCallback(() => {
     if (newPhoneNumber.length === 10) {
       setShowOtpField(true);
-      Alert.alert(
-        'OTP Sent',
-        'A verification code has been sent to your new number',
-      );
+      toast.info('A verification code has been sent to your new number');
     } else {
-      Alert.alert('Error', 'Please enter a valid 10-digit mobile number');
+      toast.error('Please enter a valid 10-digit mobile number');
     }
   }, [newPhoneNumber]);
 
@@ -158,9 +167,9 @@ const ProfileScreen = ({ navigation }) => {
       setNewPhoneNumber('');
       setOtp('');
 
-      Alert.alert('Success', 'Mobile number updated successfully!');
+      toast.success('Mobile number updated successfully!');
     } else {
-      Alert.alert('Error', 'Please enter valid OTP');
+      toast.error('Please enter valid OTP');
     }
   }, [dispatch, newPhoneNumber, otp]);
 
@@ -184,12 +193,12 @@ const ProfileScreen = ({ navigation }) => {
         setSavedBankDetails(bankDataToSave);
         setBankModalVisible(false);
 
-        Alert.alert('Success', 'Bank details saved successfully!');
+        toast.success('Bank details saved successfully!');
       } else {
-        Alert.alert('Error', 'Account numbers do not match');
+        toast.error('Account numbers do not match');
       }
     } else {
-      Alert.alert('Error', 'Please fill all required fields');
+      toast.error('Please fill all required fields');
     }
   }, [bankDetails, dispatch]);
 
@@ -231,7 +240,7 @@ const ProfileScreen = ({ navigation }) => {
             <TextInput
               style={styles.modalInput}
               placeholder="City"
-              value={profile?.address?.city || ''}
+              value={profileAddress?.city || ''}
               editable={false}
             />
 
@@ -239,7 +248,7 @@ const ProfileScreen = ({ navigation }) => {
             <TextInput
               style={styles.modalInput}
               placeholder="State"
-              value={profile?.address?.state || ''}
+              value={profileAddress?.state || ''}
               editable={false}
             />
 
@@ -247,7 +256,7 @@ const ProfileScreen = ({ navigation }) => {
             <TextInput
               style={styles.modalInput}
               placeholder="Pincode"
-              value={profile?.address?.pincode || ''}
+              value={profileAddress?.pincode || ''}
               editable={false}
             />
 
@@ -292,7 +301,7 @@ const ProfileScreen = ({ navigation }) => {
     await resetDriverLocalData();
     SocketService.cleanup();
     dispatch(clearProfile());
-    Alert.alert('Logged out', 'You have been logged out successfully.');
+    toast.success('You have been logged out successfully.');
     navigation.replace('Login');
   };
 
@@ -564,10 +573,11 @@ const ProfileScreen = ({ navigation }) => {
 
   // Render bank details if saved
   const renderBankDetails = useCallback(() => {
-    if (savedBankDetails) {
+    const bankInfo = savedBankDetails || profileBankDetails;
+    if (bankInfo) {
       // Mask account number for display
-      const maskedAccountNumber = savedBankDetails.accountNumber
-        ? `••••${savedBankDetails.accountNumber.slice(-4)}`
+      const maskedAccountNumber = bankInfo.accountNumber
+        ? `••••${bankInfo.accountNumber.slice(-4)}`
         : '';
 
       return (
@@ -575,7 +585,7 @@ const ProfileScreen = ({ navigation }) => {
           <View style={styles.bankDetailRow}>
             <Text style={styles.bankDetailLabel}>Account Holder:</Text>
             <Text style={styles.bankDetailValue}>
-              {savedBankDetails.accountHolderName}
+              {bankInfo.accountHolderName}
             </Text>
           </View>
           <View style={styles.bankDetailRow}>
@@ -587,49 +597,34 @@ const ProfileScreen = ({ navigation }) => {
           <View style={styles.bankDetailRow}>
             <Text style={styles.bankDetailLabel}>IFSC:</Text>
             <Text style={styles.bankDetailValue}>
-              {savedBankDetails.ifscCode}
+              {bankInfo.ifscCode}
             </Text>
           </View>
           <View style={styles.bankDetailRow}>
             <Text style={styles.bankDetailLabel}>Bank:</Text>
             <Text style={styles.bankDetailValue}>
-              {savedBankDetails.bankName}
+              {bankInfo.bankName}
             </Text>
           </View>
-          {savedBankDetails.upiId ? (
+          {bankInfo.upiId ? (
             <View style={styles.bankDetailRow}>
               <Text style={styles.bankDetailLabel}>UPI ID:</Text>
               <Text style={styles.bankDetailValue}>
-                {savedBankDetails.upiId}
+                {bankInfo.upiId}
               </Text>
             </View>
           ) : null}
-
-          {/* Verification Status */}
-          {profile?.bankDetails?.verificationStatus && (
-            <View style={styles.verificationStatusRow}>
-              <Text style={styles.bankDetailLabel}>Status:</Text>
-              <View style={[
-                styles.statusBadge,
-                profile.bankDetails.verificationStatus === 'verified' ? styles.statusVerified :
-                  profile.bankDetails.verificationStatus === 'rejected' ? styles.statusRejected :
-                    styles.statusPending
-              ]}>
-                <Text style={styles.statusText}>
-                  {profile.bankDetails.verificationStatus === 'verified' ? '✓ Verified' :
-                    profile.bankDetails.verificationStatus === 'rejected' ? '✗ Rejected' :
-                      '⏳ Pending'}
-                </Text>
-              </View>
-            </View>
-          )}
 
           <TouchableOpacity
             style={styles.editBankButton}
             onPress={() => {
               setBankDetails({
-                ...savedBankDetails,
-                confirmAccountNumber: savedBankDetails.accountNumber,
+                accountHolderName: bankInfo.accountHolderName || '',
+                accountNumber: bankInfo.accountNumber || '',
+                confirmAccountNumber: bankInfo.accountNumber || '',
+                ifscCode: bankInfo.ifscCode || '',
+                bankName: bankInfo.bankName || '',
+                upiId: bankInfo.upiId || '',
               });
               setBankModalVisible(true);
             }}
@@ -702,13 +697,15 @@ const ProfileScreen = ({ navigation }) => {
               <View style={styles.nameRow}>
                 <Text style={styles.name}>{profile?.name || 'Driver'}</Text>
                 <View style={styles.ratingBadge}>
-                  <Text style={styles.starRating}>★ 4.8</Text>
+                  <Text style={styles.starRating}>★ {profileStats.rating || 0}</Text>
                 </View>
               </View>
               <View style={styles.vehicleRow}>
-                <MaterialIcons name="two-wheeler" size={16} color="#64748B" />
+                {
+                  
+                }
                 <Text style={styles.vehicleText}>
-                  {profile?.vehicleType || 'Vehicle'} • {profile?.vehicleNumber || '--'}
+                  {profileVehicleDetails?.type || 'Vehicle'} • {profileVehicleDetails?.number || '--'}
                 </Text>
               </View>
             </View>
@@ -716,11 +713,35 @@ const ProfileScreen = ({ navigation }) => {
             <TouchableOpacity
               style={styles.editButton}
               onPress={() =>
-                Alert.alert('Profile Info', 'View full profile details')
+                toast.info('View full profile details')
               }
             >
               <Ionicons name="chevron-forward" size={24} color="#CBD5E1" />
             </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Profile Stats Card */}
+        <View style={styles.statsCard}>
+          <View style={styles.statsRow}>
+            <View style={styles.statsItem}>
+              <Text style={styles.statsValue}>₹{profileStats.totalEarnings ?? 0}</Text>
+              <Text style={styles.statsLabel}>Total Earnings</Text>
+            </View>
+            <View style={styles.statsItem}>
+              <Text style={styles.statsValue}>{profileStats.totalTrips ?? 0}</Text>
+              <Text style={styles.statsLabel}>Total Trips</Text>
+            </View>
+          </View>
+          <View style={styles.statsRow}>
+            <View style={styles.statsItem}>
+              <Text style={styles.statsValue}>{profileStats.rating ?? 0}</Text>
+              <Text style={styles.statsLabel}>Rating</Text>
+            </View>
+            <View style={styles.statsItem}>
+              <Text style={styles.statsValue}>₹{profileStats.walletBalance ?? 0}</Text>
+              <Text style={styles.statsLabel}>Wallet</Text>
+            </View>
           </View>
         </View>
 
@@ -733,7 +754,7 @@ const ProfileScreen = ({ navigation }) => {
             </TouchableOpacity>
           </View>
           <View style={styles.addressBox}>
-            <Text style={styles.addressText}>{savedAddress || 'No address added'}</Text>
+            <Text style={styles.addressText}>{savedAddress || (profileAddress ? `${profileAddress.street || ''}, ${profileAddress.city || ''}, ${profileAddress.state || ''} - ${profileAddress.pincode || ''}` : 'No address added')}</Text>
           </View>
         </View>
 
@@ -775,7 +796,7 @@ const ProfileScreen = ({ navigation }) => {
           <View style={styles.vehicleCard}>
             <View style={styles.vehicleCardLeft}>
               <View style={styles.vehicleIconBg}>
-                <MaterialIcons name="two-wheeler" size={24} color="#F4C20D" />
+                <Text style={{fontSize:15, fontFamily:'Poppins-SemiBold'}} >{(profile?.name).slice(0,1)}</Text>
               </View>
               <View style={styles.vehicleDetails}>
                 <Text style={styles.vehicleName}>
@@ -1027,6 +1048,43 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 4,
+  },
+  smallInfoText: {
+    color: '#555',
+    fontSize: 12,
+    marginTop: 4,
+  },
+  statsCard: {
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 16,
+    borderRadius: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  statsItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  statsValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#000',
+  },
+  statsLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginTop: 4,
+    textAlign: 'center',
   },
   name: {
     fontSize: 18,

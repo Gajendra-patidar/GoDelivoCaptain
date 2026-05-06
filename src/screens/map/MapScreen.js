@@ -841,10 +841,7 @@ const MapScreen = ({ navigation, route }) => {
             updateCamera(pickup, 0);
           }
 
-          Alert.alert(
-            '📍 Arrived',
-            'You have reached pickup location. Confirm pickup now.',
-          );
+          toast.info('You have reached pickup location. Confirm pickup now.');
         }
 
         // Arrived at drop
@@ -855,10 +852,7 @@ const MapScreen = ({ navigation, route }) => {
             updateCamera(drop, 0);
           }
 
-          Alert.alert(
-            '🎯 Arrived',
-            'You have reached the destination. Complete delivery when ready.',
-          );
+          toast.info('You have reached the destination. Complete delivery when ready.');
         }
       }
     } catch (error) {
@@ -920,10 +914,7 @@ const MapScreen = ({ navigation, route }) => {
   const handleCallCustomer = () => {
     const phone = order?.customer?.phone || order?.customerPhone;
     if (!phone) {
-      Alert.alert(
-        'No phone number',
-        'Customer phone number is not available for this order.',
-      );
+      toast.error('Customer phone number is not available for this order.');
       return;
     }
     const url = `tel:${phone}`;
@@ -932,20 +923,17 @@ const MapScreen = ({ navigation, route }) => {
         if (supported) {
           Linking.openURL(url);
         } else {
-          Alert.alert(
-            'Cannot make call',
-            `Unable to call customer. Please dial ${phone} manually.`,
-          );
+          toast.error(`Unable to call customer. Please dial ${phone} manually.`);
         }
       })
       .catch(() => {
-        Alert.alert('Error', 'Failed to initiate call.');
+        toast.error('Failed to initiate call.');
       });
   };
 
   const handleCancelTrip = async () => {
     if (!cancelReason) {
-      Alert.alert('Select reason', 'Please select a reason for cancellation.');
+      toast.warn('Please select a reason for cancellation.');
       return;
     }
 
@@ -994,17 +982,11 @@ const MapScreen = ({ navigation, route }) => {
     const expectedCode = order?.pickupCode || order?.otp || order?.pickup_otp;
     // If no OTP is set by backend, allow any 4-digit code
     if (expectedCode && pickupOtp !== String(expectedCode)) {
-      Alert.alert(
-        'Invalid Code',
-        'The pickup verification code is incorrect. Please check with the customer.',
-      );
+      toast.error('The pickup verification code is incorrect. Please check with the customer.');
       return;
     }
     if (pickupOtp.length < 4) {
-      Alert.alert(
-        'Enter Code',
-        'Please enter the 4-digit pickup verification code.',
-      );
+      toast.warn('Please enter the 4-digit pickup verification code.');
       return;
     }
     setShowPickupOtpModal(false);
@@ -1062,7 +1044,7 @@ const MapScreen = ({ navigation, route }) => {
       }
     } catch (error) {
       console.error('Pickup confirmation error:', error);
-      Alert.alert('Error', 'Failed to confirm pickup. Please try again.');
+      toast.error('Failed to confirm pickup. Please try again.');
     }
   };
 

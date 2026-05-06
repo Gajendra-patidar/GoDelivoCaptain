@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import toast from '../utils/toast';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const RechargeNowModal = ({ visible, onClose, walletBalance, onRecharge }) => {
@@ -33,7 +34,7 @@ const RechargeNowModal = ({ visible, onClose, walletBalance, onRecharge }) => {
   const handleRecharge = async () => {
     const amount = Number(customAmount || selectedAmount || 0);
     if (!Number.isFinite(amount) || amount <= 0) {
-      Alert.alert('Invalid amount', 'Please enter a valid recharge amount.');
+      toast.error('Please enter a valid recharge amount.');
       return;
     }
 

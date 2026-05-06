@@ -15,6 +15,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import toast from '../../utils/toast';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { moderateScale } from 'react-native-size-matters';
 import NotificationService from '../../services/NotificationService';
@@ -216,12 +217,9 @@ const HomeScreen = ({ navigation }) => {
       const nextStatus = !homeAreaActive;
       await driverApi.updateHomeArea({ isActive: nextStatus });
       setHomeAreaActive(nextStatus);
-      Alert.alert(
-        'Filter Updated',
-        `Order filter ${nextStatus ? 'enabled' : 'disabled'}.`,
-      );
+      toast.success(`Order filter ${nextStatus ? 'enabled' : 'disabled'}.`);
     } catch (error) {
-      Alert.alert('Error', 'Failed to update filter preference.');
+      toast.error('Failed to update filter preference.');
     }
   };
 
@@ -238,7 +236,7 @@ const HomeScreen = ({ navigation }) => {
 
       if (data.type === 'DOCUMENT_VERIFIED' || data.type === 'VERIFIED') {
         setVerifyStatus('VERIFIED');
-        Alert.alert('Success', 'Your documents have been verified.');
+        toast.success('Your documents have been verified.');
         return;
       }
 
@@ -742,7 +740,7 @@ const HomeScreen = ({ navigation }) => {
       setNotificationData(null);
       navigation.navigate('Map', { order: finalOrder });
     } catch (error) {
-      Alert.alert('Accept failed', driverApi.safeErrorMessage(error));
+      toast.error(driverApi.safeErrorMessage(error));
     }
   };
 
@@ -775,14 +773,11 @@ const HomeScreen = ({ navigation }) => {
         const updated = await addWalletAmount(amount);
         setWalletBalance(updated.balance);
       }
-      Alert.alert('Wallet updated', `Rs ${amount} added successfully.`);
+      toast.success(`Rs ${amount} added successfully.`);
     } catch (error) {
       const updated = await addWalletAmount(amount);
       setWalletBalance(updated.balance);
-      Alert.alert(
-        'Offline recharge',
-        `Backend not reachable. Rs ${amount} added locally.`,
-      );
+      toast.warn(`Backend not reachable. Rs ${amount} added locally.`);
     }
   };
 
@@ -991,7 +986,7 @@ const HomeScreen = ({ navigation }) => {
         </View>
 
         {/* Offer Card Section */}
-        <View style={styles.offerCard}>
+        {/* <View style={styles.offerCard}>
           <LinearGradient
             colors={['#f1cb40', '#f1da7a', '#f7ebaa']}
             start={{ x: 0, y: 0 }}
@@ -1024,7 +1019,7 @@ const HomeScreen = ({ navigation }) => {
               </View>
             </View>
           </LinearGradient>
-        </View>
+        </View> */}
 
         <View style={styles.quickGrid}>
           <TouchableOpacity

@@ -1,4 +1,4 @@
-import { StyleSheet } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import MainNavigation from './src/navigations/mainNavigation';
@@ -11,6 +11,8 @@ import NotificationService from './src/services/NotificationService';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import { OfflineQueue } from './src/services/offlineQueue';
 import SocketService from './src/services/socketService';
+import ToastManager from 'toastify-react-native';
+
 
 function App() {
   useEffect(() => {
@@ -54,6 +56,7 @@ function App() {
             <ErrorBoundary>
               <MainNavigation />
             </ErrorBoundary>
+            <ToastManager />
           </SafeAreaView>
         </SafeAreaProvider>
       </Provider>

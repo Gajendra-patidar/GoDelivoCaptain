@@ -31,26 +31,68 @@ export const spacing = {
   xl: moderateScale(24),
 };
 
+const fontFamily = {
+  regular: 'Poppins-Regular',
+  medium: 'Poppins-Medium',
+  semibold: 'Poppins-SemiBold',
+  bold: 'Poppins-Bold',
+  extrabold: 'Poppins-ExtraBold',
+};
+
 export const type = {
   h1: {
-    fontSize: moderateScale(22),
+    fontFamily: fontFamily.extrabold,
+    fontSize: moderateScale(24),
     fontWeight: '800',
     color: colors.text,
   },
   h2: {
-    fontSize: moderateScale(18),
-    fontWeight: '800',
+    fontFamily: fontFamily.bold,
+    fontSize: moderateScale(20),
+    fontWeight: '700',
     color: colors.text,
   },
+  title: {
+    fontFamily: fontFamily.bold,
+    fontSize: moderateScale(18),
+    fontWeight: '700',
+    color: colors.text,
+  },
+  subtitle: {
+    fontFamily: fontFamily.semibold,
+    fontSize: moderateScale(16),
+    fontWeight: '600',
+    color: colors.ink,
+  },
   body: {
+    fontFamily: fontFamily.medium,
     fontSize: moderateScale(14),
     fontWeight: '500',
     color: colors.text,
   },
-  sub: {
-    fontSize: moderateScale(12),
-    fontWeight: '600',
+  label: {
+    fontFamily: fontFamily.medium,
+    fontSize: moderateScale(13),
+    fontWeight: '500',
     color: colors.muted,
+  },
+  caption: {
+    fontFamily: fontFamily.regular,
+    fontSize: moderateScale(12),
+    fontWeight: '400',
+    color: colors.muted,
+  },
+  button: {
+    fontFamily: fontFamily.semibold,
+    fontSize: moderateScale(14),
+    fontWeight: '600',
+    color: colors.surface,
+  },
+  default: {
+    fontFamily: fontFamily.regular,
+    fontSize: moderateScale(14),
+    fontWeight: '400',
+    color: colors.text,
   },
 };
 

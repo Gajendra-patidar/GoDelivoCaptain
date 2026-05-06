@@ -9,6 +9,7 @@ import {
   Alert,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import toast from '../utils/toast';
 
 const EmergencyModal = ({ visible, onClose }) => {
   const handleCall = (number, label) => {
@@ -18,11 +19,11 @@ const EmergencyModal = ({ visible, onClose }) => {
         if (supported) {
           Linking.openURL(url);
         } else {
-          Alert.alert('Cannot make call', `Unable to call ${label}. Please dial ${number} manually.`);
+          toast.error(`Unable to call ${label}. Please dial ${number} manually.`);
         }
       })
       .catch(() => {
-        Alert.alert('Error', `Failed to initiate call to ${label}.`);
+        toast.error(`Failed to initiate call to ${label}.`);
       });
   };
 

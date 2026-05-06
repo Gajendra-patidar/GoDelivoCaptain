@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import toast from '../../utils/toast';
 import { moderateScale } from 'react-native-size-matters';
 import { useFocusEffect } from '@react-navigation/native';
 import {
@@ -61,14 +62,14 @@ const EarningsScreen = ({ navigation }) => {
         if (walletResponse) {
           const updated = await setWalletData(walletResponse);
           setWallet(updated);
-          Alert.alert('Wallet Updated', `Rs ${amount} added to wallet balance.`);
+          toast.success(`Rs ${amount} added to wallet balance.`);
           return;
         }
       } catch {}
 
       const updatedWallet = await addWalletAmount(amount);
       setWallet(updatedWallet);
-      Alert.alert('Offline Recharge', `Backend not reachable. Rs ${amount} added locally.`);
+      toast.warn(`Backend not reachable. Rs ${amount} added locally.`);
     } finally {
       setLoadingAmount(null);
     }
@@ -79,13 +80,13 @@ const EarningsScreen = ({ navigation }) => {
       const result = await driverApi.requestPayout(wallet.balance);
       if (result) {
         setWallet({ ...wallet, balance: 0 });
-        Alert.alert('Success', `Payout of ₹${wallet.balance} requested. Funds will be transferred shortly.`);
+        toast.success(`Payout of ₹${wallet.balance} requested. Funds will be transferred shortly.`);
       }
     } catch (err) {
       if (err.response?.data?.message === 'Incomplete bank details') {
-        Alert.alert('Bank Details Missing', 'Please add bank details before requesting a payout.');
+        toast.warn('Please add bank details before requesting a payout.');
       } else {
-        Alert.alert('Error', err.response?.data?.message || 'Failed to request payout');
+        toast.error(err.response?.data?.message || 'Failed to request payout');
       }
     }
   };
@@ -99,7 +100,7 @@ const EarningsScreen = ({ navigation }) => {
           <Ionicons name="arrow-back" size={24} color={theme.colors.ink} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Earnings</Text>
-        <TouchableOpacity style={styles.helpBtn} onPress={() => Alert.alert('Help', 'Contacting support...')}>
+        <TouchableOpacity style={styles.helpBtn} onPress={() => toast.info('Contacting support...')}>
           <Ionicons name="help-circle-outline" size={24} color={theme.colors.ink} />
         </TouchableOpacity>
       </View>

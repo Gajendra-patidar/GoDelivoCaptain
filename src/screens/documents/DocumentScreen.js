@@ -28,11 +28,28 @@ const { width } = Dimensions.get('window');
 const VEHICLE_TYPES = [
   'Bike',
   'Scooter',
-  'Auto Rickshaw',
-  'Mini Truck',
-  'Pickup Truck',
-  'Truck',
+  'Loader (3 Wheeler)',
+  'Truck (4 Wheeler)',
 ];
+
+const getVehicleIcon = type => {
+  switch (type) {
+    case 'Bike':
+      return 'two-wheeler';
+
+    case 'Scooter':
+      return 'moped';
+
+    case 'Loader (3 Wheeler)':
+      return 'electric-rickshaw';
+
+    case 'Truck (4 Wheeler)':
+      return 'local-shipping';
+
+    default:
+      return 'car';
+  }
+};
 
 const DocumentScreen = ({ navigation, route }) => {
   const [step, setStep] = useState(1);
@@ -47,39 +64,38 @@ const DocumentScreen = ({ navigation, route }) => {
   const statusData = route?.params?.data;
 
   useEffect(() => {
-  if (statusData) {
-    if(verifyStatus === 'submitted' || verifyStatus === 'partially_verified') {
+    if (statusData) {
+      if (
+        verifyStatus === 'submitted' ||
+        verifyStatus === 'partially_verified'
+      ) {
+        return;
+      }
+      handleStatus(statusData);
+    } else {
+      checkStatus();
+    }
+  }, []);
+
+  const handleStatus = data => {
+    // 🆕 NEW DRIVER → FORM SHOW
+    if (data?.requiresRegistration === true) {
+      setVerifyStatusVal('NEW');
       return;
     }
-    handleStatus(statusData);
-  } else {
-    checkStatus();
-  }
-}, []);
-  
-  
-  const handleStatus = (data) => {
-  
-  // 🆕 NEW DRIVER → FORM SHOW
-  if (data?.requiresRegistration === true) {
-    setVerifyStatusVal('NEW');
-    return;
-  }
 
-  // 📄 Already Uploaded → check status
-  const status = data?.applicationStatus;
+    // 📄 Already Uploaded → check status
+    const status = data?.applicationStatus;
 
-  if (status === 'PENDING') {
-    setVerifyStatusVal('PENDING');
-  } 
-  else if (status === 'REJECTED') {
-    setVerifyStatusVal('REJECTED');
-    setRejectReason(data?.statusMessage || '');
-  } 
-  else if (status === 'VERIFIED') {
-    navigation.replace('MyTabs');
-  }
-};
+    if (status === 'PENDING') {
+      setVerifyStatusVal('PENDING');
+    } else if (status === 'REJECTED') {
+      setVerifyStatusVal('REJECTED');
+      setRejectReason(data?.statusMessage || '');
+    } else if (status === 'VERIFIED') {
+      navigation.replace('MyTabs');
+    }
+  };
 
   const checkStatus = async () => {
     try {
@@ -88,7 +104,6 @@ const DocumentScreen = ({ navigation, route }) => {
       const phone = await AsyncStorage.getItem('userPhone');
       if (phone) setUserPhone(phone);
 
-      
       if (token) {
         const response = await axios
           .get(`${BASE_URL}/status/${phone}`, {
@@ -98,20 +113,23 @@ const DocumentScreen = ({ navigation, route }) => {
             data: { verifyStatus: 'PENDING', rejectReason: '' },
           }));
 
-        
         setVerifyStatusVal(
           response?.data?.data?.verificationStatus ||
             response?.data?.verifyStatus ||
             'PENDING',
         );
-        setRejectReason(response?.data?.rejectReason || response?.data?.data?.statusMessage || '');
+        setRejectReason(
+          response?.data?.rejectReason ||
+            response?.data?.data?.statusMessage ||
+            '',
+        );
         //VERIFIED
         if (response?.data?.data?.verificationStatus === 'verified') {
           navigation.replace('MyTabs');
         }
       }
     } catch (error) {
-          } finally {
+    } finally {
       setLoading(false);
     }
   };
@@ -132,9 +150,9 @@ const DocumentScreen = ({ navigation, route }) => {
     // Vehicle Info
     vehicleType: '',
     vehicleNumber: '',
-    vehicleModel: '',
-    vehicleYear: '',
-    vehicleColor: '',
+    // vehicleModel: '',
+    // vehicleYear: '',
+    // vehicleColor: '',
 
     // Bank Info
     accountHolderName: '',
@@ -146,7 +164,7 @@ const DocumentScreen = ({ navigation, route }) => {
     // Document Numbers
     aadharNumber: '',
     licenseNumber: '',
-    rcNumber: '',
+    // rcNumber: '',
 
     // Files
     profilePhoto: null,
@@ -205,7 +223,7 @@ const DocumentScreen = ({ navigation, route }) => {
         );
         return granted === PermissionsAndroid.RESULTS.GRANTED;
       } catch (err) {
-                return false;
+        return false;
       }
     }
     return true;
@@ -223,7 +241,7 @@ const DocumentScreen = ({ navigation, route }) => {
 
     const handleResponse = response => {
       if (response.didCancel) {
-              } else if (response.errorCode) {
+      } else if (response.errorCode) {
         Alert.alert('Error', response.errorMessage || 'Something went wrong');
       } else if (response.assets && response.assets.length > 0) {
         const asset = response.assets[0];
@@ -400,10 +418,10 @@ const DocumentScreen = ({ navigation, route }) => {
           showError('Please upload vehicle RC');
           return false;
         }
-        if (!form.rcNumber?.trim()) {
-          showError('Please enter RC number');
-          return false;
-        }
+        // if (!form.rcNumber?.trim()) {
+        //   showError('Please enter RC number');
+        //   return false;
+        // }
         if (!form.vehiclePhoto) {
           showError('Please upload vehicle photo');
           return false;
@@ -451,7 +469,7 @@ const DocumentScreen = ({ navigation, route }) => {
 
     try {
       const token = await getToken();
-      
+
       if (!token) {
         Alert.alert('Error', 'Session expired. Please login again.');
         navigation.navigate('Login');
@@ -460,7 +478,6 @@ const DocumentScreen = ({ navigation, route }) => {
 
       const formData = new FormData();
 
-      
       // Append all text fields
       const textFields = {
         fullName: form.fullName,
@@ -469,9 +486,9 @@ const DocumentScreen = ({ navigation, route }) => {
         phone: form.phone,
         vehicleType: form.vehicleType,
         vehicleNumber: form.vehicleNumber,
-        vehicleModel: form.vehicleModel || '',
-        vehicleYear: form.vehicleYear || '',
-        vehicleColor: form.vehicleColor || '',
+        // vehicleModel: form.vehicleModel || '',
+        // vehicleYear: form.vehicleYear || '',
+        // vehicleColor: form.vehicleColor || '',
         accountHolderName: form.accountHolderName,
         accountNumber: form.accountNumber,
         ifscCode: form.ifscCode,
@@ -479,7 +496,7 @@ const DocumentScreen = ({ navigation, route }) => {
         branchName: form.branchName || '',
         aadharNumber: form.aadharNumber,
         licenseNumber: form.licenseNumber,
-        rcNumber: form.rcNumber,
+        // rcNumber: form.rcNumber,
       };
 
       // Add address as JSON string
@@ -517,17 +534,14 @@ const DocumentScreen = ({ navigation, route }) => {
         }
       });
 
-      
-      const response = await axios
-        .post(`${BASE_URL}/register`, formData, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'multipart/form-data',
-          },
-          timeout: 30000,
-        })
-    
-      
+      const response = await axios.post(`${BASE_URL}/register`, formData, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 30000,
+      });
+
       if (response.data?.data?.verificationStatus === 'submitted') {
         Alert.alert(
           'Success!',
@@ -544,7 +558,10 @@ const DocumentScreen = ({ navigation, route }) => {
         navigation.navigate('MyTabs');
       }
     } catch (error) {
-      console.error('Submission error:', error.response || error.message || error);
+      console.error(
+        'Submission error:',
+        error.response || error.message || error,
+      );
 
       // Safely extract error message
       let errorMessage = 'Registration failed. Please try again.';
@@ -759,9 +776,9 @@ const DocumentScreen = ({ navigation, route }) => {
               : 'Bank Details'}
           </Text>
         </View>
-        <View style={styles.headerRight}>
+        <TouchableOpacity onPress={()=> navigation.navigate('HelpDetail')} style={styles.headerRight}>
           <Icon name="support-agent" size={24} color="#000" />
-        </View>
+        </TouchableOpacity>
       </LinearGradient>
 
       {renderProgressBar()}
@@ -980,10 +997,11 @@ const DocumentScreen = ({ navigation, route }) => {
                   placeholder="License Number *"
                   style={styles.input}
                   placeholderTextColor="#999"
+                  maxLength={16}
+                  autoCapitalize="characters"
+                  // keyboardType="numeric"
                   value={form.licenseNumber}
-                  onChangeText={v =>
-                    setForm({ ...form, licenseNumber: v })
-                  }
+                  onChangeText={v => setForm({ ...form, licenseNumber: v })}
                 />
               </View>
             </View>
@@ -1024,6 +1042,12 @@ const DocumentScreen = ({ navigation, route }) => {
                         ]}
                         onPress={() => setForm({ ...form, vehicleType: type })}
                       >
+                        <Icon
+                          name={getVehicleIcon(type)}
+                          size={25}
+                          color={form.vehicleType === type ? '#000' : '#333'}
+                        />
+
                         <Text
                           style={[
                             styles.typeChipText,
@@ -1049,14 +1073,14 @@ const DocumentScreen = ({ navigation, route }) => {
                     placeholder="Vehicle Number * (e.g., MH12AB1234)"
                     style={styles.input}
                     placeholderTextColor="#999"
+                    autoCapitalize="characters"
+                    maxLength={10}
                     value={form.vehicleNumber}
-                    onChangeText={v =>
-                      setForm({ ...form, vehicleNumber: v })
-                    }
+                    onChangeText={v => setForm({ ...form, vehicleNumber: v })}
                   />
                 </View>
 
-                <View style={styles.rowContainer}>
+                {/* <View style={styles.rowContainer}>
                   <View style={[styles.inputContainer, styles.halfInput]}>
                     <Icon
                       name="model-training"
@@ -1111,7 +1135,7 @@ const DocumentScreen = ({ navigation, route }) => {
                     value={form.vehicleColor}
                     onChangeText={v => setForm({ ...form, vehicleColor: v })}
                   />
-                </View>
+                </View> */}
               </View>
 
               <View style={styles.sectionCard}>
@@ -1123,7 +1147,7 @@ const DocumentScreen = ({ navigation, route }) => {
                 {/* Vehicle RC */}
                 {renderImagePicker('Vehicle RC', 'vehicleRC', true, true)}
 
-                <View style={styles.inputContainer}>
+                {/* <View style={styles.inputContainer}>
                   <Icon
                     name="confirmation-number"
                     size={20}
@@ -1135,11 +1159,9 @@ const DocumentScreen = ({ navigation, route }) => {
                     style={styles.input}
                     placeholderTextColor="#999"
                     value={form.rcNumber}
-                    onChangeText={v =>
-                      setForm({ ...form, rcNumber: v })
-                    }
+                    onChangeText={v => setForm({ ...form, rcNumber: v })}
                   />
-                </View>
+                </View> */}
               </View>
             </View>
           )}
@@ -1567,7 +1589,7 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     borderWidth: 1,
     borderColor: '#E8E8E8',
-    marginRight: 8,
+    alignItems:'center'
   },
 
   typeChipActive: {
