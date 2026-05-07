@@ -283,6 +283,18 @@ export const driverApi = {
     return response.data?.data;
   },
 
+  async createWalletOrder(amount) {
+    const config = await withAuth();
+    const response = await main_client.post('/wallet/driver/create-order', { amount }, config);
+    return response.data?.data;
+  },
+
+  async verifyWalletPayment(paymentData) {
+    const config = await withAuth();
+    const response = await main_client.post('/wallet/driver/verify', paymentData, config);
+    return response.data?.data;
+  },
+
   async getIncentives() {
     const config = await withAuth();
     const response = await client.get('/incentives', config);

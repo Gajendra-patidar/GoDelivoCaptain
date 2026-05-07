@@ -15,6 +15,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import RazorpayCheckout from 'react-native-razorpay';
 import toast from '../../utils/toast';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { moderateScale } from 'react-native-size-matters';
@@ -765,19 +766,51 @@ const HomeScreen = ({ navigation }) => {
 
   const handleRechargeWallet = async amount => {
     try {
-      const wallet = await driverApi.rechargeWallet(amount);
-      if (wallet) {
-        const updated = await setWalletData(wallet);
-        setWalletBalance(updated.balance);
-      } else {
-        const updated = await addWalletAmount(amount);
-        setWalletBalance(updated.balance);
+      // Step 1: Create Order
+      const orderData = await driverApi.createWalletOrder(amount);
+      if (!orderData || !orderData.orderId) {
+        throw new Error('Failed to create order');
       }
-      toast.success(`Rs ${amount} added successfully.`);
-    } catch (error) {
-      const updated = await addWalletAmount(amount);
+
+      // Step 2: Open Razorpay
+      const options = {
+        key: orderData.keyId,
+        amount: orderData.amountInPaise,
+        currency: 'INR',
+        name: 'GoDelivo',
+        description: `Wallet Recharge - ₹${amount}`,
+        order_id: orderData.orderId,
+        prefill: {
+          email: '', // Can be filled from user data if available
+          contact: '',
+          name: '',
+        },
+        theme: { color: '#3399cc' },
+      };
+
+      const paymentData = await RazorpayCheckout.open(options);
+
+      // Step 3: Verify Payment
+      const verifyData = {
+        razorpay_order_id: paymentData.razorpay_order_id,
+        razorpay_payment_id: paymentData.razorpay_payment_id,
+        razorpay_signature: paymentData.razorpay_signature,
+      };
+
+      const walletUpdate = await driverApi.verifyWalletPayment(verifyData);
+
+      // Update local wallet
+      const updated = await setWalletData(walletUpdate);
       setWalletBalance(updated.balance);
-      toast.warn(`Backend not reachable. Rs ${amount} added locally.`);
+      toast.success(`Rs ${amount} added to wallet successfully.`);
+    } catch (error) {
+      if (error.code === RazorpayCheckout.PAYMENT_CANCELLED) {
+        toast.info('Payment cancelled');
+      } else if (error.code === RazorpayCheckout.NETWORK_ERROR) {
+        toast.error('Network error. Please check your connection.');
+      } else {
+        toast.error(error.message || 'Payment failed');
+      }
     }
   };
 
