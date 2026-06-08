@@ -19,9 +19,18 @@ import { changeLanguage } from '../../utils/changeLanguage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NotificationService from '../../services/NotificationService';
 import SocketService from '../../services/socketService';
-import { resetDriverLocalData, getActiveOrder } from '../../services/localDriverData';
+import {
+  resetDriverLocalData,
+  getActiveOrder,
+} from '../../services/localDriverData';
 import { useDispatch, useSelector } from 'react-redux';
-import { clearProfile, getProfile, updateProfile, selectProfile, selectProfileLoading } from '../../store/slices/profileSlice';
+import {
+  clearProfile,
+  getProfile,
+  updateProfile,
+  selectProfile,
+  selectProfileLoading,
+} from '../../store/slices/profileSlice';
 import { theme } from '../../theme';
 
 const ProfileScreen = ({ navigation }) => {
@@ -30,12 +39,15 @@ const ProfileScreen = ({ navigation }) => {
   const profile = useSelector(selectProfile);
   const loading = useSelector(selectProfileLoading);
 
-  const profileAddress = profile?.address || profile?.applicationDetails?.address;
-  const profileBankDetails = profile?.bankDetails || profile?.applicationDetails?.bankDetails;
-  const profileVehicleDetails = profile?.vehicleDetails || profile?.applicationDetails?.vehicleDetails ||{
-    type: profile?.vehicleType,
-    number: profile?.vehicleNumber,
-  };
+  const profileAddress =
+    profile?.address || profile?.applicationDetails?.address;
+  const profileBankDetails =
+    profile?.bankDetails || profile?.applicationDetails?.bankDetails;
+  const profileVehicleDetails = profile?.vehicleDetails ||
+    profile?.applicationDetails?.vehicleDetails || {
+      type: profile?.vehicleType,
+      number: profile?.vehicleNumber,
+    };
   const profileStats = profile?.stats || {};
   const applicationDetails = profile?.applicationDetails || {};
 
@@ -75,15 +87,17 @@ const ProfileScreen = ({ navigation }) => {
   }, [dispatch]);
 
   useEffect(() => {
-    console.log("profiledata", profile);
-    
+    console.log('profiledata', profile);
+
     if (profile) {
       setPhoneNumber(profile.phone || '');
 
       // Handle address - it may come from applicationDetails.address
       if (profileAddress) {
         const addressObj = profileAddress;
-        const formattedAddress = `${addressObj.street || ''}, ${addressObj.city || ''}, ${addressObj.state || ''} - ${addressObj.pincode || ''}`;
+        const formattedAddress = `${addressObj.street || ''}, ${
+          addressObj.city || ''
+        }, ${addressObj.state || ''} - ${addressObj.pincode || ''}`;
         setSavedAddress(formattedAddress);
       }
 
@@ -224,7 +238,7 @@ const ProfileScreen = ({ navigation }) => {
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Add Home Address</Text>
               <TouchableOpacity onPress={() => setAddressModalVisible(false)}>
-                <Ionicons name="close" size={24} color="#666" />
+                <Ionicons name="close" size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
 
@@ -288,7 +302,7 @@ const ProfileScreen = ({ navigation }) => {
     // Check if there's an active order
     const activeOrder = await getActiveOrder();
     if (activeOrder) {
-            Alert.alert(
+      Alert.alert(
         'Order in Progress',
         'You cannot logout while an order is active. Please complete or cancel the current order.',
         [{ text: 'OK' }],
@@ -332,7 +346,7 @@ const ProfileScreen = ({ navigation }) => {
                   setOtp('');
                 }}
               >
-                <Ionicons name="close" size={24} color="#666" />
+                <Ionicons name="close" size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
 
@@ -418,7 +432,7 @@ const ProfileScreen = ({ navigation }) => {
                   {savedBankDetails ? 'Edit Bank Details' : 'Add Bank Details'}
                 </Text>
                 <TouchableOpacity onPress={() => setBankModalVisible(false)}>
-                  <Ionicons name="close" size={24} color="#666" />
+                  <Ionicons name="close" size={24} color="#6B7280" />
                 </TouchableOpacity>
               </View>
 
@@ -533,7 +547,7 @@ const ProfileScreen = ({ navigation }) => {
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{title}</Text>
               <TouchableOpacity onPress={onClose}>
-                <Ionicons name="close" size={24} color="#666" />
+                <Ionicons name="close" size={24} color="#6B7280" />
               </TouchableOpacity>
             </View>
 
@@ -554,7 +568,7 @@ const ProfileScreen = ({ navigation }) => {
                   style={[
                     styles.languageOptionText,
                     currentLanguage === lang &&
-                    styles.selectedLanguageOptionText,
+                      styles.selectedLanguageOptionText,
                   ]}
                 >
                   {lang}
@@ -590,28 +604,20 @@ const ProfileScreen = ({ navigation }) => {
           </View>
           <View style={styles.bankDetailRow}>
             <Text style={styles.bankDetailLabel}>Account No:</Text>
-            <Text style={styles.bankDetailValue}>
-              {maskedAccountNumber}
-            </Text>
+            <Text style={styles.bankDetailValue}>{maskedAccountNumber}</Text>
           </View>
           <View style={styles.bankDetailRow}>
             <Text style={styles.bankDetailLabel}>IFSC:</Text>
-            <Text style={styles.bankDetailValue}>
-              {bankInfo.ifscCode}
-            </Text>
+            <Text style={styles.bankDetailValue}>{bankInfo.ifscCode}</Text>
           </View>
           <View style={styles.bankDetailRow}>
             <Text style={styles.bankDetailLabel}>Bank:</Text>
-            <Text style={styles.bankDetailValue}>
-              {bankInfo.bankName}
-            </Text>
+            <Text style={styles.bankDetailValue}>{bankInfo.bankName}</Text>
           </View>
           {bankInfo.upiId ? (
             <View style={styles.bankDetailRow}>
               <Text style={styles.bankDetailLabel}>UPI ID:</Text>
-              <Text style={styles.bankDetailValue}>
-                {bankInfo.upiId}
-              </Text>
+              <Text style={styles.bankDetailValue}>{bankInfo.upiId}</Text>
             </View>
           ) : null}
 
@@ -649,7 +655,7 @@ const ProfileScreen = ({ navigation }) => {
           setBankModalVisible(true);
         }}
       >
-        <Ionicons name="add-circle-outline" size={20} color="#F4C20D" />
+        <Ionicons name="add-circle-outline" size={20} color="#fccf1e" />
         <Text style={styles.addDetailsText}>+ Add Details</Text>
       </TouchableOpacity>
     );
@@ -659,7 +665,7 @@ const ProfileScreen = ({ navigation }) => {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#F4C20D" />
+        <ActivityIndicator size="large" color="#fccf1e" />
         <Text style={styles.loadingText}>Loading profile...</Text>
       </View>
     );
@@ -667,12 +673,12 @@ const ProfileScreen = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
 
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={24} color="#000" />
+          <Ionicons name="arrow-back" size={24} color="#111827" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Profile</Text>
       </View>
@@ -697,24 +703,23 @@ const ProfileScreen = ({ navigation }) => {
               <View style={styles.nameRow}>
                 <Text style={styles.name}>{profile?.name || 'Driver'}</Text>
                 <View style={styles.ratingBadge}>
-                  <Text style={styles.starRating}>★ {profileStats.rating || 0}</Text>
+                  <Text style={styles.starRating}>
+                    ★ {profileStats.rating || 0}
+                  </Text>
                 </View>
               </View>
               <View style={styles.vehicleRow}>
-                {
-                  
-                }
+                {}
                 <Text style={styles.vehicleText}>
-                  {profileVehicleDetails?.type || 'Vehicle'} • {profileVehicleDetails?.number || '--'}
+                  {profileVehicleDetails?.type || profile?.vehicleType || 'Vehicle'} •{' '}
+                  {profileVehicleDetails?.number || profile?.vehicleNumber || '--'}
                 </Text>
               </View>
             </View>
 
             <TouchableOpacity
               style={styles.editButton}
-              onPress={() =>
-                toast.info('View full profile details')
-              }
+              onPress={() => toast.info('View full profile details')}
             >
               <Ionicons name="chevron-forward" size={24} color="#CBD5E1" />
             </TouchableOpacity>
@@ -725,11 +730,15 @@ const ProfileScreen = ({ navigation }) => {
         <View style={styles.statsCard}>
           <View style={styles.statsRow}>
             <View style={styles.statsItem}>
-              <Text style={styles.statsValue}>₹{profileStats.totalEarnings ?? 0}</Text>
+              <Text style={styles.statsValue}>
+                ₹{profileStats.totalEarnings ?? 0}
+              </Text>
               <Text style={styles.statsLabel}>Total Earnings</Text>
             </View>
             <View style={styles.statsItem}>
-              <Text style={styles.statsValue}>{profileStats.totalTrips ?? 0}</Text>
+              <Text style={styles.statsValue}>
+                {profileStats.totalTrips ?? 0}
+              </Text>
               <Text style={styles.statsLabel}>Total Trips</Text>
             </View>
           </View>
@@ -739,7 +748,9 @@ const ProfileScreen = ({ navigation }) => {
               <Text style={styles.statsLabel}>Rating</Text>
             </View>
             <View style={styles.statsItem}>
-              <Text style={styles.statsValue}>₹{profileStats.walletBalance ?? 0}</Text>
+              <Text style={styles.statsValue}>
+                ₹{profileStats.walletBalance ?? 0}
+              </Text>
               <Text style={styles.statsLabel}>Wallet</Text>
             </View>
           </View>
@@ -754,7 +765,16 @@ const ProfileScreen = ({ navigation }) => {
             </TouchableOpacity>
           </View>
           <View style={styles.addressBox}>
-            <Text style={styles.addressText}>{savedAddress || (profileAddress ? `${profileAddress.street || ''}, ${profileAddress.city || ''}, ${profileAddress.state || ''} - ${profileAddress.pincode || ''}` : 'No address added')}</Text>
+            <Text style={styles.addressText}>
+              {savedAddress ||
+                (profileAddress
+                  ? `${profileAddress.street || ''}, ${
+                      profileAddress.city || ''
+                    }, ${profileAddress.state || ''} - ${
+                      profileAddress.pincode || ''
+                    }`
+                  : 'No address added')}
+            </Text>
           </View>
         </View>
 
@@ -768,7 +788,7 @@ const ProfileScreen = ({ navigation }) => {
           </View>
           <View style={styles.phoneBox}>
             <View style={styles.phoneRow}>
-              <MaterialIcons name="phone" size={18} color="#666" />
+              <MaterialIcons name="phone" size={18} color="#6B7280" />
               <Text style={styles.phoneText}>{phoneNumber}</Text>
             </View>
             <View style={styles.verifiedBadge}>
@@ -796,20 +816,17 @@ const ProfileScreen = ({ navigation }) => {
           <View style={styles.vehicleCard}>
             <View style={styles.vehicleCardLeft}>
               <View style={styles.vehicleIconBg}>
-                <Text style={{fontSize:15, fontFamily:'Poppins-SemiBold'}} >{(profile?.name).slice(0,1)}</Text>
+                <Text style={{ fontSize: 15, fontFamily: 'Poppins-SemiBold' }}>
+                  {profile?.name ? profile.name.charAt(0).toUpperCase() : 'U'}
+                </Text>
               </View>
               <View style={styles.vehicleDetails}>
                 <Text style={styles.vehicleName}>
-                  {profile?.vehicleDetails?.type || 'Vehicle'}
+                  {profile?.vehicleDetails?.type || profile?.vehicleType || 'Vehicle'}
                 </Text>
                 <Text style={styles.vehicleNumber}>
-                  {profile?.vehicleDetails?.number || '--'}
+                  {profile?.vehicleDetails?.number || profile?.vehicleNumber || '--'}
                 </Text>
-                {profile?.vehicleDetails?.model && (
-                  <Text style={styles.vehicleModel}>
-                    {profile.vehicleDetails.model} • {profile.vehicleDetails.year} • {profile.vehicleDetails.color}
-                  </Text>
-                )}
               </View>
             </View>
           </View>
@@ -827,16 +844,22 @@ const ProfileScreen = ({ navigation }) => {
                 return (
                   <View key={docType} style={styles.documentRow}>
                     <Text style={styles.documentLabel}>Aadhar Card</Text>
-                    <View style={[
-                      styles.statusBadge,
-                      docData.front.status === 'verified' ? styles.statusVerified :
-                        docData.front.status === 'rejected' ? styles.statusRejected :
-                          styles.statusPending
-                    ]}>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        docData.front.status === 'verified'
+                          ? styles.statusVerified
+                          : docData.front.status === 'rejected'
+                          ? styles.statusRejected
+                          : styles.statusPending,
+                      ]}
+                    >
                       <Text style={styles.statusText}>
-                        {docData.front.status === 'verified' ? '✓ Verified' :
-                          docData.front.status === 'rejected' ? '✗ Rejected' :
-                            '⏳ Pending'}
+                        {docData.front.status === 'verified'
+                          ? '✓ Verified'
+                          : docData.front.status === 'rejected'
+                          ? '✗ Rejected'
+                          : '⏳ Pending'}
                       </Text>
                     </View>
                   </View>
@@ -847,16 +870,22 @@ const ProfileScreen = ({ navigation }) => {
                     <Text style={styles.documentLabel}>
                       {docType.replace(/([A-Z])/g, ' $1').trim()}
                     </Text>
-                    <View style={[
-                      styles.statusBadge,
-                      docData.status === 'verified' ? styles.statusVerified :
-                        docData.status === 'rejected' ? styles.statusRejected :
-                          styles.statusPending
-                    ]}>
+                    <View
+                      style={[
+                        styles.statusBadge,
+                        docData.status === 'verified'
+                          ? styles.statusVerified
+                          : docData.status === 'rejected'
+                          ? styles.statusRejected
+                          : styles.statusPending,
+                      ]}
+                    >
                       <Text style={styles.statusText}>
-                        {docData.status === 'verified' ? '✓ Verified' :
-                          docData.status === 'rejected' ? '✗ Rejected' :
-                            '⏳ Pending'}
+                        {docData.status === 'verified'
+                          ? '✓ Verified'
+                          : docData.status === 'rejected'
+                          ? '✗ Rejected'
+                          : '⏳ Pending'}
                       </Text>
                     </View>
                   </View>
@@ -866,18 +895,27 @@ const ProfileScreen = ({ navigation }) => {
             })}
 
             <View style={styles.applicationStatus}>
-              <Text style={styles.applicationStatusLabel}>Application Status:</Text>
-              <View style={[
-                styles.statusBadge,
-                profile.verificationStatus === 'verified' ? styles.statusVerified :
-                  profile.verificationStatus === 'rejected' ? styles.statusRejected :
-                    styles.statusPending
-              ]}>
+              <Text style={styles.applicationStatusLabel}>
+                Application Status:
+              </Text>
+              <View
+                style={[
+                  styles.statusBadge,
+                  profile.verificationStatus === 'verified'
+                    ? styles.statusVerified
+                    : profile.verificationStatus === 'rejected'
+                    ? styles.statusRejected
+                    : styles.statusPending,
+                ]}
+              >
                 <Text style={styles.statusText}>
-                  {profile.verificationStatus === 'verified' ? '✓ Verified' :
-                    profile.verificationStatus === 'rejected' ? '✗ Rejected' :
-                      profile.verificationStatus === 'submitted' ? '⏳ Under Review' :
-                        'Pending'}
+                  {profile.verificationStatus === 'verified'
+                    ? '✓ Verified'
+                    : profile.verificationStatus === 'rejected'
+                    ? '✗ Rejected'
+                    : profile.verificationStatus === 'submitted'
+                    ? '⏳ Under Review'
+                    : 'Pending'}
                 </Text>
               </View>
             </View>
@@ -976,28 +1014,28 @@ const ProfileScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#FFFFFF',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 15,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
+    borderBottomColor: '#E5E7EB',
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#000',
+    color: '#111827',
     marginLeft: 20,
   },
   scrollContent: {
     paddingBottom: 30,
   },
   profileCard: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
     marginTop: 16,
     marginBottom: 8,
@@ -1021,14 +1059,14 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: '#F4C20D',
+    backgroundColor: '#fccf1e',
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarText: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#fff',
+    color: '#000',
   },
   onlineDot: {
     position: 'absolute',
@@ -1039,7 +1077,7 @@ const styles = StyleSheet.create({
     borderRadius: 7,
     backgroundColor: '#4CAF50',
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: '#FFFFFF',
   },
   profileInfo: {
     flex: 1,
@@ -1050,12 +1088,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   smallInfoText: {
-    color: '#555',
+    color: '#6B7280',
     fontSize: 12,
     marginTop: 4,
   },
   statsCard: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
     marginTop: 12,
     padding: 16,
@@ -1078,29 +1116,29 @@ const styles = StyleSheet.create({
   statsValue: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#000',
+    color: '#111827',
   },
   statsLabel: {
     fontSize: 12,
-    color: '#666',
+    color: '#6B7280',
     marginTop: 4,
     textAlign: 'center',
   },
   name: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#000',
+    color: '#111827',
     marginRight: 8,
   },
   ratingBadge: {
-    backgroundColor: '#FFF9E6',
+    backgroundColor: '#FFF7D6',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 12,
   },
   starRating: {
     fontSize: 12,
-    color: '#FFD700',
+    color: '#fccf1e',
     fontWeight: '600',
   },
   vehicleRow: {
@@ -1109,14 +1147,14 @@ const styles = StyleSheet.create({
   },
   vehicleText: {
     fontSize: 14,
-    color: '#666',
+    color: '#6B7280',
     marginLeft: 4,
   },
   editButton: {
     padding: 8,
   },
   section: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
     marginTop: 12,
     padding: 16,
@@ -1136,18 +1174,18 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#000',
+    color: '#111827',
   },
   addressBox: {
     backgroundColor: '#F8F9FA',
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: '#E5E7EB',
     borderStyle: 'dashed',
   },
   addressText: {
-    color: '#333',
+    color: '#111827',
     fontSize: 14,
   },
   changeText: {
@@ -1169,14 +1207,14 @@ const styles = StyleSheet.create({
   },
   phoneText: {
     fontSize: 16,
-    color: '#000',
+    color: '#111827',
     marginLeft: 8,
     fontWeight: '500',
   },
   verifiedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#E8F5E9',
+    backgroundColor: '#0E2A1A',
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
@@ -1190,15 +1228,15 @@ const styles = StyleSheet.create({
   addDetailsButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF9E6',
+    backgroundColor: '#FFF7D6',
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#F4C20D',
+    borderColor: '#fccf1e',
     borderStyle: 'dashed',
   },
   addDetailsText: {
-    color: '#665500',
+    color: '#fccf1e',
     fontSize: 14,
     fontWeight: '500',
     marginLeft: 8,
@@ -1216,7 +1254,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: '#FFF3E0',
+    backgroundColor: '#FFF7D6',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -1227,20 +1265,20 @@ const styles = StyleSheet.create({
   vehicleName: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#000',
+    color: '#111827',
     marginBottom: 2,
   },
   vehicleNumber: {
     fontSize: 14,
-    color: '#666',
+    color: '#6B7280',
     marginBottom: 2,
   },
   vehicleModel: {
     fontSize: 12,
-    color: '#999',
+    color: '#8A8A8A',
   },
   languageSection: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
     marginTop: 12,
     padding: 16,
@@ -1254,7 +1292,7 @@ const styles = StyleSheet.create({
   languageSectionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#000',
+    color: '#111827',
     marginBottom: 12,
   },
   languageRow: {
@@ -1268,18 +1306,18 @@ const styles = StyleSheet.create({
   },
   languageLabel: {
     fontSize: 14,
-    color: '#666',
+    color: '#6B7280',
     marginBottom: 4,
   },
   languageValue: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#000',
+    color: '#111827',
   },
   changeButton: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: '#F0F4FF',
+    backgroundColor: '#111827',
     borderRadius: 6,
   },
   changeButtonText: {
@@ -1289,7 +1327,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: '#E0E0E0',
+    backgroundColor: '#E5E7EB',
     marginVertical: 4,
   },
   versionContainer: {
@@ -1299,20 +1337,20 @@ const styles = StyleSheet.create({
   },
   versionText: {
     fontSize: 12,
-    color: '#999',
+    color: '#8A8A8A',
   },
   logoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#FEF2F2',
+    backgroundColor: '#2A1010',
     marginHorizontal: 16,
     marginTop: 20,
     marginBottom: 40,
     padding: 18,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#FEE2E2',
+    borderColor: '#6A2A2A',
     ...theme.shadow.card,
   },
   logoutText: {
@@ -1330,7 +1368,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   modalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 20,
     width: '100%',
@@ -1349,17 +1387,17 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#000',
+    color: '#111827',
   },
   inputLabel: {
     fontSize: 14,
-    color: '#666',
+    color: '#6B7280',
     marginBottom: 4,
     marginTop: 8,
   },
   modalInput: {
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: '#E5E7EB',
     borderRadius: 8,
     padding: 12,
     fontSize: 16,
@@ -1379,13 +1417,13 @@ const styles = StyleSheet.create({
     marginHorizontal: 5,
   },
   cancelButton: {
-    backgroundColor: '#F0F0F0',
+    backgroundColor: '#F8F9FA',
   },
   saveButton: {
-    backgroundColor: '#F4C20D',
+    backgroundColor: '#fccf1e',
   },
   cancelButtonText: {
-    color: '#666',
+    color: '#6B7280',
     fontSize: 16,
     fontWeight: '500',
   },
@@ -1395,7 +1433,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   fullWidthButton: {
-    backgroundColor: '#F4C20D',
+    backgroundColor: '#fccf1e',
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
@@ -1403,7 +1441,7 @@ const styles = StyleSheet.create({
   },
   otpSentText: {
     textAlign: 'center',
-    color: '#666',
+    color: '#6B7280',
     marginBottom: 16,
     fontSize: 14,
   },
@@ -1419,17 +1457,17 @@ const styles = StyleSheet.create({
   },
   bankDetailLabel: {
     fontSize: 14,
-    color: '#666',
+    color: '#6B7280',
   },
   bankDetailValue: {
     fontSize: 14,
-    color: '#000',
+    color: '#111827',
     fontWeight: '500',
   },
   editBankButton: {
     marginTop: 12,
     padding: 8,
-    backgroundColor: '#F0F4FF',
+    backgroundColor: '#111827',
     borderRadius: 6,
     alignItems: 'center',
   },
@@ -1445,14 +1483,14 @@ const styles = StyleSheet.create({
     paddingVertical: 15,
     paddingHorizontal: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: '#E5E7EB',
   },
   selectedLanguageOption: {
-    backgroundColor: '#F0F4FF',
+    backgroundColor: '#111827',
   },
   languageOptionText: {
     fontSize: 16,
-    color: '#333',
+    color: '#111827',
   },
   selectedLanguageOptionText: {
     color: '#4169E1',
@@ -1462,12 +1500,12 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
   },
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: '#666',
+    color: '#6B7280',
   },
   // Document status styles
   documentRow: {
@@ -1476,11 +1514,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: '#E5E7EB',
   },
   documentLabel: {
     fontSize: 14,
-    color: '#333',
+    color: '#111827',
     textTransform: 'capitalize',
   },
   statusBadge: {
@@ -1491,13 +1529,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   statusVerified: {
-    backgroundColor: '#E8F5E9',
+    backgroundColor: '#0E2A1A',
   },
   statusPending: {
-    backgroundColor: '#FFF9E6',
+    backgroundColor: '#FFF7D6',
   },
   statusRejected: {
-    backgroundColor: '#FFEBEE',
+    backgroundColor: '#2A1010',
   },
   statusText: {
     fontSize: 12,
@@ -1510,12 +1548,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     marginTop: 8,
     borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
+    borderTopColor: '#E5E7EB',
   },
   applicationStatusLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+    color: '#111827',
   },
   verificationStatusRow: {
     flexDirection: 'row',
@@ -1524,11 +1562,11 @@ const styles = StyleSheet.create({
     marginTop: 8,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
+    borderTopColor: '#E5E7EB',
   },
   submittedDate: {
     fontSize: 12,
-    color: '#999',
+    color: '#8A8A8A',
     textAlign: 'right',
     marginTop: 8,
   },

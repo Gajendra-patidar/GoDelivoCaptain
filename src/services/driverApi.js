@@ -3,6 +3,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CAPTAIN_BASE_URL, BASE_URL, API_HOST, DRIVER_BASE_URL } from './api';
 import LocationService from './locationService';
 import { clearActiveOrder } from './localDriverData';
+import { navigate } from '../navigations/navigationRef';
+
+let isLoggingOut = false;
 
 // ✅ FIRST define interceptor
 const setupInterceptors = (clientInstance, name = 'API') => {
@@ -14,20 +17,35 @@ const setupInterceptors = (clientInstance, name = 'API') => {
         config.headers.Authorization = `Bearer ${token}`;
       }
 
-
       return config;
     },
-    error => {
-      return Promise.reject(error);
-    },
+    error => Promise.reject(error),
   );
 
   clientInstance.interceptors.response.use(
-    response => {
+    response => response,
+    async error => {
+      const status = error?.response?.status;
+      const message =
+        error?.response?.data?.message || error?.response?.data?.error || '';
 
-      return response;
-    },
-    error => {
+      const isTokenExpired =
+        status === 401 ||
+        message.toLowerCase().includes('token expired') ||
+        message.toLowerCase().includes('jwt expired') ||
+        message.toLowerCase().includes('unauthorized');
+
+      if (isTokenExpired && !isLoggingOut) {
+        isLoggingOut = true;
+
+        await AsyncStorage.multiRemove(['userToken', 'userData', 'driverId']);
+
+        navigate('Login');
+
+        setTimeout(() => {
+          isLoggingOut = false;
+        }, 1000);
+      }
 
       return Promise.reject(error);
     },
@@ -61,10 +79,10 @@ const withAuth = async () => {
 
   return token
     ? {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    }
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
     : {};
 };
 
@@ -115,7 +133,7 @@ export const driverApi = {
     const response = await main_client.get(url, config);
     const pending = response.data?.data?.pendingRequests || [];
 
-    // 
+    //
 
     if (pending.length > 0) {
     }
@@ -133,17 +151,29 @@ export const driverApi = {
     }
 
     const config = await withAuth();
-    const coords = LocationService.getLastCoords() || {
-      latitude: 22.720315604395946,
-      longitude: 75.90453599431497
-    };
+    const coords = LocationService.getLastCoords();
 
-    const response = await main_client.post('/driver/toggle-online', {
-      latitude: coords.latitude,
-      longitude: coords.longitude
-    }, config);
+    if (isOnline && !coords) {
+      throw new Error('location unavailable');
+    }
 
+    const locationPayload = coords
+      ? {
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+        }
+      : {};
 
+    const response = await main_client.post(
+      '/driver/toggle-online',
+      {
+        isOnline,
+        online: isOnline,
+        status: isOnline ? 'online' : 'offline',
+        ...locationPayload,
+      },
+      config,
+    );
 
     return response?.data?.data;
   },
@@ -162,19 +192,25 @@ export const driverApi = {
 
   async acceptOrder(orderId) {
     const config = await withAuth();
-    console.log("check data", orderId);
+    console.log('check data', orderId);
 
     const coords = LocationService.getLastCoords();
     const payload = {
       rideId: orderId,
-      driverLocation: coords ? {
-        latitude: coords.latitude,
-        longitude: coords.longitude
-      } : null
+      driverLocation: coords
+        ? {
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+          }
+        : null,
     };
-    console.log("check data", payload);
+    console.log('check data', payload);
 
-    const response = await main_client.post('/rides/accept-with-socket', payload, config);
+    const response = await main_client.post(
+      '/rides/accept-with-socket',
+      payload,
+      config,
+    );
     return response.data?.data;
   },
 
@@ -196,7 +232,6 @@ export const driverApi = {
       { reason, rideId: orderId },
       config,
     );
-
 
     return response.data?.data;
   },
@@ -253,11 +288,7 @@ export const driverApi = {
    */
   async startRide(rideId) {
     const config = await withAuth();
-    const response = await main_client.post(
-      '/rides/start',
-      { rideId },
-      config,
-    );
+    const response = await main_client.post('/rides/start', { rideId }, config);
     return response.data?.data;
   },
 
@@ -285,13 +316,21 @@ export const driverApi = {
 
   async createWalletOrder(amount) {
     const config = await withAuth();
-    const response = await main_client.post('/wallet/driver/create-order', { amount }, config);
+    const response = await main_client.post(
+      '/wallet/driver/create-order',
+      { amount },
+      config,
+    );
     return response.data?.data;
   },
 
   async verifyWalletPayment(paymentData) {
     const config = await withAuth();
-    const response = await main_client.post('/wallet/driver/verify', paymentData, config);
+    const response = await main_client.post(
+      '/wallet/driver/verify',
+      paymentData,
+      config,
+    );
     return response.data?.data;
   },
 

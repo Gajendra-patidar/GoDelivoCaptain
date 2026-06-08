@@ -39,7 +39,7 @@ const EmergencyModal = ({ visible, onClose }) => {
           
           {/* Close Button */}
           <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-            <Ionicons name="close" size={22} color="#000" />
+            <Ionicons name="close" size={22} color="#6B7280" />
           </TouchableOpacity>
 
           {/* Siren Icon */}
@@ -58,26 +58,26 @@ const EmergencyModal = ({ visible, onClose }) => {
             
             {/* Police Card */}
             <TouchableOpacity style={styles.card} onPress={() => handleCall('100', 'Police')}>
-              <Ionicons name="car-outline" size={28} color="#1c1c1c" />
+              <Ionicons name="car-outline" size={28} color="#fccf1e" />
               <Text style={styles.cardText}>Call</Text>
               <Text style={styles.cardText}>Police</Text>
               <Ionicons
                 name="chevron-forward"
                 size={20}
-                color="#000"
+                color="#6B7280"
                 style={styles.arrow}
               />
             </TouchableOpacity>
 
             {/* Ambulance Card */}
             <TouchableOpacity style={styles.card} onPress={() => handleCall('102', 'Ambulance')}>
-              <Ionicons name="medkit-outline" size={28} color="#464545" />
+              <Ionicons name="medkit-outline" size={28} color="#fccf1e" />
               <Text style={styles.cardText}>Call</Text>
               <Text style={styles.cardText}>Ambulance</Text>
               <Ionicons
                 name="chevron-forward"
                 size={20}
-                color="#000"
+                color="#6B7280"
                 style={styles.arrow}
               />
             </TouchableOpacity>
@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
   },
 
   container: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     padding: 22,
@@ -111,7 +111,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 20,
     top: 20,
-    backgroundColor: '#f2f2f2',
+    backgroundColor: '#F8F9FA',
     height: 40,
     width: 40,
     borderRadius: 20,
@@ -133,7 +133,7 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#000',
+    color: '#111827',
     marginBottom: 5,
   },
 
@@ -150,7 +150,7 @@ const styles = StyleSheet.create({
 
   card: {
     width: '48%',
-    backgroundColor: '#f7f7f7',
+    backgroundColor: '#F8F9FA',
     borderRadius: 16,
     padding: 18,
     position: 'relative',
@@ -161,7 +161,7 @@ const styles = StyleSheet.create({
   cardText: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#000',
+    color: '#111827',
   },
 
   arrow: {

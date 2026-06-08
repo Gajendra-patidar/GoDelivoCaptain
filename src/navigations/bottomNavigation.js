@@ -18,7 +18,7 @@ function MyTabs() {
 
         tabBarIcon: ({ focused }) => {
           let iconName;
-          let color = focused ? theme.colors.primary : '#9e8e46';
+          let color = focused ? 'black' : theme.colors.primary;
 
           if (route.name === 'Home') {
             iconName = 'home';

@@ -54,7 +54,7 @@ const RechargeNowModal = ({ visible, onClose, walletBalance, onRecharge }) => {
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Recharge Wallet</Text>
             <TouchableOpacity onPress={onClose} style={styles.closebtn}>
-              <Ionicons name="close" size={24} color="#000" />
+              <Ionicons name="close" size={24} color="#6B7280" />
             </TouchableOpacity>
           </View>
 
@@ -71,7 +71,7 @@ const RechargeNowModal = ({ visible, onClose, walletBalance, onRecharge }) => {
               onChangeText={setCustomAmount}
               keyboardType="numeric"
               placeholder="100"
-              placeholderTextColor="#000"
+              placeholderTextColor="#6B7280"
             />
           </View>
 
@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
     padding: 25,
@@ -139,7 +139,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 0,
     top: -5,
-    backgroundColor: '#f2f2f2',
+    backgroundColor: '#F8F9FA',
     height: 40,
     width: 40,
     borderRadius: 20,
@@ -155,7 +155,7 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#000',
+    color: '#111827',
   },
   balanceContainer: {
     flexDirection: 'row',
@@ -168,7 +168,7 @@ const styles = StyleSheet.create({
   },
   balanceLabel: {
     fontSize: 16,
-    color: '#666',
+    color: '#6B7280',
   },
   balanceAmount: {
     fontSize: 18,
@@ -179,23 +179,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: '#E5E7EB',
     borderRadius: 15,
     paddingHorizontal: 15,
     marginBottom: 20,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: '#F8F9FA',
   },
   currencySymbol: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#000',
+    color: '#111827',
     marginRight: 8,
   },
   amountInput: {
     flex: 1,
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#000',
+    color: '#111827',
     paddingVertical: 12,
   },
   suggestedContainer: {
@@ -205,28 +205,28 @@ const styles = StyleSheet.create({
   },
   suggestedBtn: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#F8F9FA',
     paddingVertical: 15,
     borderRadius: 12,
     alignItems: 'center',
     marginHorizontal: 5,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: '#E5E7EB',
   },
   suggestedBtnSelected: {
-    backgroundColor: '#F4C20D',
-    borderColor: '#F4C20D',
+    backgroundColor: '#fccf1e',
+    borderColor: '#fccf1e',
   },
   suggestedText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+    color: '#111827',
   },
   suggestedTextSelected: {
     color: '#000',
   },
   rechargeNowBtn: {
-    backgroundColor: '#F4C20D',
+    backgroundColor: '#fccf1e',
     paddingVertical: 18,
     borderRadius: 15,
     alignItems: 'center',
@@ -239,7 +239,7 @@ const styles = StyleSheet.create({
   },
   noteText: {
     fontSize: 12,
-    color: '#999',
+    color: '#8A8A8A',
     textAlign: 'center',
     marginTop: 10,
   },

@@ -1869,7 +1869,7 @@ const MapScreen = ({ navigation, route }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: '#F8F9FA',
   },
   map: {
     flex: 1,
@@ -1887,7 +1887,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 16,
-    color: '#666',
+    color: '#6B7280',
     marginTop: 10,
   },
   errorText: {
@@ -1898,7 +1898,7 @@ const styles = StyleSheet.create({
   },
   errorSubtext: {
     fontSize: 14,
-    color: '#666',
+    color: '#6B7280',
     textAlign: 'center',
     marginBottom: 20,
   },
@@ -1906,7 +1906,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     padding: 20,
   },
   errorTitle: {
@@ -1959,7 +1959,7 @@ const styles = StyleSheet.create({
     top: '20%',
     left: 20,
     right: 20,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 12,
     flexDirection: 'row',
@@ -1993,7 +1993,7 @@ const styles = StyleSheet.create({
   disabledActionMsg: {
     padding: 12,
     borderRadius: 8,
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#F8F9FA',
     borderWidth: 1,
     borderColor: '#d1d5db',
     marginBottom: 8,
@@ -2012,7 +2012,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#cbd5e1',
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     zIndex: 10,
   },
   map3DButtonActive: {
@@ -2035,7 +2035,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     padding: 20,
     borderTopLeftRadius: 25,
     borderTopRightRadius: 25,
@@ -2087,7 +2087,7 @@ const styles = StyleSheet.create({
     width: moderateScale(48),
     height: moderateScale(48),
     borderRadius: moderateScale(24),
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     ...theme.shadow.card,
@@ -2096,7 +2096,7 @@ const styles = StyleSheet.create({
     width: moderateScale(48),
     height: moderateScale(48),
     borderRadius: moderateScale(24),
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
@@ -2106,7 +2106,7 @@ const styles = StyleSheet.create({
   headerTitleCard: {
     flex: 1,
     marginHorizontal: moderateScale(12),
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     paddingVertical: moderateScale(10),
     paddingHorizontal: moderateScale(16),
     borderRadius: theme.radii.lg,
@@ -2130,7 +2130,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderTopLeftRadius: theme.radii.xl,
     borderTopRightRadius: theme.radii.xl,
     padding: moderateScale(20),
@@ -2251,14 +2251,14 @@ const styles = StyleSheet.create({
   },
   address: {
     fontSize: 14,
-    color: '#374151',
+    color: '#6B7280',
     marginBottom: 12,
     lineHeight: 20,
   },
   infoContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#F8F9FA',
     borderRadius: 12,
     padding: 12,
     marginBottom: 16,
@@ -2317,12 +2317,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   cancelReasonActive: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: '#2A1010',
   },
   cancelReasonText: {
     marginLeft: 10,
     fontSize: 14,
-    color: '#374151',
+    color: '#6B7280',
   },
   cancelReasonTextActive: {
     fontWeight: '600',
@@ -2408,7 +2408,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 3,
-    borderColor: '#fff',
+    borderColor: '#FFFFFF',
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -2429,7 +2429,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 3,
-    borderColor: '#fff',
+    borderColor: '#FFFFFF',
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -2461,13 +2461,13 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: 'rgba(212, 246, 59, 0.8)',
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: '#FFFFFF',
   },
   waypointDot: {
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     position: 'absolute',
     top: 2,
     left: 2,
@@ -2481,7 +2481,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   modalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 24,
     width: '100%',
@@ -2522,7 +2522,7 @@ const styles = StyleSheet.create({
   },
   travelModeLabel: {
     fontSize: 14,
-    color: '#374151',
+    color: '#6B7280',
     marginBottom: 8,
     fontWeight: '600',
   },
@@ -2534,7 +2534,7 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#F8F9FA',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
@@ -2563,7 +2563,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   routeOption: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#F8F9FA',
     borderRadius: 12,
     padding: 16,
     marginBottom: 8,
@@ -2601,21 +2601,21 @@ const styles = StyleSheet.create({
   },
   routeOptionDistance: {
     fontSize: 13,
-    color: '#374151',
+    color: '#6B7280',
   },
   routeOptionDuration: {
     fontSize: 13,
-    color: '#374151',
+    color: '#6B7280',
   },
   orderSummary: {
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#F8F9FA',
     padding: 16,
     borderRadius: 12,
     marginBottom: 20,
   },
   summaryText: {
     fontSize: 14,
-    color: '#4B5563',
+    color: '#6B7280',
     marginVertical: 2,
   },
   paymentMethods: {
@@ -2649,7 +2649,7 @@ const styles = StyleSheet.create({
   },
   amountLabel: {
     fontSize: 14,
-    color: '#374151',
+    color: '#6B7280',
     marginBottom: 8,
     fontWeight: '600',
   },
@@ -2665,7 +2665,7 @@ const styles = StyleSheet.create({
     borderColor: '#ff4444',
   },
   amountDisplay: {
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#F8F9FA',
     padding: 16,
     borderRadius: 10,
     marginBottom: 20,
@@ -2675,7 +2675,7 @@ const styles = StyleSheet.create({
   },
   amountDisplayLabel: {
     fontSize: 14,
-    color: '#4B5563',
+    color: '#6B7280',
   },
   amountDisplayValue: {
     fontSize: 18,

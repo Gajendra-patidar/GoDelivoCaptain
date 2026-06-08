@@ -1,2 +1,16 @@
-export { theme, colors, radii, spacing, type, shadow } from './theme';
-
+export {
+  BRAND_BLACK,
+  BRAND_YELLOW,
+  colors,
+  darkColors,
+  darkTheme,
+  getColorsForScheme,
+  getThemeForScheme,
+  lightColors,
+  lightTheme,
+  radii,
+  shadow,
+  spacing,
+  theme,
+  type,
+} from './theme';

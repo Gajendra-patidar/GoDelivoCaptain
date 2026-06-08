@@ -60,7 +60,7 @@ export { SkeletonBox, SkeletonCard, SkeletonList };
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 14,
     padding: 16,
     marginBottom: 12,

@@ -22,8 +22,10 @@ import {
 } from '../../services/localDriverData';
 import { driverApi } from '../../services/driverApi';
 import { theme } from '../../theme';
+import { selectProfile } from '../../store/slices/profileSlice';
+import { useSelector } from 'react-redux';
 
-const QUICK_ADD_AMOUNTS = [100, 250, 500];
+const QUICK_ADD_AMOUNTS = [100, 200, 500, 1000, 1500, 2000];
 
 const EarningsScreen = ({ navigation }) => {
   const [wallet, setWallet] = useState({
@@ -33,6 +35,8 @@ const EarningsScreen = ({ navigation }) => {
     totalDeliveries: 0,
   });
   const [loadingAmount, setLoadingAmount] = useState(null);
+  const profile = useSelector(selectProfile);
+  
 
   const loadWallet = useCallback(async () => {
     try {
@@ -74,11 +78,18 @@ const EarningsScreen = ({ navigation }) => {
         description: `Wallet Recharge - ₹${amount}`,
         order_id: orderData.orderId,
         prefill: {
-          email: '',
-          contact: '',
-          name: '',
+          email: profile?.email || '',
+          contact: profile?.phone || '',
+          name: profile?.name || '',
         },
         theme: { color: '#3399cc' },
+        method: {
+          online: true,
+          card: true,
+          netbanking: false,
+          wallet: false,
+          emi: false,
+        },
       };
 
       const paymentData = await RazorpayCheckout.open(options);
@@ -222,7 +233,7 @@ export default EarningsScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
   },
   header: {
     flexDirection: 'row',
@@ -231,7 +242,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: moderateScale(16),
     paddingTop: Platform.OS === 'ios' ? moderateScale(50) : moderateScale(20),
     paddingBottom: moderateScale(15),
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
   },
@@ -292,7 +303,7 @@ const styles = StyleSheet.create({
   },
   statCard: {
     width: '48%',
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#F8F9FA',
     borderRadius: theme.radii.lg,
     padding: moderateScale(16),
     borderWidth: 1,
@@ -313,7 +324,7 @@ const styles = StyleSheet.create({
   deliveriesCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f9fafb',
+    backgroundColor: '#F8F9FA',
     borderRadius: theme.radii.lg,
     padding: moderateScale(16),
     marginBottom: moderateScale(24),
@@ -347,15 +358,17 @@ const styles = StyleSheet.create({
   rechargeRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
   },
   rechargeBtn: {
     width: '31%',
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: theme.radii.md,
     paddingVertical: moderateScale(12),
     alignItems: 'center',
     borderWidth: 1.5,
     borderColor: theme.colors.primary,
+    marginBottom: moderateScale(10),
   },
   rechargeBtnText: {
     color: theme.colors.ink,
@@ -365,7 +378,7 @@ const styles = StyleSheet.create({
   historyLink: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: theme.radii.lg,
     padding: moderateScale(16),
     borderWidth: 1,
@@ -375,7 +388,7 @@ const styles = StyleSheet.create({
     width: moderateScale(40),
     height: moderateScale(40),
     borderRadius: moderateScale(10),
-    backgroundColor: '#f3f4f6',
+    backgroundColor: '#F8F9FA',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: moderateScale(12),

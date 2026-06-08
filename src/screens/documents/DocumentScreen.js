@@ -14,6 +14,7 @@ import {
   Animated,
   Dimensions,
   ActivityIndicator,
+  BackHandler,
 } from 'react-native';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import Icon from 'react-native-vector-icons/MaterialIcons';
@@ -22,6 +23,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from '../../services/api';
 import { theme } from '../../theme';
+import DatePicker from 'react-native-date-picker';
 
 const { width } = Dimensions.get('window');
 
@@ -31,6 +33,13 @@ const VEHICLE_TYPES = [
   'Loader (3 Wheeler)',
   'Truck (4 Wheeler)',
 ];
+
+const STATE_CITY_DATA = {
+  'Madhya Pradesh': ['Indore', 'Bhopal', 'Ujjain', 'Dewas', 'Ratlam'],
+  Maharashtra: ['Mumbai', 'Pune', 'Nagpur', 'Nashik'],
+  Rajasthan: ['Jaipur', 'Udaipur', 'Kota', 'Jodhpur'],
+  Gujarat: ['Ahmedabad', 'Surat', 'Vadodara', 'Rajkot'],
+};
 
 const getVehicleIcon = type => {
   switch (type) {
@@ -57,11 +66,112 @@ const DocumentScreen = ({ navigation, route }) => {
   const [uploading, setUploading] = useState(false);
   const scrollViewRef = useRef(null);
   const fadeAnim = useRef(new Animated.Value(1)).current;
-  const [verifyStatus, setVerifyStatusVal] = useState('PENDING');
+  const [verifyStatus, setVerifyStatusVal] = useState('');
   const [rejectReason, setRejectReason] = useState('');
   const [userPhone, setUserPhone] = useState('');
+  const [openDatePicker, setOpenDatePicker] = useState(false);
   const phoneData = route?.params?.phone;
   const statusData = route?.params?.data;
+  const [showStateList, setShowStateList] = useState(false);
+  const [showCityList, setShowCityList] = useState(false);
+  const [showComingSoon, setShowComingSoon] = useState(false);
+  const [driverData, setDriverData] = useState(null);
+
+  const getPaymentStatus = data => {
+    const payment =
+      data?.subscriptionPayment ||
+      data?.joiningFeePayment ||
+      data?.payment ||
+      {};
+
+    return (
+      payment?.status ||
+      data?.subscriptionPaymentStatus ||
+      data?.joiningFeePaymentStatus ||
+      data?.paymentStatus ||
+      ''
+    );
+  };
+
+  const isJoiningFeePaid = data => {
+    if (
+      data?.joiningFeePaid === true ||
+      data?.isJoiningFeePaid === true ||
+      data?.subscriptionPaid === true ||
+      data?.isSubscriptionPaid === true
+    ) {
+      return true;
+    }
+
+    return ['completed', 'paid', 'success', 'captured'].includes(
+      String(getPaymentStatus(data)).trim().toLowerCase(),
+    );
+  };
+
+  const getVerificationStatus = data =>
+    String(
+      data?.verificationStatus || data?.applicationStatus || data?.status || '',
+    )
+      .trim()
+      .toLowerCase();
+
+  const toIsoDate = value => {
+    if (!value) return '';
+
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toISOString();
+  };
+
+  const getApplicationId = data => {
+    return (
+      data?.applicationId ||
+      data?._id ||
+      data?.id ||
+      data?.application?._id ||
+      data?.application?.id ||
+      data?.subscriptionPayment?.applicationId ||
+      data?.joiningFeePayment?.applicationId ||
+      driverData?.data?.applicationId ||
+      driverData?.data?._id ||
+      null
+    );
+  };
+
+  const buildJoinFeesParams = backendData => ({
+    formData: {
+      ...form,
+      profilePhoto: form.profilePhoto,
+      aadharFront: form.aadharFront,
+      aadharBack: form.aadharBack,
+      panCard: form.panCard,
+      drivingLicense: form.drivingLicense,
+      vehicleRC: form.vehicleRC,
+      vehiclePhoto: form.vehiclePhoto,
+      backendData,
+      vehicleType: backendData?.vehicleType || form.vehicleType,
+    },
+    applicationId: getApplicationId(backendData),
+  });
+
+  const fetchJoiningFeeStatus = async (token, applicationId) => {
+    if (!applicationId) return null;
+
+    const response = await axios.get(
+      `${BASE_URL}/subscription/status/${applicationId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    return response?.data?.data || null;
+  };
+
+  const navigateAfterVerified = async () => {
+    navigation.replace('MyTabs');
+  };
 
   useEffect(() => {
     if (statusData) {
@@ -75,9 +185,20 @@ const DocumentScreen = ({ navigation, route }) => {
     } else {
       checkStatus();
     }
+    // Run only once on screen entry so refresh and navigation stay user-driven.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleStatus = data => {
+  const handleStatus = async data => {
+    const status = getVerificationStatus(data);
+    const routeHasPaidJoiningFee = isJoiningFeePaid(data);
+
+    if (status === 'rejected') {
+      setVerifyStatusVal('rejected');
+      setRejectReason(data?.statusMessage || data?.rejectionReason || '');
+      return;
+    }
+
     // 🆕 NEW DRIVER → FORM SHOW
     if (data?.requiresRegistration === true) {
       setVerifyStatusVal('NEW');
@@ -85,47 +206,91 @@ const DocumentScreen = ({ navigation, route }) => {
     }
 
     // 📄 Already Uploaded → check status
-    const status = data?.applicationStatus;
+    const applicationId = getApplicationId(data);
 
-    if (status === 'PENDING') {
-      setVerifyStatusVal('PENDING');
-    } else if (status === 'REJECTED') {
-      setVerifyStatusVal('REJECTED');
-      setRejectReason(data?.statusMessage || '');
-    } else if (status === 'VERIFIED') {
-      navigation.replace('MyTabs');
+    if (
+      routeHasPaidJoiningFee &&
+      !['pending', 'submitted', 'under_review', 'verified'].includes(status)
+    ) {
+      setVerifyStatusVal('submitted');
+      return;
+    }
+
+    if (['pending', 'submitted', 'under_review'].includes(status)) {
+      if (!applicationId) {
+        setVerifyStatusVal(status === 'pending' ? 'PENDING' : 'submitted');
+        return;
+      }
+
+      let paymentData = null;
+
+      try {
+        const token = await AsyncStorage.getItem('userToken');
+        paymentData = token
+          ? await fetchJoiningFeeStatus(token, applicationId)
+          : null;
+      } catch (error) {
+        console.log(
+          'Joining fee status check failed:',
+          error?.response?.data || error?.message,
+        );
+      }
+
+      const latestData = paymentData
+        ? {
+            ...data,
+            ...paymentData,
+          }
+        : data;
+      const latestStatus = getVerificationStatus(latestData) || status;
+
+      if (!isJoiningFeePaid(latestData)) {
+        navigation.replace('JoinFees', {
+          ...buildJoinFeesParams(data),
+          applicationId,
+        });
+        return;
+      }
+
+      if (latestStatus === 'verified') {
+        await navigateAfterVerified();
+        return;
+      }
+
+      setVerifyStatusVal('submitted');
+    } else if (status === 'verified') {
+      await navigateAfterVerified();
     }
   };
 
   const checkStatus = async () => {
     try {
       setLoading(true);
-      const token = await AsyncStorage.getItem('userToken');
       const phone = await AsyncStorage.getItem('userPhone');
       if (phone) setUserPhone(phone);
+      const statusPhone = phone || phoneData || form.phone;
 
-      if (token) {
+      if (statusPhone) {
         const response = await axios
-          .get(`${BASE_URL}/status/${phone}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          })
+          .get(`${BASE_URL}/status/${statusPhone}`)
           .catch(err => ({
             data: { verifyStatus: 'PENDING', rejectReason: '' },
           }));
 
-        setVerifyStatusVal(
-          response?.data?.data?.verificationStatus ||
-            response?.data?.verifyStatus ||
-            'PENDING',
-        );
+        const responseData = response?.data?.data || response?.data || {};
         setRejectReason(
           response?.data?.rejectReason ||
             response?.data?.data?.statusMessage ||
             '',
         );
-        //VERIFIED
-        if (response?.data?.data?.verificationStatus === 'verified') {
-          navigation.replace('MyTabs');
+
+        if (
+          responseData?.verificationStatus ||
+          responseData?.applicationStatus
+        ) {
+          await handleStatus(responseData);
+        } else {
+          setVerifyStatusVal(response?.data?.verifyStatus || 'PENDING');
         }
       }
     } catch (error) {
@@ -143,16 +308,16 @@ const DocumentScreen = ({ navigation, route }) => {
     email: '',
     dateOfBirth: '',
     address: '',
-    city: '',
-    state: '',
+    city: 'Indore',
+    state: 'Madhya Pradesh',
     pincode: '',
 
     // Vehicle Info
     vehicleType: '',
     vehicleNumber: '',
-    // vehicleModel: '',
-    // vehicleYear: '',
-    // vehicleColor: '',
+    vehicleModel: '',
+    vehicleYear: '',
+    vehicleColor: '',
 
     // Bank Info
     accountHolderName: '',
@@ -164,7 +329,6 @@ const DocumentScreen = ({ navigation, route }) => {
     // Document Numbers
     aadharNumber: '',
     licenseNumber: '',
-    // rcNumber: '',
 
     // Files
     profilePhoto: null,
@@ -174,6 +338,9 @@ const DocumentScreen = ({ navigation, route }) => {
     drivingLicense: null,
     vehicleRC: null,
     vehiclePhoto: null,
+    hasHiredDriver: null,
+    hiredDriverName: '',
+    hiredDriverPhone: '',
 
     // Track upload status
     uploadStatus: {
@@ -184,6 +351,7 @@ const DocumentScreen = ({ navigation, route }) => {
       drivingLicense: false,
       vehicleRC: false,
       vehiclePhoto: false,
+      hiredDriverLicense: false,
     },
   });
 
@@ -197,6 +365,114 @@ const DocumentScreen = ({ navigation, route }) => {
     };
     loadPhone();
   }, []);
+
+  const getDraftKey = phone => {
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
+    return cleanPhone ? `documentFormDraft_${cleanPhone}` : null;
+  };
+
+  const getStepKey = phone => {
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
+    return cleanPhone ? `documentFormStep_${cleanPhone}` : null;
+  };
+
+  // Auto-save form and step as draft when editing
+  useEffect(() => {
+    const saveDraft = async () => {
+      const phone = form.phone || userPhone || phoneData;
+      const draftKey = getDraftKey(phone);
+      const stepKey = getStepKey(phone);
+
+      if (!draftKey || !stepKey) return;
+
+      try {
+        if (
+          verifyStatus === 'NEW' ||
+          verifyStatus === 'PENDING' ||
+          verifyStatus === 'rejected' ||
+          !verifyStatus
+        ) {
+          const hasData =
+            form.fullName ||
+            form.email ||
+            form.address ||
+            form.aadharNumber ||
+            form.licenseNumber ||
+            form.vehicleNumber ||
+            form.vehicleModel ||
+            form.accountHolderName ||
+            form.accountNumber;
+
+          if (hasData) {
+            await AsyncStorage.setItem(
+              'documentFormDraft',
+              JSON.stringify(form),
+            );
+            await AsyncStorage.setItem('documentFormStep', String(step));
+            await AsyncStorage.setItem(draftKey, JSON.stringify(form));
+            await AsyncStorage.setItem(stepKey, String(step));
+          }
+        }
+      } catch (error) {
+        console.error('Error saving document draft:', error);
+      }
+    };
+    saveDraft();
+  }, [form, step, verifyStatus, userPhone, phoneData]);
+
+  // Load draft when verifyStatus allows editing
+  useEffect(() => {
+    const loadDraft = async () => {
+      const phone = form.phone || userPhone || phoneData;
+      const draftKey = getDraftKey(phone);
+      const stepKey = getStepKey(phone);
+
+      if (!draftKey || !stepKey) return;
+
+      try {
+        // First try the phone-scoped keys, fallback to global key
+        let draftStr = await AsyncStorage.getItem(draftKey);
+        let savedStep = await AsyncStorage.getItem(stepKey);
+
+        if (!draftStr) {
+          draftStr = await AsyncStorage.getItem('documentFormDraft');
+          savedStep = await AsyncStorage.getItem('documentFormStep');
+        }
+
+        if (draftStr) {
+          const draft = JSON.parse(draftStr);
+          if (draft) {
+            setForm(prev => {
+              const finalPhone = prev.phone || draft.phone || phone || '';
+              return {
+                ...prev,
+                ...draft,
+                phone: finalPhone,
+              };
+            });
+
+            if (savedStep) {
+              const stepNum = parseInt(savedStep, 10);
+              if (stepNum >= 1 && stepNum <= 5) {
+                setStep(stepNum);
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error loading document draft:', error);
+      }
+    };
+
+    if (
+      verifyStatus === 'NEW' ||
+      verifyStatus === 'PENDING' ||
+      verifyStatus === 'rejected'
+    ) {
+      loadDraft();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [verifyStatus, userPhone, phoneData]);
 
   // Get token from storage
   const getToken = async () => {
@@ -344,6 +620,10 @@ const DocumentScreen = ({ navigation, route }) => {
   const validateStep = () => {
     switch (step) {
       case 1: // Personal Info
+        // STEP 1 VALIDATION: Personal Information
+        // This step collects driver's personal details and address
+        // NOTE: City and State are RESTRICTED to Indore, Madhya Pradesh only
+
         if (!form.fullName?.trim()) {
           showError('Please enter your full name');
           return false;
@@ -362,10 +642,6 @@ const DocumentScreen = ({ navigation, route }) => {
         }
         if (!form.city?.trim()) {
           showError('Please enter your city');
-          return false;
-        }
-        if (!form.state?.trim()) {
-          showError('Please enter your state');
           return false;
         }
         if (!form.pincode?.trim() || form.pincode.length !== 6) {
@@ -418,17 +694,36 @@ const DocumentScreen = ({ navigation, route }) => {
           showError('Please upload vehicle RC');
           return false;
         }
-        // if (!form.rcNumber?.trim()) {
-        //   showError('Please enter RC number');
-        //   return false;
-        // }
         if (!form.vehiclePhoto) {
           showError('Please upload vehicle photo');
           return false;
         }
         return true;
 
-      case 4: // Bank Details
+      case 4:
+        if (form.hasHiredDriver === 'true') {
+          if (!form.hiredDriverName?.trim()) {
+            showError('Please enter driver name');
+            return false;
+          }
+
+          if (
+            !form.hiredDriverPhone?.trim() ||
+            form.hiredDriverPhone.length !== 10
+          ) {
+            showError('Please enter valid 10-digit driver phone number');
+            return false;
+          }
+
+          if (!form.hiredDriverLicense) {
+            showError('Please upload driver license');
+            return false;
+          }
+        }
+
+        return true;
+
+      case 5: // Bank Details
         if (!form.accountHolderName?.trim()) {
           showError('Please enter account holder name');
           return false;
@@ -482,13 +777,13 @@ const DocumentScreen = ({ navigation, route }) => {
       const textFields = {
         fullName: form.fullName,
         email: form.email,
-        dateOfBirth: form.dateOfBirth,
+        dateOfBirth: toIsoDate(form.dateOfBirth),
         phone: form.phone,
         vehicleType: form.vehicleType,
         vehicleNumber: form.vehicleNumber,
-        // vehicleModel: form.vehicleModel || '',
-        // vehicleYear: form.vehicleYear || '',
-        // vehicleColor: form.vehicleColor || '',
+        vehicleModel: form.vehicleModel || '',
+        vehicleYear: form.vehicleYear || '',
+        vehicleColor: form.vehicleColor || '',
         accountHolderName: form.accountHolderName,
         accountNumber: form.accountNumber,
         ifscCode: form.ifscCode,
@@ -496,7 +791,11 @@ const DocumentScreen = ({ navigation, route }) => {
         branchName: form.branchName || '',
         aadharNumber: form.aadharNumber,
         licenseNumber: form.licenseNumber,
-        // rcNumber: form.rcNumber,
+        hasHiredDriver: form.hasHiredDriver || 'false',
+        hiredDriverName:
+          form.hasHiredDriver === 'true' ? form.hiredDriverName : '',
+        hiredDriverPhone:
+          form.hasHiredDriver === 'true' ? form.hiredDriverPhone : '',
       };
 
       // Add address as JSON string
@@ -522,6 +821,7 @@ const DocumentScreen = ({ navigation, route }) => {
         'drivingLicense',
         'vehicleRC',
         'vehiclePhoto',
+        'hiredDriverLicense',
       ];
 
       fileFields.forEach(field => {
@@ -534,29 +834,49 @@ const DocumentScreen = ({ navigation, route }) => {
         }
       });
 
+      const isAvailableLocation =
+        form.city?.trim().toLowerCase() === 'indore' &&
+        form.state?.trim().toLowerCase() === 'madhya pradesh';
+
+      if (!isAvailableLocation) {
+        setShowComingSoon(true);
+        return;
+      }
+      console.log('after register data');
+
       const response = await axios.post(`${BASE_URL}/register`, formData, {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'multipart/form-data',
         },
-        timeout: 30000,
       });
 
-      if (response.data?.data?.verificationStatus === 'submitted') {
-        Alert.alert(
-          'Success!',
-          response.data.message ||
-            'Registration successful! Your application is under review.',
-          [
-            {
-              text: 'OK',
-              onPress: () => setVerifyStatusVal('PENDING'),
-            },
-          ],
-        );
-      } else {
-        navigation.navigate('MyTabs');
+      const vehicleType =
+        response?.data?.data?.vehicleType || form.vehicleType || '';
+
+      if (vehicleType) {
+        await AsyncStorage.setItem('vehicleType', vehicleType);
       }
+
+      console.log('response data of document', response.data);
+
+      // Clear draft on successful submission
+      const phone = form.phone || userPhone || phoneData;
+      const draftKey = getDraftKey(phone);
+      const stepKey = getStepKey(phone);
+      if (draftKey && stepKey) {
+        await AsyncStorage.removeItem(draftKey);
+        await AsyncStorage.removeItem(stepKey);
+      }
+      await AsyncStorage.removeItem('documentFormDraft');
+      await AsyncStorage.removeItem('documentFormStep');
+
+      setDriverData(response?.data);
+
+      navigation.replace('JoinFees', {
+        ...buildJoinFeesParams(response?.data?.data || response?.data),
+        applicationId: getApplicationId(response?.data?.data || response?.data),
+      });
     } catch (error) {
       console.error(
         'Submission error:',
@@ -591,12 +911,26 @@ const DocumentScreen = ({ navigation, route }) => {
   };
 
   const renderProgressBar = () => {
-    const progress = (step / 4) * 100;
+    const progress = (step / 5) * 100;
     return (
       <View style={styles.progressBarContainer}>
         <View style={[styles.progressBar, { width: `${progress}%` }]} />
       </View>
     );
+  };
+
+  const handleBackPress = async () => {
+    const fees = await AsyncStorage.getItem('subscribtion_fees');
+
+    if (fees) {
+      BackHandler.exitApp();
+    } else {
+      if (navigation.canGoBack()) {
+        navigation.goBack();
+      } else {
+        BackHandler.exitApp();
+      }
+    }
   };
 
   const renderImagePicker = (
@@ -611,7 +945,7 @@ const DocumentScreen = ({ navigation, route }) => {
           <Icon
             name={form.uploadStatus[key] ? 'check-circle' : 'cloud-upload'}
             size={20}
-            color={form.uploadStatus[key] ? '#4CAF50' : '#666'}
+            color={form.uploadStatus[key] ? '#4CAF50' : '#6B7280'}
           />
           <Text style={styles.uploadTitle}>
             {title} {required && <Text style={styles.requiredStar}>*</Text>}
@@ -633,7 +967,7 @@ const DocumentScreen = ({ navigation, route }) => {
             style={styles.uploadBtn}
             onPress={() => pickImage(key, false)}
           >
-            <Icon name="photo-library" size={24} color="#F4C20D" />
+            <Icon name="photo-library" size={24} color="#fccf1e" />
             <Text style={styles.uploadBtnText}>Gallery</Text>
           </TouchableOpacity>
 
@@ -649,7 +983,7 @@ const DocumentScreen = ({ navigation, route }) => {
                 }
               }}
             >
-              <Icon name="camera-alt" size={24} color="#F4C20D" />
+              <Icon name="camera-alt" size={24} color="#fccf1e" />
               <Text style={styles.uploadBtnText}>Camera</Text>
             </TouchableOpacity>
           )}
@@ -658,7 +992,7 @@ const DocumentScreen = ({ navigation, route }) => {
         <View style={styles.previewWrapper}>
           <Image source={{ uri: form[key].uri }} style={styles.previewImage} />
           <View style={styles.previewInfo}>
-            <Icon name="insert-drive-file" size={16} color="#666" />
+            <Icon name="insert-drive-file" size={16} color="#6B7280" />
             <Text style={styles.previewFileName} numberOfLines={1}>
               {form[key].fileName || 'Document uploaded'}
             </Text>
@@ -668,33 +1002,14 @@ const DocumentScreen = ({ navigation, route }) => {
     </View>
   );
 
-  const renderCustomAlert = ({ title, message, type }) => (
-    <View
-      style={[
-        styles.customAlert,
-        type === 'success' && styles.customAlertSuccess,
-      ]}
-    >
-      <Icon
-        name={type === 'success' ? 'check-circle' : 'info'}
-        size={20}
-        color={type === 'success' ? '#4CAF50' : '#F4C20D'}
-      />
-      <View style={styles.customAlertContent}>
-        <Text style={styles.customAlertTitle}>{title}</Text>
-        <Text style={styles.customAlertMessage}>{message}</Text>
-      </View>
-    </View>
-  );
-
   // Status check screens
-  if (verifyStatus === 'PENDING' || verifyStatus === 'submitted') {
+  if (verifyStatus === 'submitted') {
     return (
       <View style={styles.reviewContainer}>
-        <StatusBar backgroundColor="#fff" barStyle="dark-content" />
+        <StatusBar backgroundColor="#FFFFFF" barStyle="dark-content" />
         <View style={styles.reviewContent}>
           <View style={styles.statusBadgePending}>
-            <Icon name="hourglass-top" size={48} color="#F4C20D" />
+            <Icon name="hourglass-top" size={48} color="#fccf1e" />
           </View>
           <Text style={styles.reviewTitle}>Application Under Review</Text>
           <Text style={styles.reviewText}>
@@ -702,7 +1017,7 @@ const DocumentScreen = ({ navigation, route }) => {
             currently verifying your details. This usually takes 24-48 hours.
           </Text>
           <View style={styles.infoPoint}>
-            <Icon name="info" size={18} color="#666" />
+            <Icon name="info" size={18} color="#6B7280" />
             <Text style={styles.infoPointText}>
               We will notify you once verified.
             </Text>
@@ -718,7 +1033,7 @@ const DocumentScreen = ({ navigation, route }) => {
   if (verifyStatus === 'partially_verified' || verifyStatus === 'rejected') {
     return (
       <View style={styles.reviewContainer}>
-        <StatusBar backgroundColor="#fff" barStyle="dark-content" />
+        <StatusBar backgroundColor="#FFFFFF" barStyle="dark-content" />
         <View style={styles.reviewContent}>
           <View style={styles.statusBadgeError}>
             <Icon name="error-outline" size={48} color="#FF3B30" />
@@ -744,8 +1059,41 @@ const DocumentScreen = ({ navigation, route }) => {
   if (loading && step === 1) {
     return (
       <View style={styles.loadingContainerFull}>
-        <ActivityIndicator size="large" color="#F4C20D" />
+        <ActivityIndicator size="large" color="#fccf1e" />
         <Text style={styles.loadingTextFull}>Loading...</Text>
+      </View>
+    );
+  }
+
+  if (showComingSoon) {
+    return (
+      <View style={styles.comingSoonContainer}>
+        <StatusBar backgroundColor="#FFFFFF" barStyle="dark-content" />
+
+        <View style={styles.comingSoonIconBox}>
+          <Icon name="location-off" size={70} color="#fccf1e" />
+        </View>
+
+        <Text style={styles.comingSoonTitle}>Coming Soon!</Text>
+
+        <Text style={styles.comingSoonText}>
+          Currently GoDelivo Captain registration is available only in Indore,
+          Madhya Pradesh.
+        </Text>
+
+        <Text style={styles.comingSoonSubText}>
+          We will launch in your city soon.
+        </Text>
+
+        <TouchableOpacity
+          style={styles.comingSoonBtn}
+          onPress={() => {
+            setShowComingSoon(false);
+            setStep(1);
+          }}
+        >
+          <Text style={styles.comingSoonBtnText}>Change Location</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -753,39 +1101,44 @@ const DocumentScreen = ({ navigation, route }) => {
   // Main Registration Form
   return (
     <View style={styles.container}>
-      <StatusBar backgroundColor="#F4C20D" barStyle="dark-content" />
+      <StatusBar backgroundColor="#fccf1e" barStyle="dark-content" />
 
       {/* Header with Gradient */}
-      <LinearGradient colors={['#F4C20D', '#F5D142']} style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backButton}
-        >
+      <LinearGradient colors={['#fccf1e', '#fccf1e']} style={styles.header}>
+        <TouchableOpacity onPress={handleBackPress} style={styles.backButton}>
           <Icon name="arrow-back" size={24} color="#000" />
         </TouchableOpacity>
-        <View>
-          <Text style={styles.headerTitle}>Driver Application</Text>
-          <Text style={styles.headerSubtitle}>
-            Step {step} of 4:{' '}
-            {step === 1
-              ? 'Personal Info'
-              : step === 2
-              ? 'Identity Docs'
-              : step === 3
-              ? 'Vehicle Details'
-              : 'Bank Details'}
-          </Text>
+        <View style={{ flexDirection: 'row', alignItems:'center', gap:'28%'}}>
+          <View>
+            <Text style={styles.headerTitle}>Driver Application</Text>
+            <Text style={styles.headerSubtitle}>
+              Step {step} of 5:{' '}
+              {step === 1
+                ? 'Personal Info'
+                : step === 2
+                ? 'Identity Docs'
+                : step === 3
+                ? 'Vehicle Details'
+                : step === 4
+                ? 'Driver Details'
+                : 'Bank Details'}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            onPress={() => navigation.navigate('HelpDetail')}
+            style={styles.headerRight}
+          >
+            <Icon name="support-agent" size={24} color="#000" />
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity onPress={()=> navigation.navigate('HelpDetail')} style={styles.headerRight}>
-          <Icon name="support-agent" size={24} color="#000" />
-        </TouchableOpacity>
       </LinearGradient>
 
       {renderProgressBar()}
 
       {(loading || uploading) && (
         <View style={styles.globalLoader}>
-          <ActivityIndicator size="large" color="#F4C20D" />
+          <ActivityIndicator size="large" color="#fccf1e" />
           <Text style={styles.loaderText}>
             {uploading ? 'Uploading documents...' : 'Submitting...'}
           </Text>
@@ -803,7 +1156,7 @@ const DocumentScreen = ({ navigation, route }) => {
             <View>
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
-                  <Icon name="person" size={24} color="#F4C20D" />
+                  <Icon name="person" size={24} color="#fccf1e" />
                   <Text style={styles.sectionTitle}>Personal Information</Text>
                 </View>
 
@@ -844,21 +1197,56 @@ const DocumentScreen = ({ navigation, route }) => {
                   />
                 </View>
 
-                <View style={styles.inputContainer}>
+                <TouchableOpacity
+                  style={styles.inputContainer}
+                  activeOpacity={0.8}
+                  onPress={() => setOpenDatePicker(true)}
+                >
                   <Icon
                     name="cake"
                     size={20}
                     color="#999"
                     style={styles.inputIcon}
                   />
-                  <TextInput
-                    placeholder="Date of Birth * (YYYY-MM-DD)"
-                    style={styles.input}
-                    placeholderTextColor="#999"
-                    value={form.dateOfBirth}
-                    onChangeText={v => setForm({ ...form, dateOfBirth: v })}
+
+                  <TouchableOpacity
+                    style={{ flex: 1 }}
+                    activeOpacity={0.8}
+                    onPress={() => setOpenDatePicker(true)}
+                  >
+                    <TextInput
+                      placeholder="Date of Birth *"
+                      style={styles.input}
+                      placeholderTextColor="#999"
+                      value={form.dateOfBirth}
+                      editable={false}
+                      pointerEvents="none"
+                    />
+                  </TouchableOpacity>
+
+                  <DatePicker
+                    modal
+                    mode="date"
+                    open={openDatePicker}
+                    date={
+                      form.dateOfBirth ? new Date(form.dateOfBirth) : new Date()
+                    }
+                    maximumDate={new Date()}
+                    onConfirm={date => {
+                      setOpenDatePicker(false);
+
+                      const formattedDate = date.toISOString().split('T')[0];
+
+                      setForm({
+                        ...form,
+                        dateOfBirth: formattedDate,
+                      });
+                    }}
+                    onCancel={() => {
+                      setOpenDatePicker(false);
+                    }}
                   />
-                </View>
+                </TouchableOpacity>
 
                 <View style={styles.inputContainer}>
                   <Icon
@@ -876,37 +1264,115 @@ const DocumentScreen = ({ navigation, route }) => {
                   />
                 </View>
 
-                <View style={styles.rowContainer}>
-                  <View style={[styles.inputContainer, styles.halfInput]}>
-                    <Icon
-                      name="location-city"
-                      size={20}
-                      color="#999"
-                      style={styles.inputIcon}
-                    />
-                    <TextInput
-                      placeholder="City *"
-                      style={styles.input}
-                      placeholderTextColor="#999"
-                      value={form.city}
-                      onChangeText={v => setForm({ ...form, city: v })}
-                    />
+                {/*
+                  STEP 1 - CITY & STATE INPUT
+                  Restricted to: Indore, Madhya Pradesh only
+                  These fields are required for driver verification
+                  Only drivers from Indore, Madhya Pradesh are currently supported
+                */}
+                <View style={styles.rowContainer_box}>
+                  {/* State Select */}
+                  <View style={[styles.dropdownWrapper, styles.halfInput]}>
+                    <TouchableOpacity
+                      style={styles.inputContainer}
+                      activeOpacity={0.8}
+                      onPress={() => setShowStateList(!showStateList)}
+                    >
+                      <Icon
+                        name="map"
+                        size={20}
+                        color="#999"
+                        style={styles.inputIcon}
+                      />
+
+                      <Text
+                        style={[
+                          styles.input,
+                          { color: form.state ? '#111827' : '#8A8A8A' },
+                        ]}
+                      >
+                        {form.state || 'Select State *'}
+                      </Text>
+
+                      <Icon name="keyboard-arrow-down" size={22} color="#999" />
+                    </TouchableOpacity>
+
+                    {showStateList && (
+                      <View style={styles.dropdownList}>
+                        {Object.keys(STATE_CITY_DATA).map(stateName => (
+                          <TouchableOpacity
+                            key={stateName}
+                            style={styles.dropdownItem}
+                            onPress={() => {
+                              setForm({
+                                ...form,
+                                state: stateName,
+                                city: '',
+                              });
+                              setShowStateList(false);
+                              setShowCityList(false);
+                            }}
+                          >
+                            <Text style={styles.dropdownText} numberOfLines={1}>
+                              {stateName}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
                   </View>
 
-                  <View style={[styles.inputContainer, styles.halfInput]}>
-                    <Icon
-                      name="map"
-                      size={20}
-                      color="#999"
-                      style={styles.inputIcon}
-                    />
-                    <TextInput
-                      placeholder="State *"
-                      style={styles.input}
-                      placeholderTextColor="#999"
-                      value={form.state}
-                      onChangeText={v => setForm({ ...form, state: v })}
-                    />
+                  {/* City Select */}
+                  <View style={[styles.dropdownWrapper, styles.halfInput]}>
+                    <TouchableOpacity
+                      style={styles.inputContainer}
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        if (!form.state) {
+                          showError('Please select state first');
+                          return;
+                        }
+                        setShowCityList(!showCityList);
+                      }}
+                    >
+                      <Icon
+                        name="location-city"
+                        size={20}
+                        color="#999"
+                        style={styles.inputIcon}
+                      />
+
+                      <Text
+                        style={[
+                          styles.input,
+                          { color: form.city ? '#111827' : '#8A8A8A' },
+                        ]}
+                      >
+                        {form.city || 'Select City *'}
+                      </Text>
+
+                      <Icon name="keyboard-arrow-down" size={22} color="#999" />
+                    </TouchableOpacity>
+
+                    {showCityList && (
+                      <View style={styles.dropdownList}>
+                        {STATE_CITY_DATA[form.state]?.map(cityName => (
+                          <TouchableOpacity
+                            key={cityName}
+                            style={styles.dropdownItem}
+                            onPress={() => {
+                              setForm({
+                                ...form,
+                                city: cityName,
+                              });
+                              setShowCityList(false);
+                            }}
+                          >
+                            <Text style={styles.dropdownText}>{cityName}</Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    )}
                   </View>
                 </View>
 
@@ -937,7 +1403,7 @@ const DocumentScreen = ({ navigation, route }) => {
           {step === 2 && (
             <View style={styles.sectionCard}>
               <View style={styles.sectionHeader}>
-                <Icon name="description" size={24} color="#F4C20D" />
+                <Icon name="description" size={24} color="#fccf1e" />
                 <Text style={styles.sectionTitle}>Identity Documents</Text>
               </View>
 
@@ -1012,7 +1478,7 @@ const DocumentScreen = ({ navigation, route }) => {
             <View>
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
-                  <Icon name="directions-car" size={24} color="#F4C20D" />
+                  <Icon name="directions-car" size={24} color="#fccf1e" />
                   <Text style={styles.sectionTitle}>Vehicle Information</Text>
                 </View>
 
@@ -1028,10 +1494,13 @@ const DocumentScreen = ({ navigation, route }) => {
                   <Text style={styles.label}>
                     Vehicle Type <Text style={styles.requiredStar}>*</Text>
                   </Text>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.categoryScrollContent}
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      flexWrap: 'wrap',
+                      justifyContent: 'space-between',
+                      gap: 5,
+                    }}
                   >
                     {VEHICLE_TYPES.map(type => (
                       <TouchableOpacity
@@ -1045,7 +1514,7 @@ const DocumentScreen = ({ navigation, route }) => {
                         <Icon
                           name={getVehicleIcon(type)}
                           size={25}
-                          color={form.vehicleType === type ? '#000' : '#333'}
+                          color={form.vehicleType === type ? '#000' : '#111827'}
                         />
 
                         <Text
@@ -1054,12 +1523,13 @@ const DocumentScreen = ({ navigation, route }) => {
                             form.vehicleType === type &&
                               styles.typeChipTextActive,
                           ]}
+                          numberOfLines={1}
                         >
                           {type}
                         </Text>
                       </TouchableOpacity>
                     ))}
-                  </ScrollView>
+                  </View>
                 </View>
 
                 <View style={styles.inputContainer}>
@@ -1140,37 +1610,170 @@ const DocumentScreen = ({ navigation, route }) => {
 
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
-                  <Icon name="assignment" size={24} color="#F4C20D" />
+                  <Icon name="assignment" size={24} color="#fccf1e" />
                   <Text style={styles.sectionTitle}>Vehicle Documents</Text>
                 </View>
 
                 {/* Vehicle RC */}
                 {renderImagePicker('Vehicle RC', 'vehicleRC', true, true)}
-
-                {/* <View style={styles.inputContainer}>
-                  <Icon
-                    name="confirmation-number"
-                    size={20}
-                    color="#999"
-                    style={styles.inputIcon}
-                  />
-                  <TextInput
-                    placeholder="RC Number *"
-                    style={styles.input}
-                    placeholderTextColor="#999"
-                    value={form.rcNumber}
-                    onChangeText={v => setForm({ ...form, rcNumber: v })}
-                  />
-                </View> */}
               </View>
             </View>
           )}
 
-          {/* STEP 4 - Bank Details */}
           {step === 4 && (
             <View style={styles.sectionCard}>
               <View style={styles.sectionHeader}>
-                <Icon name="account-balance" size={24} color="#F4C20D" />
+                <Icon name="person-pin" size={24} color="#fccf1e" />
+                <Text style={styles.sectionTitle}>Driver Details</Text>
+              </View>
+
+              <Text style={styles.label}>
+                I will be driving this vehicle{' '}
+                <Text style={styles.requiredStar}>*</Text>
+              </Text>
+
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  paddingHorizontal: '20%',
+                  marginBottom: 10,
+                }}
+              >
+                {/* YES */}
+                <TouchableOpacity
+                  style={{ flexDirection: 'row' }}
+                  onPress={() =>
+                    setForm({
+                      ...form,
+                      hasHiredDriver: 'false',
+                      hiredDriverName: '',
+                      hiredDriverPhone: '',
+                      hiredDriverLicense: null,
+                    })
+                  }
+                >
+                  <Icon
+                    name={
+                      form.hasHiredDriver === 'false'
+                        ? 'radio-button-checked'
+                        : 'radio-button-unchecked'
+                    }
+                    size={24}
+                    color={form.hasHiredDriver === 'false' ? '#0B66E4' : '#555'}
+                  />
+
+                  <Text
+                    style={{
+                      alignSelf: 'center',
+                      marginLeft: 5,
+                      fontFamily: 'Poppins-Medium',
+                    }}
+                  >
+                    Yes
+                  </Text>
+                </TouchableOpacity>
+
+                {/* NO */}
+                <TouchableOpacity
+                  style={{ flexDirection: 'row' }}
+                  onPress={() => setForm({ ...form, hasHiredDriver: 'true' })}
+                >
+                  <Icon
+                    name={
+                      form.hasHiredDriver === 'true'
+                        ? 'radio-button-checked'
+                        : 'radio-button-unchecked'
+                    }
+                    size={24}
+                    color={form.hasHiredDriver === 'true' ? '#0B66E4' : '#555'}
+                  />
+
+                  <Text
+                    style={{
+                      alignSelf: 'center',
+                      marginLeft: 5,
+                      fontFamily: 'Poppins-Medium',
+                    }}
+                  >
+                    No
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              {form.hasHiredDriver === 'true' && (
+                <View>
+                  <Text style={styles.label}>
+                    Driver Name <Text style={styles.requiredStar}>*</Text>
+                  </Text>
+
+                  <View style={styles.inputContainer}>
+                    <Icon
+                      name="person"
+                      size={20}
+                      color="#999"
+                      style={styles.inputIcon}
+                    />
+                    <TextInput
+                      placeholder="Driver Name"
+                      style={styles.input}
+                      placeholderTextColor="#999"
+                      value={form.hiredDriverName}
+                      onChangeText={v =>
+                        setForm({ ...form, hiredDriverName: v })
+                      }
+                    />
+                  </View>
+
+                  <Text style={styles.label}>
+                    Driver Phone Number{' '}
+                    <Text style={styles.requiredStar}>*</Text>
+                  </Text>
+
+                  <View style={styles.inputContainer}>
+                    <Icon
+                      name="phone"
+                      size={20}
+                      color="#999"
+                      style={styles.inputIcon}
+                    />
+                    <TextInput
+                      placeholder="Driver Phone Number"
+                      style={styles.input}
+                      placeholderTextColor="#999"
+                      keyboardType="numeric"
+                      maxLength={10}
+                      value={form.hiredDriverPhone}
+                      onChangeText={v =>
+                        setForm({
+                          ...form,
+                          hiredDriverPhone: v.replace(/[^0-9]/g, ''),
+                        })
+                      }
+                    />
+                  </View>
+
+                  <Text style={styles.label}>
+                    Upload Driver License{' '}
+                    <Text style={styles.requiredStar}>*</Text>
+                  </Text>
+
+                  {renderImagePicker(
+                    'Driving Licence',
+                    'hiredDriverLicense',
+                    true,
+                    true,
+                  )}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* STEP 5 - Bank Details */}
+          {step === 5 && (
+            <View style={styles.sectionCard}>
+              <View style={styles.sectionHeader}>
+                <Icon name="account-balance" size={24} color="#fccf1e" />
                 <Text style={styles.sectionTitle}>Bank Account Details</Text>
               </View>
 
@@ -1201,6 +1804,7 @@ const DocumentScreen = ({ navigation, route }) => {
                   placeholder="Account Number *"
                   style={styles.input}
                   placeholderTextColor="#999"
+                  maxLength={18}
                   keyboardType="numeric"
                   value={form.accountNumber}
                   onChangeText={v => setForm({ ...form, accountNumber: v })}
@@ -1227,7 +1831,7 @@ const DocumentScreen = ({ navigation, route }) => {
 
               {loading && (
                 <View style={styles.loadingContainer}>
-                  <Icon name="hourglass-empty" size={20} color="#F4C20D" />
+                  <Icon name="hourglass-empty" size={20} color="#fccf1e" />
                   <Text style={styles.loadingText}>
                     Fetching bank details...
                   </Text>
@@ -1271,7 +1875,7 @@ const DocumentScreen = ({ navigation, route }) => {
               </View>
 
               <View style={styles.infoBox}>
-                <Icon name="info" size={20} color="#F4C20D" />
+                <Icon name="info" size={20} color="#fccf1e" />
                 <Text style={styles.infoText}>
                   Your bank details are encrypted and securely stored
                 </Text>
@@ -1289,12 +1893,12 @@ const DocumentScreen = ({ navigation, route }) => {
             onPress={() => setStep(step - 1)}
             disabled={loading || uploading}
           >
-            <Icon name="arrow-back" size={20} color="#666" />
+            <Icon name="arrow-back" size={20} color="#6B7280" />
             <Text style={styles.secondaryBtnText}>Back</Text>
           </TouchableOpacity>
         )}
 
-        {step < 4 ? (
+        {step < 5 ? (
           <TouchableOpacity
             style={[
               styles.footerBtn,
@@ -1337,7 +1941,6 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingVertical: 15,
   },
@@ -1349,17 +1952,18 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.1)',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: '10%',
   },
 
   headerTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#000',
+    color: '#111827',
   },
 
   headerSubtitle: {
     fontSize: 12,
-    color: '#333',
+    color: '#111827',
     marginTop: 2,
   },
 
@@ -1374,7 +1978,7 @@ const styles = StyleSheet.create({
 
   progressBarContainer: {
     height: 4,
-    backgroundColor: '#E0E0E0',
+    backgroundColor: '#E5E7EB',
     width: '100%',
   },
 
@@ -1393,7 +1997,7 @@ const styles = StyleSheet.create({
   },
 
   sectionCard: {
-    backgroundColor: '#FFF',
+    backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 20,
     marginBottom: 20,
@@ -1409,21 +2013,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: '#E5E7EB',
     paddingBottom: 15,
   },
 
   sectionTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#333',
+    color: '#111827',
     marginLeft: 10,
   },
 
   sectionSubtitle: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#666',
+    color: '#6B7280',
     marginBottom: 10,
     marginTop: 5,
   },
@@ -1432,6 +2036,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 10,
+  },
+
+  rowContainer_box: {
+    justifyContent: 'space-between',
   },
 
   halfInput: {
@@ -1446,7 +2054,7 @@ const styles = StyleSheet.create({
     marginBottom: 15,
     paddingHorizontal: 15,
     borderWidth: 1,
-    borderColor: '#E8E8E8',
+    borderColor: '#E5E7EB',
   },
 
   inputIcon: {
@@ -1457,15 +2065,15 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 15,
     fontSize: 14,
-    color: '#333',
+    color: '#111827',
   },
 
   disabledInputContainer: {
-    backgroundColor: '#F0F0F0',
+    backgroundColor: '#F8F9FA',
   },
 
   disabledInput: {
-    color: '#666',
+    color: '#6B7280',
   },
 
   uploadCard: {
@@ -1474,7 +2082,7 @@ const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 15,
     borderWidth: 1,
-    borderColor: '#E8E8E8',
+    borderColor: '#E5E7EB',
     borderStyle: 'dashed',
   },
 
@@ -1493,7 +2101,7 @@ const styles = StyleSheet.create({
 
   uploadTitle: {
     fontSize: 14,
-    color: '#333',
+    color: '#111827',
     marginLeft: 8,
     fontWeight: '500',
   },
@@ -1506,7 +2114,7 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: '#FFE5E5',
+    backgroundColor: '#2A1010',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1519,17 +2127,17 @@ const styles = StyleSheet.create({
 
   uploadBtn: {
     flex: 1,
-    backgroundColor: '#FFF',
+    backgroundColor: '#FFFFFF',
     padding: 15,
     borderRadius: 10,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#F4C20D',
+    borderColor: '#fccf1e',
   },
 
   uploadBtnText: {
     fontSize: 14,
-    color: '#333',
+    color: '#111827',
     marginTop: 5,
     fontWeight: '500',
   },
@@ -1537,7 +2145,7 @@ const styles = StyleSheet.create({
   previewWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF',
+    backgroundColor: '#FFFFFF',
     borderRadius: 10,
     padding: 10,
   },
@@ -1553,7 +2161,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0F0F0',
+    backgroundColor: '#F8F9FA',
     padding: 8,
     borderRadius: 8,
   },
@@ -1561,7 +2169,7 @@ const styles = StyleSheet.create({
   previewFileName: {
     flex: 1,
     fontSize: 12,
-    color: '#666',
+    color: '#6B7280',
     marginLeft: 6,
   },
 
@@ -1571,7 +2179,7 @@ const styles = StyleSheet.create({
 
   label: {
     fontSize: 14,
-    color: '#333',
+    color: '#111827',
     marginBottom: 12,
     fontWeight: '600',
   },
@@ -1583,23 +2191,24 @@ const styles = StyleSheet.create({
   },
 
   typeChip: {
+    width: '48%',
     paddingHorizontal: 20,
     paddingVertical: 10,
     backgroundColor: '#F8F9FA',
     borderRadius: 25,
     borderWidth: 1,
-    borderColor: '#E8E8E8',
-    alignItems:'center'
+    borderColor: '#E5E7EB',
+    alignItems: 'center',
   },
 
   typeChipActive: {
-    backgroundColor: '#F4C20D',
-    borderColor: '#F4C20D',
+    backgroundColor: '#fccf1e',
+    borderColor: '#fccf1e',
   },
 
   typeChipText: {
     fontSize: 14,
-    color: '#666',
+    color: '#6B7280',
     fontWeight: '500',
   },
 
@@ -1614,20 +2223,20 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 15,
     padding: 10,
-    backgroundColor: '#FFF9E6',
+    backgroundColor: '#FFF7D6',
     borderRadius: 8,
   },
 
   loadingText: {
     fontSize: 14,
-    color: '#F4C20D',
+    color: '#fccf1e',
     marginLeft: 8,
   },
 
   infoBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF9E6',
+    backgroundColor: '#FFF7D6',
     padding: 12,
     borderRadius: 8,
     marginTop: 10,
@@ -1636,16 +2245,16 @@ const styles = StyleSheet.create({
   infoText: {
     flex: 1,
     fontSize: 12,
-    color: '#666',
+    color: '#6B7280',
     marginLeft: 8,
   },
 
   footer: {
     flexDirection: 'row',
     padding: 20,
-    backgroundColor: '#FFF',
+    backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
-    borderTopColor: '#F0F0F0',
+    borderTopColor: '#E5E7EB',
     gap: 12,
   },
 
@@ -1665,13 +2274,13 @@ const styles = StyleSheet.create({
   },
 
   primaryBtn: {
-    backgroundColor: '#F4C20D',
+    backgroundColor: '#fccf1e',
   },
 
   secondaryBtn: {
     backgroundColor: '#F8F9FA',
     borderWidth: 1,
-    borderColor: '#E0E0E0',
+    borderColor: '#E5E7EB',
   },
 
   submitBtn: {
@@ -1682,13 +2291,13 @@ const styles = StyleSheet.create({
   primaryBtnText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#000',
+    color: '#111827',
   },
 
   secondaryBtnText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#666',
+    color: '#6B7280',
   },
 
   globalLoader: {
@@ -1706,23 +2315,23 @@ const styles = StyleSheet.create({
   loaderText: {
     marginTop: 10,
     fontSize: 16,
-    color: '#333',
+    color: '#111827',
     fontWeight: '500',
   },
 
   // Custom Alert Styles
   customAlert: {
     flexDirection: 'row',
-    backgroundColor: '#FFF9E6',
+    backgroundColor: '#FFF7D6',
     padding: 16,
     borderRadius: 12,
     marginBottom: 20,
     borderWidth: 1,
-    borderColor: '#F4C20D',
+    borderColor: '#fccf1e',
   },
 
   customAlertSuccess: {
-    backgroundColor: '#E8F5E9',
+    backgroundColor: '#0E2A1A',
     borderColor: '#4CAF50',
   },
 
@@ -1734,32 +2343,32 @@ const styles = StyleSheet.create({
   customAlertTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+    color: '#111827',
     marginBottom: 4,
   },
 
   customAlertMessage: {
     fontSize: 12,
-    color: '#666',
+    color: '#6B7280',
   },
 
   loadingContainerFull: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
   },
 
   loadingTextFull: {
     marginTop: 15,
     fontSize: 16,
-    color: '#666',
+    color: '#6B7280',
     fontWeight: '500',
   },
 
   reviewContainer: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     padding: 30,
     justifyContent: 'center',
   },
@@ -1778,7 +2387,7 @@ const styles = StyleSheet.create({
     width: 100,
     height: 100,
     borderRadius: 50,
-    backgroundColor: '#FFF9E6',
+    backgroundColor: '#FFF7D6',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 24,
@@ -1788,7 +2397,7 @@ const styles = StyleSheet.create({
     width: 100,
     height: 100,
     borderRadius: 50,
-    backgroundColor: '#FFE5E5',
+    backgroundColor: '#2A1010',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 24,
@@ -1797,14 +2406,14 @@ const styles = StyleSheet.create({
   reviewTitle: {
     fontSize: 24,
     fontWeight: '900',
-    color: '#000',
+    color: '#111827',
     marginBottom: 16,
     textAlign: 'center',
   },
 
   reviewText: {
     fontSize: 15,
-    color: '#666',
+    color: '#6B7280',
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: 30,
@@ -1816,7 +2425,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 20,
     textAlign: 'center',
-    backgroundColor: '#FFE5E5',
+    backgroundColor: '#2A1010',
     padding: 12,
     borderRadius: 8,
     width: '100%',
@@ -1830,14 +2439,14 @@ const styles = StyleSheet.create({
 
   infoPointText: {
     fontSize: 13,
-    color: '#666',
+    color: '#6B7280',
     marginLeft: 8,
     fontWeight: '500',
   },
 
   refreshBtn: {
     width: '100%',
-    backgroundColor: '#F4C20D',
+    backgroundColor: '#fccf1e',
     paddingVertical: 18,
     borderRadius: 14,
     alignItems: 'center',
@@ -1853,7 +2462,7 @@ const styles = StyleSheet.create({
 
   reSubmitBtn: {
     width: '100%',
-    backgroundColor: '#000',
+    backgroundColor: '#FFFFFF',
     paddingVertical: 18,
     borderRadius: 14,
     alignItems: 'center',
@@ -1865,6 +2474,89 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#fff',
     letterSpacing: 1,
+  },
+
+  dropdownWrapper: {
+    position: 'relative',
+    zIndex: 10,
+  },
+
+  dropdownList: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    marginTop: -10,
+    marginBottom: 15,
+    maxHeight: '100%',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+  },
+
+  dropdownItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 15,
+  },
+
+  dropdownText: {
+    fontSize: 14,
+    color: '#111827',
+    fontWeight: '500',
+  },
+  comingSoonContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 30,
+  },
+
+  comingSoonIconBox: {
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    backgroundColor: '#FFF7D6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+
+  comingSoonTitle: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#111827',
+    marginBottom: 12,
+  },
+
+  comingSoonText: {
+    fontSize: 16,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+
+  comingSoonSubText: {
+    fontSize: 14,
+    color: '#888',
+    textAlign: 'center',
+    marginTop: 10,
+    marginBottom: 30,
+  },
+
+  comingSoonBtn: {
+    backgroundColor: '#fccf1e',
+    paddingVertical: 16,
+    paddingHorizontal: 34,
+    borderRadius: 14,
+  },
+
+  comingSoonBtnText: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#000',
   },
 });
 

@@ -1,168 +1,222 @@
 import notifee, {
-  AndroidImportance,
-  AndroidColor,
   AndroidCategory,
   AndroidForegroundServiceType,
+  AndroidImportance,
+  AndroidStyle,
+  AuthorizationStatus,
 } from '@notifee/react-native';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
+import { BRAND_YELLOW } from '../theme';
 
-const CHANNEL_ID = 'godelivo_driver_foreground';
-const NOTIFICATION_ID = 'godelivo_foreground_notif';
+const CHANNEL_ID = 'godelivo_partner_online';
+const NOTIFICATION_ID = 'godelivo_partner_foreground_service';
+const APP_NAME = 'GoDelivo Partner';
+const ONLINE_TITLE = 'GoDelivo Partner';
+const ONLINE_BODY = 'You are online and ready to receive orders';
+const OFFLINE_BODY = 'You are offline and go online for orders';
+const TRIP_TITLE = 'GoDelivo Partner - Trip in progress';
+const NOTIFICATION_SMALL_ICON = 'ic_notif_driver';
+const NOTIFICATION_LARGE_ICON = require('../assets/godelivo_notification_logo.png');
 
 let isServiceRunning = false;
+let currentMode = 'offline';
+let currentTripInfo = null;
+let appStateSubscription = null;
 
-/**
- * Creates a dedicated notification channel with yellow/gold GoDelivo theme.
- */
+export const requestForegroundNotificationPermission = async () => {
+  if (Platform.OS !== 'android') {
+    return true;
+  }
+
+  const settings = await notifee.requestPermission();
+  return (
+    settings.authorizationStatus === AuthorizationStatus.AUTHORIZED ||
+    settings.authorizationStatus === AuthorizationStatus.PROVISIONAL
+  );
+};
+
 const ensureChannel = async () => {
-  if (Platform.OS !== 'android') return CHANNEL_ID;
+  if (Platform.OS !== 'android') {
+    return CHANNEL_ID;
+  }
 
-  // Request permissions (critical for Android 13+ to avoid silently suppressed notifications)
-  await notifee.requestPermission();
+  await requestForegroundNotificationPermission();
 
   await notifee.createChannel({
     id: CHANNEL_ID,
-    name: 'GoDelivo Driver Active',
-    description: 'Shows when you are online and receiving ride requests',
-    importance: AndroidImportance.LOW, // LOW = no sound, stays persistent
-    lights: true,
-    lightColor: AndroidColor.DEFAULT,
+    name: 'Online Status',
+    description: 'Persistent status shown while you are online',
+    importance: AndroidImportance.LOW,
+    lights: false,
     vibration: false,
+    sound: undefined,
   });
 
   return CHANNEL_ID;
 };
 
-/**
- * Start the foreground service with a yellow-themed persistent notification.
- * @param {'online' | 'on_trip'} mode
- * @param {object} [tripInfo] - optional trip details { orderId, pickup, drop }
- */
-export const startService = async (mode = 'online', tripInfo = null) => {
-  try {
-    const channelId = await ensureChannel();
+const getForegroundServiceTypes = () => [
+  AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_LOCATION,
+];
 
-    let title = '🟡 GoDelivo — You are Online';
-    let body = 'Waiting for ride requests…';
+const buildBody = (mode, tripInfo) => {
+  if (mode === 'offline') {
+    return OFFLINE_BODY;
+  }
 
-    if (mode === 'on_trip' && tripInfo) {
-      title = '🚗 GoDelivo — Trip in Progress';
-      body = `Order #${String(tripInfo.orderId || '')
-        .slice(-6)
-        .toUpperCase()}`;
-      if (tripInfo.pickup) {
-        body += `\n📍 ${tripInfo.pickup}`;
-      }
-      if (tripInfo.drop) {
-        body += `\n🏁 ${tripInfo.drop}`;
-      }
-    }
+  if (mode !== 'on_trip') {
+    return ONLINE_BODY;
+  }
 
-    await notifee.displayNotification({
-      id: NOTIFICATION_ID,
-      title,
-      body,
-      android: {
-        channelId,
-        asForegroundService: true,
-        foregroundServiceTypes: [
-          AndroidForegroundServiceType.LOCATION,
-          AndroidForegroundServiceType.DATA_SYNC,
-        ],
-        color: '#FFD700', // Yellow/Gold accent
-        colorized: true, // Fills the notification background tint
-        smallIcon: 'ic_notif_driver', // Our custom drawable
-        ongoing: true, // Cannot be swiped away
-        pressAction: { id: 'default' }, // Tapping opens the app
-        category: AndroidCategory.SERVICE,
-        timestamp: Date.now(),
-        showTimestamp: true,
-        style: {
-          type: 0, // BigTextStyle
-          text: body,
-        },
-        actions:
-          mode === 'online'
-            ? [
-              {
-                title: '🔴 Go Offline',
-                pressAction: { id: 'go_offline' },
-              },
-            ]
-            : [
-              {
-                title: '📞 Call Customer',
-                pressAction: { id: 'call_customer' },
-              },
-              {
-                title: '📍 Navigate',
-                pressAction: { id: 'navigate' },
-              },
-            ],
-      },
-    });
+  const orderId = String(tripInfo?.orderId || '').slice(-6).toUpperCase();
+  const lines = ['You are online and completing an order'];
 
-    isServiceRunning = true;
-      } catch (error) {
-      }
+  if (orderId) {
+    lines.push(`Order #${orderId}`);
+  }
+
+  if (tripInfo?.pickup) {
+    lines.push(`Pickup: ${tripInfo.pickup}`);
+  }
+
+  if (tripInfo?.drop) {
+    lines.push(`Drop: ${tripInfo.drop}`);
+  }
+
+  return lines.join('\n');
 };
 
-/**
- * Update the notification content without restarting the service.
- * Useful for changing from "online" → "on_trip" or updating trip stage.
- * @param {'online' | 'on_trip'} mode
- * @param {object} [tripInfo]
- */
-export const updateService = async (mode = 'online', tripInfo = null) => {
-  if (!isServiceRunning) {
-    return startService(mode, tripInfo);
+const buildNotification = async (mode = 'online', tripInfo = null) => {
+  const channelId = await ensureChannel();
+  const isTrip = mode === 'on_trip';
+  const body = buildBody(mode, tripInfo);
+
+  return {
+    id: NOTIFICATION_ID,
+    title: isTrip ? TRIP_TITLE : ONLINE_TITLE,
+    subtitle: APP_NAME,
+    body,
+    android: {
+      channelId,
+      asForegroundService: true,
+      foregroundServiceTypes: getForegroundServiceTypes(),
+      smallIcon: NOTIFICATION_SMALL_ICON,
+      largeIcon: NOTIFICATION_LARGE_ICON,
+      color: BRAND_YELLOW,
+      colorized: false,
+      ongoing: true,
+      autoCancel: false,
+      onlyAlertOnce: true,
+      showTimestamp: true,
+      timestamp: Date.now(),
+      category: AndroidCategory.SERVICE,
+      pressAction: {
+        id: 'default',
+      },
+      style: {
+        type: AndroidStyle.BIGTEXT,
+        text: body,
+      },
+    },
+  };
+};
+
+const displayForegroundNotification = async (mode = 'online', tripInfo = null) => {
+  if (Platform.OS !== 'android') {
+    return;
   }
-  // Displaying a notification with the same ID updates it in-place
+
+  const notification = await buildNotification(mode, tripInfo);
+  await notifee.displayNotification(notification);
+};
+
+const ensureAppStateListener = () => {
+  if (appStateSubscription || Platform.OS !== 'android') {
+    return;
+  }
+
+  appStateSubscription = AppState.addEventListener('change', nextState => {
+    if (nextState === 'active' && isServiceRunning) {
+      displayForegroundNotification(currentMode, currentTripInfo).catch(
+        error => {
+          console.log('Foreground notification refresh error:', error);
+        },
+      );
+    }
+  });
+};
+
+export const startService = async (mode = 'online', tripInfo = null) => {
+  if (Platform.OS !== 'android') {
+    return;
+  }
+
+  currentMode = mode;
+  currentTripInfo = tripInfo;
+
+  await displayForegroundNotification(mode, tripInfo);
+  isServiceRunning = true;
+  ensureAppStateListener();
+};
+
+export const updateService = async (mode = 'online', tripInfo = null) => {
   return startService(mode, tripInfo);
 };
 
-/**
- * Update only the body text of the notification (lightweight update).
- */
 export const updateServiceBody = async body => {
-  if (!isServiceRunning) return;
+  if (!isServiceRunning || Platform.OS !== 'android') {
+    return;
+  }
 
-  try {
-    await notifee.displayNotification({
-      id: NOTIFICATION_ID,
-      title: '🚗 GoDelivo — Trip in Progress',
-      body,
-      android: {
-        channelId: CHANNEL_ID,
-        asForegroundService: true,
-        foregroundServiceTypes: [
-          AndroidForegroundServiceType.LOCATION,
-          AndroidForegroundServiceType.DATA_SYNC,
-        ],
-        color: '#FFD700',
-        colorized: true,
-        smallIcon: 'ic_notif_driver',
-        ongoing: true,
-        pressAction: { id: 'default' },
+  const channelId = await ensureChannel();
+
+  await notifee.displayNotification({
+    id: NOTIFICATION_ID,
+    title: TRIP_TITLE,
+    subtitle: APP_NAME,
+    body,
+    android: {
+      channelId,
+      asForegroundService: true,
+      foregroundServiceTypes: getForegroundServiceTypes(),
+      smallIcon: NOTIFICATION_SMALL_ICON,
+      largeIcon: NOTIFICATION_LARGE_ICON,
+      color: BRAND_YELLOW,
+      ongoing: true,
+      autoCancel: false,
+      onlyAlertOnce: true,
+      category: AndroidCategory.SERVICE,
+      pressAction: {
+        id: 'default',
       },
-    });
-  } catch (error) {
-      }
+      style: {
+        type: AndroidStyle.BIGTEXT,
+        text: body,
+      },
+    },
+  });
 };
 
-/**
- * Stop the foreground service and cancel the notification.
- */
 export const stopService = async () => {
+  if (Platform.OS !== 'android') {
+    return;
+  }
+
+  currentMode = 'offline';
+  currentTripInfo = null;
+
   try {
-    await notifee.stopForegroundService();
-    await notifee.cancelNotification(NOTIFICATION_ID);
-    isServiceRunning = false;
-      } catch (error) {
-      }
+    await displayForegroundNotification('offline');
+    isServiceRunning = true;
+    ensureAppStateListener();
+  } catch (error) {
+    console.log('Foreground offline notification error:', error);
+  }
 };
 
-/**
- * Check if the foreground service is currently running.
- */
 export const isRunning = () => isServiceRunning;
+
+export const getForegroundNotificationIds = () => ({
+  channelId: CHANNEL_ID,
+  notificationId: NOTIFICATION_ID,
+});

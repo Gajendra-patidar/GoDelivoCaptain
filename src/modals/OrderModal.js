@@ -58,23 +58,34 @@ export const OrderModal = ({
   }, [visible, progressAnim]);
 
   const resetAndClose = () => {
+    stopOrderSound();
     setTimeLeft(5);
     setIsExpired(false);
     onClose();
   };
 
   const handleAccept = () => {
-    onAccept?.(orderData);
-
-    // resetAndClose();
     stopOrderSound();
+    onAccept?.(orderData);
   };
 
   const handleReject = () => {
+    stopOrderSound();
     onReject?.(orderData);
     resetAndClose();
-    stopOrderSound();
   };
+
+  useEffect(() => {
+    if (visible && isExpired) {
+      stopOrderSound();
+    }
+  }, [visible, isExpired]);
+
+  useEffect(() => {
+    if (!visible) {
+      stopOrderSound();
+    }
+  }, [visible]);
 
   // ── Address resolver: handles both nested API shape and legacy flat shape ──
   const pickupAddress =
@@ -221,7 +232,7 @@ export const OrderModal = ({
                   activeOpacity={0.8}
                 >
                   <LinearGradient
-                    colors={['#FFD700', '#F4C20D']}
+                    colors={['#fccf1e', '#fccf1e']}
                     style={styles.acceptBtnGradient}
                   >
                     <Text style={styles.acceptBtnText}>ACCEPT ORDER</Text>
@@ -251,7 +262,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.7)',
   },
   cardContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderTopLeftRadius: moderateScale(28),
     borderTopRightRadius: moderateScale(28),
     overflow: 'hidden',
@@ -312,7 +323,7 @@ const styles = StyleSheet.create({
   },
   progressBarWrap: {
     height: 4,
-    backgroundColor: '#eee',
+    backgroundColor: '#E5E7EB',
     width: '100%',
   },
   progressBar: {
@@ -338,7 +349,7 @@ const styles = StyleSheet.create({
   line: {
     width: 2,
     flex: 1,
-    backgroundColor: '#eee',
+    backgroundColor: '#E5E7EB',
     marginVertical: 4,
   },
   addressCol: {
@@ -362,7 +373,7 @@ const styles = StyleSheet.create({
   },
   infoRow: {
     flexDirection: 'row',
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#FFFFFF',
     borderRadius: theme.radii.lg,
     padding: moderateScale(15),
     marginBottom: moderateScale(24),
@@ -394,7 +405,7 @@ const styles = StyleSheet.create({
   acceptBtnText: {
     fontSize: moderateScale(18),
     fontWeight: '900',
-    color: '#000',
+    color: '#111827',
     marginRight: 12,
     letterSpacing: 1,
   },
@@ -417,7 +428,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#F8F9FA',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: moderateScale(20),
@@ -437,7 +448,7 @@ const styles = StyleSheet.create({
   dismissBtn: {
     width: '100%',
     paddingVertical: moderateScale(16),
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#F8F9FA',
     borderRadius: theme.radii.md,
     alignItems: 'center',
   },

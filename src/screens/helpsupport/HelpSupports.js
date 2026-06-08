@@ -27,7 +27,7 @@ const HelpSupports = ({navigation}) => {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFD700" />
+      <StatusBar barStyle="dark-content" backgroundColor="#fccf1e" />
       
       {/* Header */}
       <View style={styles.header}>
@@ -47,7 +47,7 @@ const HelpSupports = ({navigation}) => {
         {/* Yellow Theme Hero Section */}
         <View style={styles.heroSection}>
           <View style={styles.heroIconContainer}>
-            <MaterialIcons name="support-agent" size={50} color="#000" />
+            <MaterialIcons name="support-agent" size={50} color="#fccf1e" />
           </View>
           <Text style={styles.heroTitle}>{t('how can we help?')}</Text>
           <Text style={styles.heroSubtitle}>
@@ -56,7 +56,7 @@ const HelpSupports = ({navigation}) => {
           
           {/* Search Bar */}
           {/* <View style={styles.searchContainer}>
-            <Ionicons name="search-outline" size={20} color="#666" />
+            <Ionicons name="search-outline" size={20} color="#6B7280" />
             <TextInput
               style={styles.searchInput}
               placeholder="Search help topics..."
@@ -73,11 +73,11 @@ const HelpSupports = ({navigation}) => {
             <TouchableOpacity key={topic.id} style={styles.topicItem} onPress={() => navigation.navigate('HelpDetail', { topicId: topic.screen, topicTitle: topic.title })}>
               <View style={styles.topicLeft}>
                 <View style={styles.topicIconContainer}>
-                  <Ionicons name={topic.icon} size={22} color="#000" />
+                  <Ionicons name={topic.icon} size={22} color="#fccf1e" />
                 </View>
                 <Text style={styles.topicText}>{t(topic.title)}</Text>
               </View>
-              <Ionicons name="chevron-forward" size={20} color="#666" />
+              <Ionicons name="chevron-forward" size={20} color="#6B7280" />
             </TouchableOpacity>
           ))}
         </View>
@@ -85,21 +85,21 @@ const HelpSupports = ({navigation}) => {
         
         {/* <View style={styles.quickActions}>
           <TouchableOpacity style={styles.quickActionItem}>
-            <View style={[styles.quickIconContainer, { backgroundColor: '#FFF3CD' }]}>
+            <View style={[styles.quickIconContainer, { backgroundColor: '#FFF7D6' }]}>
               <Ionicons name="chatbubble-outline" size={24} color="#000" />
             </View>
             <Text style={styles.quickActionText}>Live Chat</Text>
           </TouchableOpacity>
           
           <TouchableOpacity style={styles.quickActionItem}>
-            <View style={[styles.quickIconContainer, { backgroundColor: '#FFF3CD' }]}>
+            <View style={[styles.quickIconContainer, { backgroundColor: '#FFF7D6' }]}>
               <Ionicons name="call-outline" size={24} color="#000" />
             </View>
             <Text style={styles.quickActionText}>Call Us</Text>
           </TouchableOpacity>
           
           <TouchableOpacity style={styles.quickActionItem}>
-            <View style={[styles.quickIconContainer, { backgroundColor: '#FFF3CD' }]}>
+            <View style={[styles.quickIconContainer, { backgroundColor: '#FFF7D6' }]}>
               <Ionicons name="mail-outline" size={24} color="#000" />
             </View>
             <Text style={styles.quickActionText}>Email</Text>
@@ -121,7 +121,7 @@ const HelpSupports = ({navigation}) => {
                 <Text style={styles.faqQuestion}>{faq.question}</Text>
                 <Text style={styles.faqAnswer}>{faq.answer}</Text>
               </View>
-              <Ionicons name="chevron-down" size={20} color="#666" />
+              <Ionicons name="chevron-down" size={20} color="#6B7280" />
             </TouchableOpacity>
           ))}
         </View>
@@ -155,7 +155,7 @@ const HelpSupports = ({navigation}) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
   },
   header: {
     flexDirection: 'row',
@@ -163,9 +163,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFD700',
+    backgroundColor: '#fccf1e',
     borderBottomWidth: 1,
-    borderBottomColor: '#FFC107',
+    borderBottomColor: '#F7D94C',
   },
   backButton: {
     padding: 4,
@@ -176,7 +176,7 @@ const styles = StyleSheet.create({
     color: '#000',
   },
   notificationButton: {
-    backgroundColor:'#fff',
+    backgroundColor:'#FFFFFF',
     borderRadius:'50%',
     padding: 6,
   },
@@ -184,7 +184,7 @@ const styles = StyleSheet.create({
     paddingBottom: 30,
   },
   heroSection: {
-    backgroundColor: '#FFD700',
+    backgroundColor: '#fccf1e',
     padding: 24,
     paddingBottom: 40,
     borderBottomLeftRadius: 30,
@@ -195,7 +195,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: '#FFF3CD',
+    backgroundColor: '#FFF7D6',
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
@@ -209,7 +209,7 @@ const styles = StyleSheet.create({
   },
   heroSubtitle: {
     fontSize: 14,
-    color: '#333',
+    color: '#000',
     textAlign: 'center',
     marginBottom: 20,
     paddingHorizontal: 20,
@@ -217,7 +217,7 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 8,
@@ -232,12 +232,12 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 8,
     fontSize: 14,
-    color: '#000',
+    color: '#111827',
     paddingVertical: 8,
   },
   topicSection: {
     padding: 20,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     marginTop: -20,
     marginHorizontal: 16,
     borderRadius: 20,
@@ -250,7 +250,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#000',
+    color: '#111827',
     marginBottom: 16,
   },
   topicItem: {
@@ -259,7 +259,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: '#E5E7EB',
   },
   topicLeft: {
     flexDirection: 'row',
@@ -269,14 +269,14 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#FFF3CD',
+    backgroundColor: '#FFF7D6',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
   topicText: {
     fontSize: 15,
-    color: '#000',
+    color: '#111827',
     fontWeight: '500',
   },
   quickActions: {
@@ -285,7 +285,7 @@ const styles = StyleSheet.create({
     padding: 20,
     marginHorizontal: 16,
     marginTop: 16,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -306,14 +306,14 @@ const styles = StyleSheet.create({
   },
   quickActionText: {
     fontSize: 12,
-    color: '#333',
+    color: '#111827',
     fontWeight: '500',
   },
   faqSection: {
     padding: 20,
     marginHorizontal: 16,
     marginTop: 16,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -328,7 +328,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   viewAllText: {
-    color: '#000',
+    color: '#111827',
     fontSize: 14,
     fontWeight: '600',
     textDecorationLine: 'underline',
@@ -339,7 +339,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: '#E5E7EB',
   },
   faqLeft: {
     flex: 1,
@@ -348,30 +348,30 @@ const styles = StyleSheet.create({
   faqQuestion: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#000',
+    color: '#111827',
     marginBottom: 4,
   },
   faqAnswer: {
     fontSize: 12,
-    color: '#666',
+    color: '#6B7280',
   },
   contactSection: {
     padding: 20,
     marginHorizontal: 16,
     marginTop: 16,
-    backgroundColor: '#FFF3CD',
+    backgroundColor: '#FFF7D6',
     borderRadius: 20,
     alignItems: 'center',
   },
   contactTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#000',
+    color: '#111827',
     marginBottom: 4,
   },
   contactSubtitle: {
     fontSize: 14,
-    color: '#666',
+    color: '#6B7280',
     marginBottom: 16,
   },
   contactOptions: {
@@ -382,17 +382,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#FFD700',
+    borderBottomColor: '#fccf1e',
   },
   contactText: {
     fontSize: 14,
-    color: '#333',
+    color: '#111827',
     marginLeft: 12,
   },
   versionText: {
     textAlign: 'center',
     fontSize: 12,
-    color: '#999',
+    color: '#8A8A8A',
     marginTop: 20,
   },
 });

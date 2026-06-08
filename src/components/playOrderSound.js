@@ -4,34 +4,39 @@ Sound.setCategory('Playback');
 
 let soundRef = null;
 
-// ▶️ PLAY SOUND
 export const playOrderSound = () => {
-  // agar already play ho raha hai to dubara mat chalao
   if (soundRef) {
-        return;
+    return;
   }
 
-  soundRef = new Sound('order_sound.mp3', Sound.MAIN_BUNDLE, (error) => {
+  soundRef = new Sound('order_sound.mp3', Sound.MAIN_BUNDLE, error => {
     if (error) {
-            return;
+      soundRef = null;
+      return;
     }
 
-    soundRef.setNumberOfLoops(-1); // 🔁 infinite loop
+    if (!soundRef) {
+      return;
+    }
 
-    soundRef.play((success) => {
+    soundRef.setNumberOfLoops(-1);
+    soundRef.play(success => {
       if (!success) {
-              }
+        stopOrderSound();
+      }
     });
   });
 };
 
-// ⏹ STOP SOUND
 export const stopOrderSound = () => {
-  if (soundRef) {
-    soundRef.stop(() => {
-      soundRef.release();
-      soundRef = null;
-          });
-  } else {
-      }
+  if (!soundRef) {
+    return;
+  }
+
+  const currentSound = soundRef;
+  soundRef = null;
+
+  currentSound.stop(() => {
+    currentSound.release();
+  });
 };

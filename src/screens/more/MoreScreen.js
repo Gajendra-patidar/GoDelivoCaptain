@@ -70,7 +70,7 @@ const MoreScreen = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFD700" />
+      <StatusBar barStyle="dark-content" backgroundColor="#fccf1e" />
 
       <View style={styles.header}>
         <Text style={styles.headerTitle}>{t('more')}</Text>
@@ -110,7 +110,7 @@ const MoreScreen = ({ navigation }) => {
                     <Text style={styles.badgeText}>{item.badge}</Text>
                   </View>
                 ) : null}
-                <Ionicons name="chevron-forward" size={20} color="#666" />
+                <Ionicons name="chevron-forward" size={20} color="#6B7280" />
               </View>
             </TouchableOpacity>
           ))}
@@ -125,7 +125,7 @@ export default MoreScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#FFFFFF',
   },
   header: {
     flexDirection: 'row',
@@ -133,9 +133,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
     paddingVertical: 15,
-    backgroundColor: '#FFD700',
+    backgroundColor: '#fccf1e',
     borderBottomWidth: 1,
-    borderBottomColor: '#FFC107',
+    borderBottomColor: '#F7D94C',
   },
   headerTitle: {
     fontSize: 24,
@@ -149,7 +149,7 @@ const styles = StyleSheet.create({
     paddingBottom: 30,
   },
   menuContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
     marginTop: 16,
     padding: 16,
@@ -158,7 +158,7 @@ const styles = StyleSheet.create({
   menuTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#666',
+    color: '#6B7280',
     marginBottom: 12,
   },
   menuItem: {
@@ -167,7 +167,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: '#E5E7EB',
   },
   menuLeft: {
     flexDirection: 'row',
@@ -184,7 +184,7 @@ const styles = StyleSheet.create({
   },
   menuText: {
     fontSize: 15,
-    color: '#000',
+    color: '#111827',
     fontWeight: '500',
   },
   menuRight: {
@@ -192,7 +192,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   badge: {
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#F8F9FA',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 12,
@@ -200,7 +200,7 @@ const styles = StyleSheet.create({
   },
   badgeText: {
     fontSize: 11,
-    color: '#4B5563',
+    color: '#6B7280',
     fontWeight: '600',
   },
 });

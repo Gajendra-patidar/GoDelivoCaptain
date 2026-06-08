@@ -5,12 +5,9 @@ import notifee from '@notifee/react-native';
 import App from './App';
 import { name as appName } from './app.json';
 
-// ✅ Register Notifee foreground service runner (required for asForegroundService)
-notifee.registerForegroundService((notification) => {
+notifee.registerForegroundService(notification => {
   return new Promise(() => {
-    // This promise keeps the service alive.
-    // It will be cancelled when stopForegroundService() is called.
-    console.log('🟡 Foreground service running:', notification.id);
+    console.log('GoDelivo foreground service running:', notification.id);
   });
 });
 
@@ -54,16 +51,12 @@ messaging().setBackgroundMessageHandler(async remoteMessage => {
 
 notifee.onBackgroundEvent(async ({ type, detail }) => {
   if (type === EventType.PRESS) {
-    console.log('Notification pressed in background');
+    console.log('Notification pressed in background:', detail?.notification?.id);
   }
+
   if (type === EventType.ACTION_PRESS) {
     const actionId = detail?.pressAction?.id;
     console.log('Notification action pressed:', actionId);
-    if (actionId === 'go_offline') {
-      // Stop the foreground service when "Go Offline" is pressed
-      const { stopService } = require('./src/services/foregroundService');
-      await stopService();
-    }
   }
 });
 

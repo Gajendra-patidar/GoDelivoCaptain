@@ -10,6 +10,7 @@ import {
   Alert,
   AppState,
   RefreshControl,
+  ImageBackground,
 } from 'react-native';
 import { useDispatch, useSelector } from 'react-redux';
 import { useFocusEffect } from '@react-navigation/native';
@@ -45,14 +46,36 @@ import { theme } from '../../theme';
 import SwipeToggle from '../../components/SwipeToggle';
 import LinearGradient from 'react-native-linear-gradient';
 import {
+  requestForegroundNotificationPermission,
   startService,
   stopService,
   updateService,
 } from '../../services/foregroundService';
-import { playOrderSound } from '../../components/playOrderSound';
+import {
+  playOrderSound,
+  stopOrderSound,
+} from '../../components/playOrderSound';
 import SocketService from '../../services/socketService';
 import { setLocationPermission } from '../../store/slices/permissionSlice';
 import { getLocationPermission } from '../../services/permissionService';
+
+const getTimeGreeting = () => {
+  const hour = new Date().getHours();
+
+  if (hour < 12) {
+    return 'Good Morning';
+  }
+
+  if (hour < 17) {
+    return 'Good Afternoon';
+  }
+
+  return 'Good Evening';
+};
+
+const logComingOrder = (source, order) => {
+  console.log('[COMING_ORDER]', source, order);
+};
 
 const HomeScreen = ({ navigation }) => {
   const { t } = useTranslation();
@@ -70,13 +93,18 @@ const HomeScreen = ({ navigation }) => {
   const [walletBalance, setWalletBalance] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [toggleBusy, setToggleBusy] = useState(false);
+  const [pendingOnlineStatus, setPendingOnlineStatus] = useState(null);
   const [locationServiceHealthy, setLocationServiceHealthy] = useState(true);
+  const [homeAreaActive, setHomeAreaActive] = useState(false);
+  const [preferredArea, setPreferredArea] = useState(null);
+  const [, setShowAreaModal] = useState(false);
 
   const pollRef = useRef(null);
   const appState = useRef(AppState.currentState);
-  const LOW_BALANCE_THRESHOLD = 100;
-  const isBalanceLow = Number(walletBalance || 0) < LOW_BALANCE_THRESHOLD;
+  const DUE_AMOUNT_THRESHOLD = -50;
+  const hasDueAmount = Number(walletBalance || 0) < DUE_AMOUNT_THRESHOLD;
   const displayName = profile?.name || 'Captain';
+  const timeGreeting = getTimeGreeting();
 
   useEffect(() => {
     const initPermission = async () => {
@@ -85,7 +113,7 @@ const HomeScreen = ({ navigation }) => {
     };
 
     initPermission();
-  }, []);
+  }, [dispatch]);
 
   useEffect(() => {
     dispatch(getProfile());
@@ -148,7 +176,7 @@ const HomeScreen = ({ navigation }) => {
       }
 
       if (order != null) {
-        console.log("nearbyorder data", order);
+        logComingOrder('nearby-orders-api', order);
 
         setNotificationData(order);
         setOrderComing(true);
@@ -243,7 +271,7 @@ const HomeScreen = ({ navigation }) => {
 
       if (data.type === 'NEW_ORDER' || data.type === 'ORDER') {
         setOrderComing(true);
-        console.log("nearbyorder data 2", data);
+        logComingOrder('notification-press', data);
 
         setNotificationData(data);
         return;
@@ -279,6 +307,7 @@ const HomeScreen = ({ navigation }) => {
     }
 
     if (data.type === 'NEW_ORDER' || data.type === 'ORDER') {
+      logComingOrder('notification-message', data);
       setOrderComing(true);
       playOrderSound();
       setNotificationData(data);
@@ -294,7 +323,7 @@ const HomeScreen = ({ navigation }) => {
         const activeOrder = await getActiveOrder();
         if (!activeOrder) {
           setNotificationData(rideData);
-          console.log("initialize socket data", rideData);
+          logComingOrder('socket-new-ride', rideData);
 
           setOrderComing(true);
           playOrderSound();
@@ -308,7 +337,7 @@ const HomeScreen = ({ navigation }) => {
         const activeOrder = await getActiveOrder();
         if (!activeOrder) {
           setNotificationData(rideData);
-          console.log("initialize socket data 2", rideData);
+          logComingOrder('socket-new-request', rideData);
 
           setOrderComing(true);
           playOrderSound();
@@ -322,7 +351,7 @@ const HomeScreen = ({ navigation }) => {
     SocketService.on('customer_message', data => {
       // Handle customer message
     });
-  }, [isOnline, orderComing, notificationData]);
+  }, [isOnline, orderComing]);
 
   const initializeNotifications = useCallback(async () => {
     try {
@@ -442,46 +471,58 @@ const HomeScreen = ({ navigation }) => {
     };
   }, [checkNearbyOrders, isOnline]);
 
-  const handleToggleOnline = async (targetState) => {
+  const handleToggleOnline = async targetState => {
     // If targetState is provided, validate it's different from current state
     // If not provided, toggle to opposite of current state
     const nextStatus = targetState !== undefined ? targetState : !isOnline;
 
     // Prevent duplicate calls to the same state
     if (nextStatus === isOnline) {
-      return;
+      return false;
     }
 
     if (toggleBusy) {
-      return;
+      return false;
+    }
+
+    if (!nextStatus) {
+      const activeOrder = await getActiveOrder();
+      if (activeOrder) {
+        Alert.alert(
+          'Order in Progress',
+          'You cannot go offline while an order is active. Please complete or cancel the current order.',
+          [{ text: 'OK' }],
+        );
+        return false;
+      }
     }
 
     setToggleBusy(true);
+    setPendingOnlineStatus(nextStatus);
     let locationServiceStarted = false;
     let foregroundServiceStarted = false;
 
     try {
       if (nextStatus) {
         // ========== GOING ONLINE ==========
+        const notificationAllowed =
+          await requestForegroundNotificationPermission();
+
+        if (!notificationAllowed) {
+          throw new Error('notification permission denied');
+        }
 
         // Start location tracking
         try {
           await LocationService.start();
           locationServiceStarted = true;
-          // 
-          // Wait for location service to initialize (max 5 seconds)
-          let retries = 0;
-          while (retries < 10) {
-            const status = LocationService.getConnectionStatus();
-            if (status.hasLocation) {
-              break;
-            }
-            await new Promise(r => setTimeout(r, 500));
-            retries++;
+          const status = LocationService.getConnectionStatus();
+
+          if (!status.hasLocation) {
+            throw new Error('device location is off or unavailable');
           }
 
-          if (retries === 10) {
-          }
+          setLocationServiceHealthy(true);
         } catch (locationError) {
           console.error('Location service start error:', locationError);
           throw new Error(
@@ -498,7 +539,16 @@ const HomeScreen = ({ navigation }) => {
           throw new Error('Failed to start foreground service');
         }
 
-        // Update Redux state
+        // Update server status
+        let serverResult;
+        try {
+          serverResult = await driverApi.updateOnlineStatus(true);
+        } catch (serverError) {
+          console.error('Server status update error:', serverError);
+          throw new Error('Failed to update server status');
+        }
+
+        // Update Redux state only after the server accepts the online request
         try {
           dispatch(setOnline());
         } catch (reduxError) {
@@ -510,15 +560,6 @@ const HomeScreen = ({ navigation }) => {
           SocketService.emitStatusChange(true, true);
         } catch (socketError) {
           console.error('Socket status emit error:', socketError);
-        }
-
-        // Update server status
-        let serverResult;
-        try {
-          serverResult = await driverApi.updateOnlineStatus(true);
-        } catch (serverError) {
-          console.error('Server status update error:', serverError);
-          throw new Error('Failed to update server status');
         }
 
         // Update notification service
@@ -534,22 +575,18 @@ const HomeScreen = ({ navigation }) => {
         // Check for nearby orders
         if (serverResult?.nearbyOrder) {
           setNotificationData(serverResult?.nearbyOrder);
-          console.log("log log data", serverResult?.nearbyOrder);
+          logComingOrder('online-status-response', serverResult?.nearbyOrder);
 
           setOrderComing(true);
         }
       } else {
         // ========== GOING OFFLINE ==========
-        // Check if there's an active order
-        const activeOrder = await getActiveOrder();
-        if (activeOrder) {
-          setToggleBusy(false);
-          Alert.alert(
-            'Order in Progress',
-            'You cannot go offline while an order is active. Please complete or cancel the current order.',
-            [{ text: 'OK' }],
-          );
-          return;
+        // Update server status before changing the local visible state
+        try {
+          await driverApi.updateOnlineStatus(false);
+        } catch (serverError) {
+          console.error('Server status update error:', serverError);
+          throw new Error('Failed to update server status to offline');
         }
 
         // Stop location tracking
@@ -580,14 +617,6 @@ const HomeScreen = ({ navigation }) => {
           console.error('Socket offline emit error:', socketError);
         }
 
-        // Update server status
-        try {
-          await driverApi.updateOnlineStatus(false);
-        } catch (serverError) {
-          console.error('Server status update error:', serverError);
-          throw new Error('Failed to update server status to offline');
-        }
-
         // Update notification service
         try {
           await NotificationService.updateOnlineStatus(false);
@@ -611,18 +640,32 @@ const HomeScreen = ({ navigation }) => {
       }
 
       setStatusModalVisible(true);
+      return true;
     } catch (error) {
       console.error('Toggle online error:', error);
 
       let errorMessage = 'Failed to update status. Please try again.';
-      if (error.message.includes('location')) {
+      const failureReason = String(error?.message || '').toLowerCase();
+
+      if (
+        failureReason.includes('device location') ||
+        failureReason.includes('provider') ||
+        failureReason.includes('location unavailable') ||
+        failureReason.includes('location request timed out')
+      ) {
+        errorMessage =
+          'Please turn on device location/GPS and allow location permission before going online.';
+      } else if (failureReason.includes('location')) {
         errorMessage =
           'Unable to access location. Please check location permissions.';
-      } else if (error.message.includes('server')) {
+      } else if (failureReason.includes('server')) {
         errorMessage = 'Network error. Please check your internet connection.';
-      } else if (error.message.includes('foreground')) {
+      } else if (failureReason.includes('foreground')) {
         errorMessage =
           'Unable to start background service. Please restart the app.';
+      } else if (failureReason.includes('notification permission')) {
+        errorMessage =
+          'Please allow notifications so GoDelivo can show your online status while you receive orders.';
       }
 
       Alert.alert('Status Update Failed', errorMessage, [{ text: 'OK' }]);
@@ -688,8 +731,11 @@ const HomeScreen = ({ navigation }) => {
       } catch (rollbackError) {
         console.error('Critical rollback error:', rollbackError);
       }
+
+      return false;
     } finally {
       setToggleBusy(false);
+      setPendingOnlineStatus(null);
     }
   };
 
@@ -700,7 +746,7 @@ const HomeScreen = ({ navigation }) => {
   const handleOpenDocs = () => navigation.navigate('Docs');
 
   const handleOrderAccept = async order => {
-    // 
+    stopOrderSound();
     try {
       // Step 3.2: Accept via HTTP API
       const accepted = await driverApi.acceptOrder(order?.rideId);
@@ -741,11 +787,14 @@ const HomeScreen = ({ navigation }) => {
       setNotificationData(null);
       navigation.navigate('Map', { order: finalOrder });
     } catch (error) {
+      setOrderComing(false);
+      setNotificationData(null);
       toast.error(driverApi.safeErrorMessage(error));
     }
   };
 
   const handleOrderReject = async order => {
+    stopOrderSound();
     try {
       await driverApi.rejectOrder(order.id);
     } catch { }
@@ -828,13 +877,14 @@ const HomeScreen = ({ navigation }) => {
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }
       >
-        <View style={styles.headerWrap}>
+        <ImageBackground source={require('../../assets/header_2.png')} style={styles.headerWrap}>
           <View style={styles.headerTopRow}>
             <View style={styles.headerLeft}>
               <Text style={styles.brand}>GoDelivo</Text>
-              <Text style={styles.greeting} numberOfLines={1}>
+              <Text style={styles.greeting} numberOfLines={2}>
                 Hello, {displayName}
               </Text>
+              <Text style={{fontSize:16, fontWeight:'500'}} >{timeGreeting}</Text>
             </View>
 
             <View style={styles.headerActions}>
@@ -916,7 +966,7 @@ const HomeScreen = ({ navigation }) => {
               color={theme.colors.muted}
             />
           </TouchableOpacity>
-        </View>
+        </ImageBackground>
 
         {/* Location Service Health Warning */}
         {/* {isOnline && !locationServiceHealthy && (
@@ -924,7 +974,7 @@ const HomeScreen = ({ navigation }) => {
             style={[
               styles.warningBanner,
               {
-                backgroundColor: '#FEE2E2',
+                backgroundColor: '#2A1010',
                 marginHorizontal: 16,
                 marginBottom: 12,
               },
@@ -995,11 +1045,11 @@ const HomeScreen = ({ navigation }) => {
             </View>
           </View>
 
-          {isBalanceLow && (
+          {hasDueAmount && (
             <View style={styles.warningBanner}>
               <Ionicons name="warning" size={18} color="#92400E" />
               <Text style={styles.warningText}>
-                Low balance! Online status might be restricted soon.
+                Pay due otherwise your account blocked.
               </Text>
             </View>
           )}
@@ -1015,6 +1065,8 @@ const HomeScreen = ({ navigation }) => {
             isOnline={isOnline}
             onToggle={handleToggleOnline}
             disabled={toggleBusy}
+            loading={toggleBusy}
+            pendingState={pendingOnlineStatus}
           />
         </View>
 
@@ -1089,7 +1141,7 @@ const HomeScreen = ({ navigation }) => {
             </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.quickCard} onPress={handleOpenDocs}>
+          {/* <TouchableOpacity style={styles.quickCard} onPress={handleOpenDocs}>
             <View style={styles.quickIconWrap}>
               <Ionicons
                 name="document-text-outline"
@@ -1101,9 +1153,9 @@ const HomeScreen = ({ navigation }) => {
             <Text style={styles.quickSub} numberOfLines={1}>
               KYC and vehicle
             </Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
 
-          <TouchableOpacity
+          {/* <TouchableOpacity
             style={styles.quickCard}
             onPress={() => navigation.navigate('Help')}
           >
@@ -1118,7 +1170,7 @@ const HomeScreen = ({ navigation }) => {
             <Text style={styles.quickSub} numberOfLines={1}>
               Help center
             </Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
         </View>
       </ScrollView>
 
@@ -1142,7 +1194,11 @@ const HomeScreen = ({ navigation }) => {
 
       <OrderModal
         visible={orderComing}
-        onClose={() => setOrderComing(false)}
+        onClose={() => {
+          stopOrderSound();
+          setOrderComing(false);
+          setNotificationData(null);
+        }}
         orderData={notificationData}
         onAccept={handleOrderAccept}
         onReject={handleOrderReject}
@@ -1172,7 +1228,7 @@ const styles = StyleSheet.create({
     marginBottom: moderateScale(12),
   },
   goAreaContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     marginHorizontal: moderateScale(18),
     padding: moderateScale(15),
     borderRadius: theme.radii.lg,
@@ -1222,7 +1278,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderTopLeftRadius: 25,
     borderTopRightRadius: 25,
     padding: 24,
@@ -1234,7 +1290,7 @@ const styles = StyleSheet.create({
   },
   modalSub: {
     fontSize: 14,
-    color: '#666',
+    color: '#6B7280',
     marginBottom: 20,
   },
   areaItem: {
@@ -1244,7 +1300,7 @@ const styles = StyleSheet.create({
   },
   areaItemText: {
     fontSize: 16,
-    color: '#333',
+    color: '#111827',
   },
   closeBtn: {
     marginTop: 20,
@@ -1335,7 +1391,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: theme.colors.danger,
     borderWidth: 1.5,
-    borderColor: '#fff',
+    borderColor: '#FFFFFF',
   },
   headerSirenIcon: {
     width: moderateScale(22),
@@ -1422,8 +1478,8 @@ const styles = StyleSheet.create({
     borderRadius: theme.radii.xl,
     padding: moderateScale(18),
     ...theme.shadow.card,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderWidth: 0.5,
+    borderColor: 'black',
   },
   walletBalanceRow: {
     flexDirection: 'row',
@@ -1473,7 +1529,7 @@ const styles = StyleSheet.create({
   warningBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF3C7',
+    backgroundColor: '#FFF7D6',
     padding: moderateScale(12),
     borderRadius: theme.radii.lg,
     marginTop: moderateScale(10),
@@ -1481,7 +1537,7 @@ const styles = StyleSheet.create({
   warningText: {
     fontSize: moderateScale(11),
     fontWeight: '700',
-    color: '#92400E',
+    color: '#fccf1e',
     marginLeft: 8,
     flex: 1,
   },
@@ -1498,8 +1554,8 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.surface,
     borderRadius: theme.radii.lg,
     padding: moderateScale(14),
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderWidth: 0.5,
+    borderColor: 'black',
     marginBottom: moderateScale(12),
     ...theme.shadow.card,
   },
@@ -1719,12 +1775,12 @@ const styles = StyleSheet.create({
   offerTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#000',
+    color: '#111827',
     marginBottom: 4,
   },
   offerDescription: {
     fontSize: 12,
-    color: '#333',
+    color: '#111827',
     opacity: 0.8,
     lineHeight: 16,
   },
@@ -1738,7 +1794,7 @@ const styles = StyleSheet.create({
   offerProgressText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#000',
+    color: '#111827',
     marginBottom: 4,
   },
   progressBarContainer: {
@@ -1750,7 +1806,7 @@ const styles = StyleSheet.create({
   },
   progressBar: {
     height: '100%',
-    backgroundColor: '#000',
+    backgroundColor: '#FFFFFF',
     borderRadius: 2,
   },
   offerButton: {
@@ -1765,6 +1821,6 @@ const styles = StyleSheet.create({
   offerButtonText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#000',
+    color: '#111827',
   },
 });

@@ -11,8 +11,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Linking,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/Ionicons';
 import RNOtpVerify from 'react-native-otp-verify';
 import toast from '../../utils/toast';
 import axios from 'axios';
@@ -21,38 +21,245 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { addNotification } from '../../services/localDriverData';
 import { useDispatch } from 'react-redux';
 import { getProfile } from '../../store/slices/profileSlice';
+import { Toast } from 'toastify-react-native';
 
 const OTP_LENGTH = 6;
+
+const extractOtp = message => {
+  const match = message?.match(/\b\d{6}\b/);
+  return match ? match[0] : null;
+};
+
+const getApplicationId = user => {
+  return (
+    user?.applicationId ||
+    user?._id ||
+    user?.id ||
+    user?.application?._id ||
+    user?.application?.id ||
+    user?.subscriptionPayment?.applicationId ||
+    user?.joiningFeePayment?.applicationId ||
+    null
+  );
+};
+
+const isVerified = user => {
+  const status =
+    user?.verificationStatus || user?.applicationStatus || user?.status || '';
+
+  return String(status).trim().toLowerCase() === 'verified';
+};
+
+const isJoiningFeePaid = user => {
+  if (
+    user?.joiningFeePaid === true ||
+    user?.isJoiningFeePaid === true ||
+    user?.subscriptionPaid === true ||
+    user?.isSubscriptionPaid === true
+  ) {
+    return true;
+  }
+
+  const paymentStatus =
+    user?.subscriptionPayment?.status ||
+    user?.joiningFeePayment?.status ||
+    user?.paymentStatus ||
+    user?.subscriptionPaymentStatus ||
+    user?.joiningFeePaymentStatus ||
+    '';
+
+  return ['completed', 'paid', 'success', 'captured'].includes(
+    String(paymentStatus).trim().toLowerCase(),
+  );
+};
+
+const fetchJoiningFeeStatus = async (token, applicationId) => {
+  if (!token || !applicationId) return null;
+
+  const response = await axios.get(
+    `${BASE_URL}/subscription/status/${applicationId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    },
+  );
+
+  return response?.data?.data || null;
+};
 
 const LoginScreen = ({ navigation }) => {
   const dispatch = useDispatch();
 
   const [mobile, setMobile] = useState('');
   const [otp, setOtp] = useState(Array(OTP_LENGTH).fill(''));
-  const [checked1, setChecked1] = useState(true);
-  const [checked2, setChecked2] = useState(true);
   const [showOTP, setShowOTP] = useState(false);
   const [loading, setLoading] = useState(false);
   const [timer, setTimer] = useState(30);
   const [canResend, setCanResend] = useState(false);
   const [phoneError, setPhoneError] = useState('');
+  const [isChecked, setIsChecked] = useState(false);
+  const [isChecked_TDS, setIsChecked_TDS] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
 
   const otpInputs = useRef([]);
   const timerRef = useRef(null);
   const verifyLockRef = useRef(false);
+  const otpListenerStartedRef = useRef(false);
 
-  const extractOtp = message => {
-    const match = message?.match(/\b\d{6}\b/);
-    return match ? match[0] : null;
-  };
+  const navigateAfterLogin = useCallback(
+    async user => {
+      let latestUser = user;
+      const phone = user?.phone || mobile;
+
+      if (phone) {
+        try {
+          const response = await axios.get(`${BASE_URL}/status/${phone}`);
+          const statusUser = response?.data?.data || response?.data;
+          if (statusUser) {
+            latestUser = {
+              ...(user || {}),
+              ...statusUser,
+            };
+          }
+        } catch (error) {
+          console.log('Error fetching status in login:', error?.message);
+        }
+      }
+
+      if (latestUser?.requiresRegistration) {
+        navigation.navigate('Docs', {
+          phone: latestUser?.phone || user?.phone || phone,
+          data: latestUser,
+        });
+        return;
+      }
+
+      const applicationId = getApplicationId(latestUser);
+
+      if (applicationId) {
+        try {
+          const token = await AsyncStorage.getItem('userToken');
+          const paymentData = await fetchJoiningFeeStatus(token, applicationId);
+
+          if (!isJoiningFeePaid(paymentData) && !isJoiningFeePaid(latestUser)) {
+            navigation.navigate('JoinFees', {
+              formData: {
+                ...(latestUser || {}),
+                backendData: latestUser,
+                vehicleType: latestUser?.vehicleType || user?.vehicleType,
+              },
+              applicationId,
+            });
+            return;
+          }
+
+          latestUser = {
+            ...(latestUser || {}),
+            ...(paymentData || {}),
+          };
+        } catch (error) {
+          console.log(
+            'Joining fee status check failed:',
+            error?.response?.data || error?.message,
+          );
+
+          if (!isJoiningFeePaid(latestUser)) {
+            navigation.navigate('JoinFees', {
+              formData: {
+                ...(latestUser || {}),
+                backendData: latestUser,
+                vehicleType: latestUser?.vehicleType || user?.vehicleType,
+              },
+              applicationId,
+            });
+            return;
+          }
+        }
+      }
+      if (!isVerified(latestUser)) {
+        navigation.navigate('Docs', {
+          phone: latestUser?.phone || user?.phone || phone,
+          data: latestUser,
+        });
+        return;
+      }
+
+      navigation.navigate('MyTabs');
+    },
+    [navigation, mobile],
+  );
+
+  const stopOtpAutoFill = useCallback(() => {
+    if (Platform.OS !== 'android') return;
+
+    RNOtpVerify.removeListener();
+    otpListenerStartedRef.current = false;
+  }, []);
+
+  const handleIncomingOtp = useCallback(
+    message => {
+      const detectedOtp = extractOtp(message);
+
+      if (!detectedOtp) return;
+
+      setOtp(detectedOtp.split(''));
+
+      setTimeout(() => {
+        otpInputs.current[OTP_LENGTH - 1]?.focus();
+      }, 100);
+
+      stopOtpAutoFill();
+    },
+    [stopOtpAutoFill],
+  );
+
+  const startOtpAutoFill = useCallback(async () => {
+    if (Platform.OS !== 'android') return;
+
+    try {
+      stopOtpAutoFill();
+      await RNOtpVerify.getOtp();
+      RNOtpVerify.addListener(handleIncomingOtp);
+      otpListenerStartedRef.current = true;
+    } catch (error) {
+      console.log('OTP Auto Fill Listener Error:', error);
+    }
+  }, [handleIncomingOtp, stopOtpAutoFill]);
+
+  const getOtpAppHash = useCallback(async () => {
+    if (Platform.OS !== 'android') return null;
+
+    try {
+      const hashes = await RNOtpVerify.getHash();
+      return Array.isArray(hashes) ? hashes[0] : hashes;
+    } catch (error) {
+      console.log('OTP Hash Error:', error);
+      return null;
+    }
+  }, []);
+
+  const buildSendOtpPayload = useCallback(
+    async phone => {
+      const payload = { phone };
+      const appHash = await getOtpAppHash();
+
+      if (appHash) {
+        payload.appHash = appHash;
+      }
+
+      return payload;
+    },
+    [getOtpAppHash],
+  );
 
   useEffect(() => {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
-      RNOtpVerify.removeListener();
+      stopOtpAutoFill();
     };
-  }, []);
+  }, [stopOtpAutoFill]);
 
   const startTimer = () => {
     setTimer(30);
@@ -89,35 +296,37 @@ const LoginScreen = ({ navigation }) => {
     return true;
   };
 
-  const validateCheckboxes = () => {
-    if (!checked1) {
-      toast.error('Please accept Terms and Conditions and Privacy Policy');
-      return false;
-    }
-
-    if (!checked2) {
-      toast.error('Please accept TDS Declaration');
-      return false;
-    }
-
-    return true;
-  };
-
   const sendOTP = async () => {
-    if (!validatePhone(mobile) || !validateCheckboxes()) return;
+    if (!validatePhone(mobile)) return;
+    if (!isChecked) {
+      Toast.show({
+        type: 'error',
+        text1: 'Terms Required',
+        text2: 'Please accept Terms & Conditions and Privacy Policy',
+      });
+      return;
+    }
+    if (!isChecked_TDS) {
+      Toast.show({
+        type: 'error',
+        text1: 'Terms Required',
+        text2: 'Please accept Partner Declaration',
+      });
+      return;
+    }
 
     setLoading(true);
+    setOtp(Array(OTP_LENGTH).fill(''));
+    setIsVerifying(false);
+    verifyLockRef.current = false;
+    await startOtpAutoFill();
 
     try {
-      const response = await axios.post(`${BASE_URL}/send-otp`, {
-        phone: mobile,
-      });
+      const payload = await buildSendOtpPayload(mobile);
+      const response = await axios.post(`${BASE_URL}/send-otp`, payload);
 
       if (response.data.success) {
         setShowOTP(true);
-        setOtp(Array(OTP_LENGTH).fill(''));
-        setIsVerifying(false);
-        verifyLockRef.current = false;
         startTimer();
 
         setTimeout(() => {
@@ -126,10 +335,12 @@ const LoginScreen = ({ navigation }) => {
 
         toast.success('OTP sent successfully to your mobile');
       } else {
+        stopOtpAutoFill();
         toast.error(response.data.message || 'Failed to send OTP');
       }
     } catch (error) {
       console.log('Send OTP Error:', error);
+      stopOtpAutoFill();
       toast.error(
         error.response?.data?.message || 'Network error. Please try again.',
       );
@@ -159,11 +370,10 @@ const LoginScreen = ({ navigation }) => {
           otp: otpString,
         });
 
+        console.log('token checking res', response);
+
         if (response.data.success || response.data.status === 'success') {
           const token = response.data?.data?.token || response.data?.token;
-
-          console.log("token checking", token);
-          
 
           if (token) {
             await AsyncStorage.setItem('userToken', token);
@@ -174,6 +384,8 @@ const LoginScreen = ({ navigation }) => {
           }
 
           const user = response?.data?.data;
+
+          console.log('user data checking', token, user);
 
           if (user) {
             await AsyncStorage.setItem('userData', JSON.stringify(user));
@@ -190,21 +402,12 @@ const LoginScreen = ({ navigation }) => {
             type: 'auth',
           });
 
-          RNOtpVerify.removeListener();
+          stopOtpAutoFill();
 
           Alert.alert('Success', 'Login Successfully', [
             {
               text: 'OK',
-              onPress: () => {
-                if (response?.data?.data?.requiresRegistration) {
-                  navigation.navigate('Docs', {
-                    phone: response?.data?.data?.phone,
-                    data: response?.data?.data,
-                  });
-                } else {
-                  navigation.navigate('MyTabs');
-                }
-              },
+              onPress: () => navigateAfterLogin(response?.data?.data),
             },
           ]);
         } else {
@@ -221,9 +424,13 @@ const LoginScreen = ({ navigation }) => {
         console.log('Verify OTP Error:', error);
 
         if (error.response) {
-          toast.error(error.response.data.message || 'Invalid OTP. Please try again.');
+          toast.error(
+            error.response.data.message || 'Invalid OTP. Please try again.',
+          );
         } else if (error.request) {
-          toast.error('Unable to connect to server. Please check your internet connection.');
+          toast.error(
+            'Unable to connect to server. Please check your internet connection.',
+          );
         } else {
           toast.error('An unexpected error occurred. Please try again.');
         }
@@ -239,37 +446,8 @@ const LoginScreen = ({ navigation }) => {
         setLoading(false);
       }
     },
-    [otp, mobile, isVerifying, dispatch, navigation],
+    [otp, mobile, isVerifying, dispatch, navigateAfterLogin, stopOtpAutoFill],
   );
-
-  useEffect(() => {
-    if (!showOTP) return;
-
-    RNOtpVerify.getOtp()
-      .then(() => {
-        RNOtpVerify.addListener(message => {
-          const detectedOtp = extractOtp(message);
-
-          if (detectedOtp) {
-            const otpArray = detectedOtp.split('');
-            setOtp(otpArray);
-
-            setTimeout(() => {
-              verifyOTP(detectedOtp);
-            }, 200);
-
-            RNOtpVerify.removeListener();
-          }
-        });
-      })
-      .catch(error => {
-        console.log('OTP Listener Error:', error);
-      });
-
-    return () => {
-      RNOtpVerify.removeListener();
-    };
-  }, [showOTP, verifyOTP]);
 
   useEffect(() => {
     const otpString = otp.join('');
@@ -293,16 +471,16 @@ const LoginScreen = ({ navigation }) => {
     if (!canResend) return;
 
     setLoading(true);
+    setOtp(Array(OTP_LENGTH).fill(''));
+    setIsVerifying(false);
+    verifyLockRef.current = false;
+    await startOtpAutoFill();
 
     try {
-      const response = await axios.post(`${BASE_URL}/send-otp`, {
-        phone: mobile,
-      });
+      const payload = await buildSendOtpPayload(mobile);
+      const response = await axios.post(`${BASE_URL}/send-otp`, payload);
 
       if (response.data.success) {
-        setOtp(Array(OTP_LENGTH).fill(''));
-        setIsVerifying(false);
-        verifyLockRef.current = false;
         startTimer();
 
         setTimeout(() => {
@@ -311,10 +489,12 @@ const LoginScreen = ({ navigation }) => {
 
         toast.success('OTP resent successfully');
       } else {
+        stopOtpAutoFill();
         toast.error(response.data.message || 'Failed to resend OTP');
       }
     } catch (error) {
       console.log('Resend OTP Error:', error);
+      stopOtpAutoFill();
       toast.error('Failed to resend OTP. Please try again.');
     } finally {
       setLoading(false);
@@ -352,6 +532,19 @@ const LoginScreen = ({ navigation }) => {
     }
   };
 
+  const handleOpenURL = async url => {
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Alert.alert('Error', `Cannot open URL: ${url}`);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'An error occurred while opening the page.');
+    }
+  };
+
   const handleOtpKeyPress = (e, index) => {
     if (e.nativeEvent.key === 'Backspace' && !otp[index] && index > 0) {
       otpInputs.current[index - 1]?.focus();
@@ -365,7 +558,7 @@ const LoginScreen = ({ navigation }) => {
     setCanResend(false);
     setIsVerifying(false);
     verifyLockRef.current = false;
-    RNOtpVerify.removeListener();
+    stopOtpAutoFill();
 
     if (timerRef.current) clearInterval(timerRef.current);
   };
@@ -415,14 +608,10 @@ const LoginScreen = ({ navigation }) => {
           otp.join('').length !== OTP_LENGTH && styles.loginBtnDisabled,
         ]}
         onPress={() => verifyOTP()}
-        disabled={
-          loading ||
-          isVerifying ||
-          otp.join('').length !== OTP_LENGTH
-        }
+        disabled={loading || isVerifying || otp.join('').length !== OTP_LENGTH}
       >
         {loading || isVerifying ? (
-          <ActivityIndicator color="#fff" />
+          <ActivityIndicator color="#000" />
         ) : (
           <Text style={styles.loginText}>VERIFY OTP</Text>
         )}
@@ -473,40 +662,57 @@ const LoginScreen = ({ navigation }) => {
         {phoneError ? <Text style={styles.errorText}>{phoneError}</Text> : null}
       </View>
 
-      <TouchableOpacity
-        style={styles.checkboxRow}
-        onPress={() => !loading && setChecked1(!checked1)}
-        disabled={loading}
-      >
-        <Icon
-          name={checked1 ? 'checkbox' : 'square-outline'}
-          size={22}
-          color={checked1 ? '#3B82F6' : '#9CA3AF'}
-        />
+      <View style={styles.checkboxContainer}>
+        <TouchableOpacity
+          style={styles.checkbox}
+          onPress={() => setIsChecked(!isChecked)}
+        >
+          {isChecked && <Text style={styles.checkMark}>✓</Text>}
+        </TouchableOpacity>
+        <Text style={styles.checkboxText}>I have read and agreed to </Text>
 
-        <Text style={styles.checkboxText}>
-          I have read and agreed to{' '}
-          <Text style={styles.link}>Terms and Conditions</Text> and{' '}
+        <TouchableOpacity
+          onPress={() =>
+            handleOpenURL(
+              'https://drive.google.com/file/d/1_Q27iyNAX87BAUyBFAsSh_0JpYsDfOCW/view?usp=sharing',
+            )
+          }
+        >
+          <Text style={styles.link}>Terms and Conditions</Text>
+        </TouchableOpacity>
+
+        <Text style={styles.checkboxText}> and </Text>
+
+        <TouchableOpacity
+          onPress={() =>
+            handleOpenURL(
+              'https://drive.google.com/file/d/1ZZftTTrui7xY00HTqxSLl2QgkkPv-U3u/view?usp=sharing',
+            )
+          }
+        >
           <Text style={styles.link}>Privacy Policy</Text>
-        </Text>
-      </TouchableOpacity>
+        </TouchableOpacity>
+      </View>
 
-      <TouchableOpacity
-        style={styles.checkboxRow}
-        onPress={() => !loading && setChecked2(!checked2)}
-        disabled={loading}
-      >
-        <Icon
-          name={checked2 ? 'checkbox' : 'square-outline'}
-          size={22}
-          color={checked2 ? '#3B82F6' : '#9CA3AF'}
-        />
+      <View style={styles.checkboxContainer}>
+        <TouchableOpacity
+          style={styles.checkbox}
+          onPress={() => setIsChecked_TDS(!isChecked_TDS)}
+        >
+          {isChecked_TDS && <Text style={styles.checkMark}>✓</Text>}
+        </TouchableOpacity>
+        <Text style={styles.checkboxText}>I have read and agreed to the </Text>
 
-        <Text style={styles.checkboxText}>
-          I have read and hereby provide my consent on the{' '}
-          <Text style={styles.link}>TDS Declaration</Text>
-        </Text>
-      </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() =>
+            handleOpenURL(
+              'https://drive.google.com/file/d/1QHGQJ3AHEHffgBQkMR_A9CAQhI5Akx3J/view?usp=sharing',
+            )
+          }
+        >
+          <Text style={styles.link}>Partner Declaration</Text>
+        </TouchableOpacity>
+      </View>
 
       <TouchableOpacity
         style={[styles.loginBtn, loading && styles.loginBtnDisabled]}
@@ -514,7 +720,7 @@ const LoginScreen = ({ navigation }) => {
         disabled={loading}
       >
         {loading ? (
-          <ActivityIndicator color="#fff" />
+          <ActivityIndicator color="#000" />
         ) : (
           <Text style={styles.loginText}>SEND OTP</Text>
         )}
@@ -527,7 +733,7 @@ const LoginScreen = ({ navigation }) => {
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <StatusBar backgroundColor="#F4C20D" barStyle="dark-content" />
+      <StatusBar backgroundColor="#fccf1e" barStyle="dark-content" />
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
@@ -545,7 +751,7 @@ export default LoginScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
   },
   scrollContent: {
     flexGrow: 1,
@@ -555,7 +761,7 @@ const styles = StyleSheet.create({
   logo: {
     fontSize: 30,
     fontWeight: '600',
-    color: '#F4C20D',
+    color: '#fccf1e',
     alignSelf: 'center',
     marginTop: 40,
   },
@@ -567,7 +773,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'center',
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#F8F9FA',
     paddingVertical: 8,
     paddingHorizontal: 15,
     borderRadius: 25,
@@ -602,12 +808,12 @@ const styles = StyleSheet.create({
   code: {
     fontSize: 18,
     marginRight: 10,
-    color: '#333',
+    color: '#111827',
   },
   input: {
     flex: 1,
     fontSize: 18,
-    color: '#333',
+    color: '#111827',
     padding: 0,
   },
   inputError: {
@@ -618,25 +824,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 5,
   },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginTop: 25,
-  },
-  checkboxText: {
-    flex: 1,
-    marginLeft: 10,
-    fontSize: 14,
-    color: '#6B7280',
-    lineHeight: 22,
-  },
-  link: {
-    color: '#3B82F6',
-    textDecorationLine: 'underline',
-  },
   loginBtn: {
     marginTop: 40,
-    backgroundColor: '#F4C20D',
+    backgroundColor: '#fccf1e',
     paddingVertical: 16,
     borderRadius: 30,
     alignItems: 'center',
@@ -645,14 +835,14 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   loginText: {
-    color: '#fff',
+    color: '#000',
     fontSize: 16,
     fontWeight: '600',
   },
   otpTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#333',
+    color: '#111827',
     marginTop: 60,
     marginBottom: 10,
   },
@@ -677,12 +867,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#333',
-    backgroundColor: '#F9FAFB',
+    color: '#111827',
+    backgroundColor: '#F8F9FA',
   },
   otpInputFilled: {
-    borderColor: '#F4C20D',
-    backgroundColor: '#FFF9E6',
+    borderColor: '#fccf1e',
+    backgroundColor: '#FFF7D6',
   },
   timerContainer: {
     alignItems: 'center',
@@ -694,7 +884,7 @@ const styles = StyleSheet.create({
   },
   timerBold: {
     fontWeight: 'bold',
-    color: '#F4C20D',
+    color: '#fccf1e',
   },
   resendText: {
     fontSize: 16,
@@ -710,5 +900,54 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#3B82F6',
     fontWeight: '500',
+  },
+  checkboxContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginTop: 20,
+  },
+
+  checkboxText: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+
+  termsContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 15,
+    paddingHorizontal: 10,
+  },
+
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderWidth: 2,
+    borderColor: '#fccf1e', // Purple Theme
+    borderRadius: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+    marginTop: 2,
+  },
+
+  checkMark: {
+    color: '#fccf1e',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+
+  termsText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#6B7280',
+    lineHeight: 22,
+  },
+
+  link: {
+    color: '#fccf1e',
+    fontWeight: '700',
+    textDecorationLine: 'underline',
   },
 });

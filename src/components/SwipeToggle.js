@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback, useMemo } from "react";
+import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,162 +7,202 @@ import {
   Animated,
   Dimensions,
   Platform,
-} from "react-native";
-import LinearGradient from "react-native-linear-gradient";
-import Ionicons from "react-native-vector-icons/Ionicons";
-import { moderateScale } from "react-native-size-matters";
+  ActivityIndicator,
+} from 'react-native';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import { moderateScale } from 'react-native-size-matters';
 
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const TOGGLE_WIDTH = SCREEN_WIDTH - 40;
 const THUMB_SIZE = 52;
 const TRACK_HEIGHT = 64;
 const MAX_TRANSLATION = TOGGLE_WIDTH - THUMB_SIZE - 12;
 const THRESHOLD = MAX_TRANSLATION / 2;
-const TAP_THRESHOLD = 5;
 
-const SwipeToggle = ({ onToggle, isOnline, disabled = false }) => {
-  const translateX = useRef(new Animated.Value(isOnline ? MAX_TRANSLATION : 0)).current;
+const SwipeToggle = ({
+  onToggle,
+  isOnline,
+  disabled = false,
+  loading = false,
+  pendingState = null,
+}) => {
+  const translateX = useRef(
+    new Animated.Value(isOnline ? MAX_TRANSLATION : 0),
+  ).current;
   const isAnimating = useRef(false);
   const lastToggleState = useRef(isOnline);
-  const startX = useRef(0);
   const animationRef = useRef(null);
 
-  // Memoized track color interpolation
   const trackColor = useMemo(() => {
     return translateX.interpolate({
       inputRange: [0, MAX_TRANSLATION],
-      outputRange: ["#FF416C", "#00B09B"],
+      outputRange: ['#D64545', '#1BB15B'],
     });
   }, [translateX]);
 
-  // Sync prop changes with spring animation
+  const springTo = useCallback(
+    (toValue, onComplete) => {
+      if (animationRef.current) {
+        animationRef.current.stop();
+      }
+
+      animationRef.current = Animated.spring(translateX, {
+        toValue,
+        useNativeDriver: true,
+        friction: 7,
+        tension: 50,
+        restSpeedThreshold: 0.1,
+        restDisplacementThreshold: 0.1,
+      });
+
+      animationRef.current.start(({ finished }) => {
+        isAnimating.current = false;
+        onComplete?.(finished);
+      });
+    },
+    [translateX],
+  );
+
+  const snapToState = useCallback(
+    state => {
+      isAnimating.current = true;
+      lastToggleState.current = state;
+      springTo(state ? MAX_TRANSLATION : 0);
+    },
+    [springTo],
+  );
+
   useEffect(() => {
     if (animationRef.current) {
       animationRef.current.stop();
     }
 
-    // Update the last known state
     lastToggleState.current = isOnline;
-
-    animationRef.current = Animated.spring(translateX, {
-      toValue: isOnline ? MAX_TRANSLATION : 0,
-      useNativeDriver: true,
-      friction: 7,
-      tension: 50,
-      restSpeedThreshold: 0.1,
-      restDisplacementThreshold: 0.1,
-    });
-
-    animationRef.current.start(() => {
-      isAnimating.current = false;
-    });
-
     isAnimating.current = true;
+    springTo(isOnline ? MAX_TRANSLATION : 0);
 
     return () => {
       if (animationRef.current) {
         animationRef.current.stop();
       }
     };
-  }, [isOnline, translateX]);
+  }, [isOnline, springTo]);
 
-  const animateToggle = useCallback((toValue, newState) => {
-    if (isAnimating.current || disabled) return;
+  const animateToggle = useCallback(
+    (toValue, newState) => {
+      if (isAnimating.current || disabled || loading) return;
 
-    // Prevent duplicate calls to the same state
-    if (newState === lastToggleState.current) {
-            return;
-    }
-
-    isAnimating.current = true;
-    lastToggleState.current = newState;
-
-    Animated.spring(translateX, {
-      toValue,
-      useNativeDriver: true,
-      friction: 7,
-      tension: 50,
-      restSpeedThreshold: 0.1,
-      restDisplacementThreshold: 0.1,
-    }).start(({ finished }) => {
-      if (finished) {
-        isAnimating.current = false;
-        // Always call onToggle when animation completes successfully
-        onToggle?.(newState);
-      } else {
-        // Reset state if animation was interrupted
-        lastToggleState.current = isOnline;
-        isAnimating.current = false;
+      if (newState === lastToggleState.current) {
+        snapToState(isOnline);
+        return;
       }
-    });
-  }, [translateX, isOnline, onToggle, disabled]);
 
-  const handlePanResponderMove = useCallback((_, gestureState) => {
-    if (isAnimating.current) return;
+      isAnimating.current = true;
+      lastToggleState.current = newState;
 
-    let newX = isOnline ? MAX_TRANSLATION + gestureState.dx : gestureState.dx;
-    newX = Math.max(0, Math.min(newX, MAX_TRANSLATION));
-    translateX.setValue(newX);
-  }, [isOnline, translateX]);
+      springTo(toValue, async finished => {
+        if (!finished) {
+          lastToggleState.current = isOnline;
+          snapToState(isOnline);
+          return;
+        }
 
-  const handlePanResponderRelease = useCallback((_, gestureState) => {
-    if (isAnimating.current) return;
+        try {
+          const result = await onToggle?.(newState);
+          if (result === false) {
+            lastToggleState.current = isOnline;
+            snapToState(isOnline);
+          }
+        } catch {
+          lastToggleState.current = isOnline;
+          snapToState(isOnline);
+        }
+      });
+    },
+    [disabled, isOnline, loading, onToggle, snapToState, springTo],
+  );
 
-    const currentX = isOnline ? MAX_TRANSLATION + gestureState.dx : gestureState.dx;
-    const isTap = Math.abs(gestureState.dx) < TAP_THRESHOLD &&
-      Math.abs(gestureState.dy) < TAP_THRESHOLD;
+  const handlePanResponderMove = useCallback(
+    (_, gestureState) => {
+      if (isAnimating.current || disabled || loading) return;
 
-    if (isTap) {
-      const newState = !isOnline;
-      animateToggle(newState ? MAX_TRANSLATION : 0, newState);
-      return;
-    }
+      let newX = isOnline
+        ? MAX_TRANSLATION + gestureState.dx
+        : gestureState.dx;
+      newX = Math.max(0, Math.min(newX, MAX_TRANSLATION));
+      translateX.setValue(newX);
+    },
+    [disabled, isOnline, loading, translateX],
+  );
 
-    if (!isOnline && currentX > THRESHOLD) {
-      animateToggle(MAX_TRANSLATION, true);
-    } else if (isOnline && currentX < THRESHOLD) {
-      animateToggle(0, false);
-    } else {
-      animateToggle(isOnline ? MAX_TRANSLATION : 0, isOnline);
-    }
-  }, [isOnline, animateToggle]);
+  const handlePanResponderRelease = useCallback(
+    (_, gestureState) => {
+      if (isAnimating.current || disabled || loading) return;
+
+      const currentX = isOnline
+        ? MAX_TRANSLATION + gestureState.dx
+        : gestureState.dx;
+
+      if (!isOnline && currentX > THRESHOLD) {
+        animateToggle(MAX_TRANSLATION, true);
+      } else if (isOnline && currentX < THRESHOLD) {
+        animateToggle(0, false);
+      } else {
+        snapToState(isOnline);
+      }
+    },
+    [animateToggle, disabled, isOnline, loading, snapToState],
+  );
 
   const panResponder = useMemo(() => {
     return PanResponder.create({
-      onStartShouldSetPanResponder: () => !isAnimating.current && !disabled,
+      onStartShouldSetPanResponder: () =>
+        !isAnimating.current && !disabled && !loading,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        return !disabled && Math.abs(gestureState.dx) > 5;
-      },
-      onPanResponderGrant: (_, gestureState) => {
-        startX.current = gestureState.x0;
+        return !disabled && !loading && Math.abs(gestureState.dx) > 5;
       },
       onPanResponderMove: handlePanResponderMove,
       onPanResponderRelease: handlePanResponderRelease,
       onPanResponderTerminate: () => {
-        // Reset to original position if interrupted
-        if (!disabled) {
-          animateToggle(isOnline ? MAX_TRANSLATION : 0, isOnline);
+        if (!disabled && !loading) {
+          snapToState(isOnline);
         }
       },
     });
-  }, [handlePanResponderMove, handlePanResponderRelease, isOnline, animateToggle, disabled]);
+  }, [
+    disabled,
+    handlePanResponderMove,
+    handlePanResponderRelease,
+    isOnline,
+    loading,
+    snapToState,
+  ]);
 
-  // Memoize text to prevent unnecessary re-renders
   const toggleText = useMemo(() => {
-    return isOnline ? "SWIPE TO GO OFFLINE" : "SWIPE TO GO ONLINE";
-  }, [isOnline]);
+    if (loading) {
+      return pendingState ? 'GOING ONLINE...' : 'GOING OFFLINE...';
+    }
+
+    return isOnline ? 'SLIDE TO GO OFFLINE' : 'SLIDE TO GO ONLINE';
+  }, [isOnline, loading, pendingState]);
 
   const iconName = useMemo(() => {
-    return isOnline ? "power" : "flash";
+    return isOnline ? 'power' : 'flash';
   }, [isOnline]);
 
   const iconColor = useMemo(() => {
-    return isOnline ? "#00B09B" : "#FF416C";
+    return isOnline ? '#1BB15B' : '#D64545';
   }, [isOnline]);
 
   return (
     <View style={styles.container}>
-      <Animated.View style={[styles.track, { backgroundColor: trackColor }]}>
+      <Animated.View
+        style={[
+          styles.track,
+          { backgroundColor: trackColor },
+          (disabled || loading) && styles.disabledTrack,
+        ]}
+      >
         <View style={styles.textContainer} pointerEvents="none">
           <Text style={styles.text}>{toggleText}</Text>
         </View>
@@ -171,14 +211,17 @@ const SwipeToggle = ({ onToggle, isOnline, disabled = false }) => {
           {...panResponder.panHandlers}
           style={[
             styles.thumb,
+            styles.thumbShadow,
             {
               transform: [{ translateX }],
-              // Optimize for native driver
-              shadowOpacity: 0.3,
             },
           ]}
         >
-          <Ionicons name={iconName} size={24} color={iconColor} />
+          {loading ? (
+            <ActivityIndicator color={iconColor} size="small" />
+          ) : (
+            <Ionicons name={iconName} size={24} color={iconColor} />
+          )}
         </Animated.View>
       </Animated.View>
     </View>
@@ -193,15 +236,15 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   track: {
-    width: "100%",
+    width: '100%',
     height: TRACK_HEIGHT,
     borderRadius: TRACK_HEIGHT / 2,
-    justifyContent: "center",
+    justifyContent: 'center',
     paddingHorizontal: 6,
-    overflow: "hidden",
+    overflow: 'hidden',
     ...Platform.select({
       ios: {
-        shadowColor: "#000",
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.2,
         shadowRadius: 4,
@@ -211,29 +254,32 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  disabledTrack: {
+    opacity: 0.76,
+  },
   textContainer: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
   },
   text: {
-    color: "#fff",
-    fontWeight: "900",
+    color: '#fff',
+    fontWeight: '900',
     fontSize: moderateScale(13),
-    letterSpacing: 1,
-    textTransform: "uppercase",
-    backgroundColor: "transparent",
+    letterSpacing: 0,
+    textTransform: 'uppercase',
+    backgroundColor: 'transparent',
   },
   thumb: {
     width: THUMB_SIZE,
     height: THUMB_SIZE,
     borderRadius: THUMB_SIZE / 2,
-    backgroundColor: "#fff",
-    justifyContent: "center",
-    alignItems: "center",
+    backgroundColor: '#222222',
+    justifyContent: 'center',
+    alignItems: 'center',
     ...Platform.select({
       ios: {
-        shadowColor: "#000",
+        shadowColor: '#000',
         shadowOffset: { width: 0, height: 3 },
         shadowOpacity: 0.3,
         shadowRadius: 5,
@@ -242,5 +288,8 @@ const styles = StyleSheet.create({
         elevation: 8,
       },
     }),
+  },
+  thumbShadow: {
+    shadowOpacity: 0.3,
   },
 });

@@ -1,19 +1,46 @@
 import { moderateScale } from 'react-native-size-matters';
 
-export const colors = {
-  primary: '#F4C20D',
+export const BRAND_YELLOW = '#fccf1e';
+export const BRAND_BLACK = '#000000';
+
+export const lightColors = {
+  primary: BRAND_YELLOW,
   primarySoft: '#FFF7D6',
-  primaryBorder: '#FDE68A',
-  ink: '#111827',
-  text: '#111827',
-  muted: '#6B7280',
-  bg: '#F6F7FB',
+  primaryBorder: '#F7D94C',
+  ink: BRAND_BLACK,
+  text: BRAND_BLACK,
+  muted: '#5F6368',
+  bg: '#FFFFFF',
   surface: '#FFFFFF',
+  surfaceAlt: '#F8F9FA',
   border: '#E5E7EB',
   danger: '#EF4444',
   success: '#16A34A',
-  path: '#000'
+  path: BRAND_BLACK,
+  inverse: '#FFFFFF',
+  overlay: 'rgba(0,0,0,0.55)',
 };
+
+export const darkColors = {
+  primary: BRAND_YELLOW,
+  primarySoft: '#FFF7D6',
+  primaryBorder: '#F7D94C',
+  ink: BRAND_BLACK,
+  text: BRAND_BLACK,
+  muted: '#5F6368',
+  bg: '#FFFFFF',
+  surface: '#FFFFFF',
+  surfaceAlt: '#F8F9FA',
+  border: '#E5E7EB',
+  danger: '#EF4444',
+  success: '#16A34A',
+  path: BRAND_BLACK,
+  inverse: '#FFFFFF',
+  overlay: 'rgba(0,0,0,0.55)',
+};
+
+export const getColorsForScheme = () =>
+  lightColors;
 
 export const radii = {
   sm: moderateScale(10),
@@ -39,72 +66,94 @@ const fontFamily = {
   extrabold: 'Poppins-ExtraBold',
 };
 
-export const type = {
+const createType = palette => ({
   h1: {
     fontFamily: fontFamily.extrabold,
     fontSize: moderateScale(24),
     fontWeight: '800',
-    color: colors.text,
+    color: palette.text,
   },
   h2: {
     fontFamily: fontFamily.bold,
     fontSize: moderateScale(20),
     fontWeight: '700',
-    color: colors.text,
+    color: palette.text,
   },
   title: {
     fontFamily: fontFamily.bold,
     fontSize: moderateScale(18),
     fontWeight: '700',
-    color: colors.text,
+    color: palette.text,
   },
   subtitle: {
     fontFamily: fontFamily.semibold,
     fontSize: moderateScale(16),
     fontWeight: '600',
-    color: colors.ink,
+    color: palette.ink,
   },
   body: {
     fontFamily: fontFamily.medium,
     fontSize: moderateScale(14),
     fontWeight: '500',
-    color: colors.text,
+    color: palette.text,
   },
   label: {
     fontFamily: fontFamily.medium,
     fontSize: moderateScale(13),
     fontWeight: '500',
-    color: colors.muted,
+    color: palette.muted,
   },
   caption: {
     fontFamily: fontFamily.regular,
     fontSize: moderateScale(12),
     fontWeight: '400',
-    color: colors.muted,
+    color: palette.muted,
   },
   button: {
     fontFamily: fontFamily.semibold,
     fontSize: moderateScale(14),
     fontWeight: '600',
-    color: colors.surface,
+    color: BRAND_BLACK,
   },
   default: {
     fontFamily: fontFamily.regular,
     fontSize: moderateScale(14),
     fontWeight: '400',
-    color: colors.text,
+    color: palette.text,
   },
-};
+});
 
-export const shadow = {
+const createShadow = scheme => ({
   card: {
-    shadowColor: '#000',
+    shadowColor: BRAND_BLACK,
     shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.06,
-    shadowRadius: 10,
-    elevation: 2,
+    shadowOpacity: scheme === 'dark' ? 0.16 : 0.06,
+    shadowRadius: 12,
+    elevation: 3,
   },
+});
+
+export const createTheme = scheme => {
+  const normalizedScheme = 'light';
+  const palette = getColorsForScheme(normalizedScheme);
+
+  return {
+    mode: normalizedScheme,
+    colors: palette,
+    radii,
+    spacing,
+    type: createType(palette),
+    shadow: createShadow(normalizedScheme),
+  };
 };
 
-export const theme = { colors, radii, spacing, type, shadow };
+export const getThemeForScheme = createTheme;
 
+const initialScheme = 'light';
+
+export const theme = createTheme(initialScheme);
+export const colors = theme.colors;
+export const type = theme.type;
+export const shadow = theme.shadow;
+export const lightTheme = createTheme('light');
+export const darkTheme = createTheme('dark');

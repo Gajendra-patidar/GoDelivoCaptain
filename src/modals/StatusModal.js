@@ -125,7 +125,7 @@ const styles = StyleSheet.create({
   countdown: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#999',
+    color: '#8A8A8A',
   },
 });
 

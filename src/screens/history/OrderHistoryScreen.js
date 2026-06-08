@@ -76,12 +76,15 @@ const OrderHistoryScreen = ({ navigation }) => {
     }, [loadHistory]),
   );
 
+  console.log("order chacking", orders);
+  
+
   return (
     <View style={styles.container}>
       <StatusBar backgroundColor={theme.colors.primary} barStyle="dark-content" />
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={24} color="#000" />
+          <Ionicons name="arrow-back" size={24} color="#111827" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Order History</Text>
       </View>
@@ -151,22 +154,22 @@ export default OrderHistoryScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: '#E5E7EB',
   },
   headerTitle: {
     fontSize: 22,
     fontWeight: '900',
     marginLeft: 14,
-    color: '#1a1c1e',
+    color: '#111827',
   },
   listContent: {
     padding: 16,
@@ -182,13 +185,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 20,
     marginBottom: 16,
     ...theme.shadow.card,
     borderWidth: 1,
-    borderColor: '#F1F5F9',
+    borderColor: '#E5E7EB',
   },
   rowTop: {
     flexDirection: 'row',
@@ -197,7 +200,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     paddingBottom: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: '#E5E7EB',
   },
   idCol: {
     flex: 1,
@@ -212,12 +215,12 @@ const styles = StyleSheet.create({
   orderId: {
     fontSize: 15,
     fontWeight: '900',
-    color: '#1E293B',
+    color: '#111827',
     marginTop: 2,
   },
   amount: {
     fontSize: 22,
-    color: '#0F172A',
+    color: '#111827',
     fontWeight: '900',
   },
   routeContainer: {
@@ -237,7 +240,7 @@ const styles = StyleSheet.create({
   line: {
     width: 2,
     flex: 1,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F8F9FA',
     marginVertical: 4,
   },
   addressCol: {
@@ -265,7 +268,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#F8FAFC',
+    borderTopColor: '#E5E7EB',
   },
   timeText: {
     color: '#64748B',
@@ -273,7 +276,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   statusBadge: {
-    backgroundColor: '#F0FDF4',
+    backgroundColor: '#0E2A1A',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 20,

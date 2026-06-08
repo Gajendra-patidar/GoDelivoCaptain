@@ -56,7 +56,7 @@ const HelpDetailScreen = ({ navigation, route }) => {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFD700" />
+      <StatusBar barStyle="dark-content" backgroundColor="#fccf1e" />
 
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -102,23 +102,23 @@ const HelpDetailScreen = ({ navigation, route }) => {
 export default HelpDetailScreen;
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F5F5' },
+  container: { flex: 1, backgroundColor: '#FFFFFF' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FFD700',
+    backgroundColor: '#fccf1e',
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#FFC107',
+    borderBottomColor: '#F7D94C',
   },
   headerTitle: { fontSize: 18, fontWeight: '700', color: '#000', flex: 1, textAlign: 'center' },
   content: { padding: 16, paddingBottom: 32 },
   emptyWrap: { alignItems: 'center', marginTop: 60 },
   emptyText: { color: '#6B7280', fontSize: 15, marginTop: 12 },
   faqCard: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
     padding: 16,
     marginBottom: 10,
@@ -136,11 +136,11 @@ const styles = StyleSheet.create({
   question: { fontSize: 14, fontWeight: '600', color: '#111827', flex: 1, marginRight: 8 },
   answer: {
     fontSize: 13,
-    color: '#4B5563',
+    color: '#6B7280',
     marginTop: 10,
     lineHeight: 20,
     borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
+    borderTopColor: '#E5E7EB',
     paddingTop: 10,
   },
 });

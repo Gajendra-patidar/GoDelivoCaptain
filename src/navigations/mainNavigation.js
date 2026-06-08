@@ -1,5 +1,9 @@
 import * as React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import {
+  DarkTheme,
+  DefaultTheme,
+  NavigationContainer,
+} from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import MyTabs from './bottomNavigation';
 import SplashScreen from '../screens/splash/SplashScreen';
@@ -14,6 +18,10 @@ import TripDetailScreen from '../screens/history/TripDetailScreen';
 import IncentivesScreen from '../screens/incentives/IncentivesScreen';
 import HelpDetailScreen from '../screens/helpsupport/HelpDetailScreen';
 import ReferralScreen from '../screens/referral/ReferralScreen';
+import JoiningFeesScreen from '../screens/earnings/JoiningFeesScreen';
+import CommingSoonScreen from '../screens/CommingSoon/CommingSoonScreen';
+import navigationRef from '../navigations/navigationRef';
+import { getThemeForScheme } from '../theme';
 
 const Stack = createNativeStackNavigator();
 
@@ -33,13 +41,29 @@ function RootStack() {
       <Stack.Screen name="Incentives" component={IncentivesScreen} />
       <Stack.Screen name="HelpDetail" component={HelpDetailScreen} />
       <Stack.Screen name="Referral" component={ReferralScreen} />
+      <Stack.Screen name="JoinFees" component={JoiningFeesScreen} />
+      <Stack.Screen name="CommingSoon" component={CommingSoonScreen} />
     </Stack.Navigator>
   );
 }
 
 export default function MainNavigation() {
+  const appTheme = getThemeForScheme('dark');
+  const navigationTheme = {
+    ...(appTheme.mode === 'dark' ? DarkTheme : DefaultTheme),
+    colors: {
+      ...(appTheme.mode === 'dark' ? DarkTheme.colors : DefaultTheme.colors),
+      primary: appTheme.colors.primary,
+      background: appTheme.colors.bg,
+      card: appTheme.colors.surface,
+      text: appTheme.colors.text,
+      border: appTheme.colors.border,
+      notification: appTheme.colors.primary,
+    },
+  };
+
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef} theme={navigationTheme}>
       <RootStack />
     </NavigationContainer>
   );

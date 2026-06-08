@@ -32,7 +32,7 @@ const TripDetailScreen = ({ navigation, route }) => {
 
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={24} color="#000" />
+          <Ionicons name="arrow-back" size={24} color="#111827" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Trip Details</Text>
         <View style={{ width: 24 }} />
@@ -126,17 +126,17 @@ export default TripDetailScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: '#FFFFFF',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: '#E5E7EB',
   },
   headerTitle: {
     fontSize: 22,
@@ -148,13 +148,13 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   card: {
-    backgroundColor: '#fff',
+    backgroundColor: '#FFFFFF',
     borderRadius: 24,
     padding: 20,
     marginBottom: 16,
     ...theme.shadow.card,
     borderWidth: 1,
-    borderColor: '#F1F5F9',
+    borderColor: '#E5E7EB',
   },
   sectionTitle: {
     fontSize: 12,
@@ -170,7 +170,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#F8FAFC',
+    borderBottomColor: '#E5E7EB',
   },
   label: {
     fontSize: 14,
@@ -180,18 +180,18 @@ const styles = StyleSheet.create({
   value: {
     fontSize: 14,
     fontWeight: '800',
-    color: '#1E293B',
+    color: '#111827',
   },
   amountValue: {
     fontSize: 22,
     fontWeight: '900',
-    color: '#0F172A',
+    color: '#111827',
   },
   statusBadge: {
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F8F9FA',
   },
   statusCompleted: {
     backgroundColor: '#DCFCE7',
@@ -220,7 +220,7 @@ const styles = StyleSheet.create({
   routeLine: {
     width: 2,
     height: 24,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: '#F8F9FA',
     marginLeft: 4,
     marginVertical: 4,
   },
@@ -236,7 +236,7 @@ const styles = StyleSheet.create({
   },
   routeAddress: {
     fontSize: 15,
-    color: '#1E293B',
+    color: '#111827',
     fontWeight: '700',
     lineHeight: 22,
   },

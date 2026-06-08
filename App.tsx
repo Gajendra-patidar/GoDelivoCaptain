@@ -1,4 +1,4 @@
-import { StyleSheet, Text } from 'react-native';
+import { StyleSheet, useColorScheme } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import MainNavigation from './src/navigations/mainNavigation';
@@ -12,9 +12,13 @@ import ErrorBoundary from './src/components/ErrorBoundary';
 import { OfflineQueue } from './src/services/offlineQueue';
 import SocketService from './src/services/socketService';
 import ToastManager from 'toastify-react-native';
+import { getThemeForScheme } from './src/theme';
 
 
 function App() {
+  const colorScheme = useColorScheme();
+  const appTheme = getThemeForScheme(colorScheme);
+
   useEffect(() => {
     const initApp = async () => {
       try {
@@ -52,7 +56,13 @@ function App() {
     <GestureHandlerRootView style={styles.root}>
       <Provider store={store}>
         <SafeAreaProvider>
-          <SafeAreaView style={styles.container} edges={['right', 'left', 'top']}>
+          <SafeAreaView
+            style={[
+              styles.container,
+              { backgroundColor: appTheme.colors.bg },
+            ]}
+            edges={['right', 'left', 'top']}
+          >
             <ErrorBoundary>
               <MainNavigation />
             </ErrorBoundary>

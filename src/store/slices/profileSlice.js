@@ -45,6 +45,8 @@ export const getProfile = createAsyncThunk(
     try {
       const config = await withAuth();
       const response = await axios.get(PROFILE_URL, config);
+      console.log("profile data", response);
+      
       return extractProfile(response.data);
     } catch (error) {
       return rejectWithValue(errorMessage(error));
