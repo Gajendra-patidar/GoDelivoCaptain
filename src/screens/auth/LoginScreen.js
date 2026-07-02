@@ -26,9 +26,19 @@ import { Toast } from 'toastify-react-native';
 const OTP_LENGTH = 6;
 
 const extractOtp = message => {
+  const labelledMatch = message?.match(
+    /(?:otp|code|verification|password)[^\d]*(\d{6})/i,
+  );
+  if (labelledMatch?.[1]) return labelledMatch[1];
+
   const match = message?.match(/\b\d{6}\b/);
   return match ? match[0] : null;
 };
+
+const cleanOtp = value =>
+  String(value || '')
+    .replace(/[^0-9]/g, '')
+    .slice(0, OTP_LENGTH);
 
 const getApplicationId = user => {
   return (
@@ -93,7 +103,7 @@ const LoginScreen = ({ navigation }) => {
   const dispatch = useDispatch();
 
   const [mobile, setMobile] = useState('');
-  const [otp, setOtp] = useState(Array(OTP_LENGTH).fill(''));
+  const [otp, setOtp] = useState('');
   const [showOTP, setShowOTP] = useState(false);
   const [loading, setLoading] = useState(false);
   const [timer, setTimer] = useState(30);
@@ -103,10 +113,10 @@ const LoginScreen = ({ navigation }) => {
   const [isChecked_TDS, setIsChecked_TDS] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
 
-  const otpInputs = useRef([]);
+  const otpInputRef = useRef(null);
   const timerRef = useRef(null);
   const verifyLockRef = useRef(false);
-  const otpListenerStartedRef = useRef(false);
+  const otpListenerRef = useRef(null);
 
   const navigateAfterLogin = useCallback(
     async user => {
@@ -194,20 +204,26 @@ const LoginScreen = ({ navigation }) => {
   const stopOtpAutoFill = useCallback(() => {
     if (Platform.OS !== 'android') return;
 
+    otpListenerRef.current?.remove?.();
+    otpListenerRef.current = null;
     RNOtpVerify.removeListener();
-    otpListenerStartedRef.current = false;
   }, []);
 
   const handleIncomingOtp = useCallback(
     message => {
+      if (message === 'Timeout Error.') {
+        stopOtpAutoFill();
+        return;
+      }
+
       const detectedOtp = extractOtp(message);
 
       if (!detectedOtp) return;
 
-      setOtp(detectedOtp.split(''));
+      setOtp(detectedOtp);
 
       setTimeout(() => {
-        otpInputs.current[OTP_LENGTH - 1]?.focus();
+        otpInputRef.current?.focus();
       }, 100);
 
       stopOtpAutoFill();
@@ -220,9 +236,14 @@ const LoginScreen = ({ navigation }) => {
 
     try {
       stopOtpAutoFill();
-      await RNOtpVerify.getOtp();
-      RNOtpVerify.addListener(handleIncomingOtp);
-      otpListenerStartedRef.current = true;
+      otpListenerRef.current = RNOtpVerify.startOtpListener
+        ? await RNOtpVerify.startOtpListener(handleIncomingOtp)
+        : null;
+
+      if (!otpListenerRef.current) {
+        await RNOtpVerify.getOtp();
+        otpListenerRef.current = RNOtpVerify.addListener(handleIncomingOtp);
+      }
     } catch (error) {
       console.log('OTP Auto Fill Listener Error:', error);
     }
@@ -247,6 +268,8 @@ const LoginScreen = ({ navigation }) => {
 
       if (appHash) {
         payload.appHash = appHash;
+        payload.hash = appHash;
+        payload.app_hash = appHash;
       }
 
       return payload;
@@ -316,7 +339,7 @@ const LoginScreen = ({ navigation }) => {
     }
 
     setLoading(true);
-    setOtp(Array(OTP_LENGTH).fill(''));
+    setOtp('');
     setIsVerifying(false);
     verifyLockRef.current = false;
     await startOtpAutoFill();
@@ -325,12 +348,15 @@ const LoginScreen = ({ navigation }) => {
       const payload = await buildSendOtpPayload(mobile);
       const response = await axios.post(`${BASE_URL}/send-otp`, payload);
 
+      console.log("checking daa s us", response);
+      
+
       if (response.data.success) {
         setShowOTP(true);
         startTimer();
 
         setTimeout(() => {
-          otpInputs.current[0]?.focus();
+          otpInputRef.current?.focus();
         }, 300);
 
         toast.success('OTP sent successfully to your mobile');
@@ -351,7 +377,7 @@ const LoginScreen = ({ navigation }) => {
 
   const verifyOTP = useCallback(
     async otpValue => {
-      const otpString = otpValue || otp.join('');
+      const otpString = cleanOtp(otpValue || otp);
 
       if (otpString.length !== OTP_LENGTH) {
         toast.error('Please enter complete 6-digit OTP');
@@ -412,12 +438,12 @@ const LoginScreen = ({ navigation }) => {
           ]);
         } else {
           toast.error(response.data.message || 'Invalid OTP');
-          setOtp(Array(OTP_LENGTH).fill(''));
+          setOtp('');
           setIsVerifying(false);
           verifyLockRef.current = false;
 
           setTimeout(() => {
-            otpInputs.current[0]?.focus();
+            otpInputRef.current?.focus();
           }, 100);
         }
       } catch (error) {
@@ -435,12 +461,12 @@ const LoginScreen = ({ navigation }) => {
           toast.error('An unexpected error occurred. Please try again.');
         }
 
-        setOtp(Array(OTP_LENGTH).fill(''));
+        setOtp('');
         setIsVerifying(false);
         verifyLockRef.current = false;
 
         setTimeout(() => {
-          otpInputs.current[0]?.focus();
+          otpInputRef.current?.focus();
         }, 100);
       } finally {
         setLoading(false);
@@ -450,7 +476,7 @@ const LoginScreen = ({ navigation }) => {
   );
 
   useEffect(() => {
-    const otpString = otp.join('');
+    const otpString = cleanOtp(otp);
 
     if (
       showOTP &&
@@ -471,7 +497,7 @@ const LoginScreen = ({ navigation }) => {
     if (!canResend) return;
 
     setLoading(true);
-    setOtp(Array(OTP_LENGTH).fill(''));
+    setOtp('');
     setIsVerifying(false);
     verifyLockRef.current = false;
     await startOtpAutoFill();
@@ -484,7 +510,7 @@ const LoginScreen = ({ navigation }) => {
         startTimer();
 
         setTimeout(() => {
-          otpInputs.current[0]?.focus();
+          otpInputRef.current?.focus();
         }, 200);
 
         toast.success('OTP resent successfully');
@@ -501,35 +527,8 @@ const LoginScreen = ({ navigation }) => {
     }
   };
 
-  const handleOtpChange = (text, index) => {
-    const cleanText = text.replace(/[^0-9]/g, '');
-
-    if (cleanText.length > 1) {
-      const digits = cleanText.slice(0, OTP_LENGTH).split('');
-      const newOtp = Array(OTP_LENGTH).fill('');
-
-      digits.forEach((digit, i) => {
-        newOtp[i] = digit;
-      });
-
-      setOtp(newOtp);
-
-      if (digits.length === OTP_LENGTH) {
-        otpInputs.current[OTP_LENGTH - 1]?.focus();
-      } else {
-        otpInputs.current[digits.length]?.focus();
-      }
-
-      return;
-    }
-
-    const newOtp = [...otp];
-    newOtp[index] = cleanText;
-    setOtp(newOtp);
-
-    if (cleanText && index < OTP_LENGTH - 1) {
-      otpInputs.current[index + 1]?.focus();
-    }
+  const handleOtpChange = text => {
+    setOtp(cleanOtp(text));
   };
 
   const handleOpenURL = async url => {
@@ -545,15 +544,9 @@ const LoginScreen = ({ navigation }) => {
     }
   };
 
-  const handleOtpKeyPress = (e, index) => {
-    if (e.nativeEvent.key === 'Backspace' && !otp[index] && index > 0) {
-      otpInputs.current[index - 1]?.focus();
-    }
-  };
-
   const handleBack = () => {
     setShowOTP(false);
-    setOtp(Array(OTP_LENGTH).fill(''));
+    setOtp('');
     setTimer(30);
     setCanResend(false);
     setIsVerifying(false);
@@ -572,22 +565,36 @@ const LoginScreen = ({ navigation }) => {
       </Text>
 
       <View style={styles.otpContainer}>
-        {otp.map((digit, index) => (
-          <TextInput
-            key={index}
-            ref={ref => (otpInputs.current[index] = ref)}
-            style={[styles.otpInput, digit && styles.otpInputFilled]}
-            maxLength={index === 0 ? OTP_LENGTH : 1}
-            keyboardType="number-pad"
-            textContentType="oneTimeCode"
-            autoComplete="sms-otp"
-            importantForAutofill="yes"
-            value={digit}
-            onChangeText={text => handleOtpChange(text, index)}
-            onKeyPress={e => handleOtpKeyPress(e, index)}
-            editable={!loading && !isVerifying}
-          />
-        ))}
+        <TextInput
+          ref={otpInputRef}
+          style={styles.otpHiddenInput}
+          maxLength={OTP_LENGTH}
+          keyboardType="number-pad"
+          textContentType="oneTimeCode"
+          autoComplete={Platform.OS === 'android' ? 'sms-otp' : 'one-time-code'}
+          importantForAutofill="yes"
+          value={otp}
+          onChangeText={handleOtpChange}
+          editable={!loading && !isVerifying}
+          caretHidden
+          selectTextOnFocus={false}
+        />
+
+        {Array.from({ length: OTP_LENGTH }, (_, index) => {
+          const digit = otp[index] || '';
+
+          return (
+            <TouchableOpacity
+              key={index}
+              activeOpacity={0.8}
+              style={[styles.otpInput, digit && styles.otpInputFilled]}
+              onPress={() => otpInputRef.current?.focus()}
+              disabled={loading || isVerifying}
+            >
+              <Text style={styles.otpDigit}>{digit}</Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       <View style={styles.timerContainer}>
@@ -605,10 +612,10 @@ const LoginScreen = ({ navigation }) => {
       <TouchableOpacity
         style={[
           styles.loginBtn,
-          otp.join('').length !== OTP_LENGTH && styles.loginBtnDisabled,
+          otp.length !== OTP_LENGTH && styles.loginBtnDisabled,
         ]}
         onPress={() => verifyOTP()}
-        disabled={loading || isVerifying || otp.join('').length !== OTP_LENGTH}
+        disabled={loading || isVerifying || otp.length !== OTP_LENGTH}
       >
         {loading || isVerifying ? (
           <ActivityIndicator color="#000" />
@@ -853,10 +860,17 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   otpContainer: {
+    position: 'relative',
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginHorizontal: 10,
     marginBottom: 30,
+  },
+  otpHiddenInput: {
+    ...StyleSheet.absoluteFillObject,
+    color: 'transparent',
+    opacity: 0.01,
+    zIndex: 1,
   },
   otpInput: {
     width: 45,
@@ -864,11 +878,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E5E7EB',
     borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
     textAlign: 'center',
     fontSize: 24,
     fontWeight: 'bold',
     color: '#111827',
     backgroundColor: '#F8F9FA',
+  },
+  otpDigit: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#111827',
   },
   otpInputFilled: {
     borderColor: '#fccf1e',

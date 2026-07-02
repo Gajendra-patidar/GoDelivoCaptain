@@ -83,8 +83,11 @@ android {
         applicationId "com.godelivo.captain"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 9
-        versionName "2.1.0"
+        versionCode 10
+        versionName "2.1.1"
+        manifestPlaceholders = [
+            appAuthRedirectScheme: 'com.godelivo.captain'
+        ]
     }
     signingConfigs {
         release {
@@ -114,9 +117,10 @@ dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
+    implementation 'com.google.android.gms:play-services-location:20.0.0'
+
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
-        implementation 'com.google.android.gms:play-services-location:21.0.1'
     } else {
         implementation jscFlavor
     }

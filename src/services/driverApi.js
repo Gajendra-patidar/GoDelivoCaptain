@@ -4,6 +4,7 @@ import { CAPTAIN_BASE_URL, BASE_URL, API_HOST, DRIVER_BASE_URL } from './api';
 import LocationService from './locationService';
 import { clearActiveOrder } from './localDriverData';
 import { navigate } from '../navigations/navigationRef';
+import { OfflineQueue } from './offlineQueue';
 
 let isLoggingOut = false;
 
@@ -206,12 +207,24 @@ export const driverApi = {
     };
     console.log('check data', payload);
 
-    const response = await main_client.post(
-      '/rides/accept-with-socket',
-      payload,
-      config,
-    );
-    return response.data?.data;
+    try {
+      const response = await main_client.post(
+        '/rides/accept-with-socket',
+        payload,
+        config,
+      );
+      return response.data?.data;
+    } catch (error) {
+      // Enqueue if it's a network error or server (5xx) error
+      if (!error.response || error.response.status >= 500) {
+        await OfflineQueue.enqueue({
+          method: 'post',
+          url: '/rides/accept-with-socket',
+          data: payload,
+        });
+      }
+      throw error;
+    }
   },
 
   async rejectOrder(orderId, reason = 'Rejected by driver') {
@@ -227,13 +240,25 @@ export const driverApi = {
   async cancelOrder(orderId, reason = 'Cancelled by driver') {
     const config = await withAuth();
     await clearActiveOrder();
-    const response = await main_client.post(
-      `/rides/${orderId}/cancel`,
-      { reason, rideId: orderId },
-      config,
-    );
-
-    return response.data?.data;
+    
+    const payload = { reason, rideId: orderId };
+    try {
+      const response = await main_client.post(
+        `/rides/${orderId}/cancel`,
+        payload,
+        config,
+      );
+      return response.data?.data;
+    } catch (error) {
+      if (!error.response || error.response.status >= 500) {
+        await OfflineQueue.enqueue({
+          method: 'post',
+          url: `/rides/${orderId}/cancel`,
+          data: payload,
+        });
+      }
+      throw error;
+    }
   },
 
   async confirmPickup(orderId) {
@@ -260,12 +285,24 @@ export const driverApi = {
    */
   async completeRide(rideId, fare, paymentMethod = 'cash') {
     const config = await withAuth();
-    const response = await main_client.post(
-      '/rides/complete',
-      { rideId, fare, paymentMethod },
-      config,
-    );
-    return response.data?.data;
+    const payload = { rideId, fare, paymentMethod };
+    try {
+      const response = await main_client.post(
+        '/rides/complete',
+        payload,
+        config,
+      );
+      return response.data?.data;
+    } catch (error) {
+      if (!error.response || error.response.status >= 500) {
+        await OfflineQueue.enqueue({
+          method: 'post',
+          url: '/rides/complete',
+          data: payload,
+        });
+      }
+      throw error;
+    }
   },
 
   /**
@@ -274,12 +311,24 @@ export const driverApi = {
    */
   async arrivedAtPickup(rideId) {
     const config = await withAuth();
-    const response = await main_client.post(
-      '/rides/arrived',
-      { rideId },
-      config,
-    );
-    return response.data?.data;
+    const payload = { rideId };
+    try {
+      const response = await main_client.post(
+        '/rides/arrived',
+        payload,
+        config,
+      );
+      return response.data?.data;
+    } catch (error) {
+      if (!error.response || error.response.status >= 500) {
+        await OfflineQueue.enqueue({
+          method: 'post',
+          url: '/rides/arrived',
+          data: payload,
+        });
+      }
+      throw error;
+    }
   },
 
   /**
@@ -288,8 +337,20 @@ export const driverApi = {
    */
   async startRide(rideId) {
     const config = await withAuth();
-    const response = await main_client.post('/rides/start', { rideId }, config);
-    return response.data?.data;
+    const payload = { rideId };
+    try {
+      const response = await main_client.post('/rides/start', payload, config);
+      return response.data?.data;
+    } catch (error) {
+      if (!error.response || error.response.status >= 500) {
+        await OfflineQueue.enqueue({
+          method: 'post',
+          url: '/rides/start',
+          data: payload,
+        });
+      }
+      throw error;
+    }
   },
 
   async addTollCharge(orderId, amount) {

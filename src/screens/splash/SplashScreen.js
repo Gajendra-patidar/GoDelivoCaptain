@@ -5,6 +5,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import { BASE_URL } from '../../services/api';
 
+const MIN_SPLASH_TIME_MS = 3000; // Enforces a minimum display time for UI stability
+
 const getApplicationId = user => {
   return (
     user?.applicationId ||
@@ -61,9 +63,7 @@ const fetchJoiningFeeStatus = async (token, applicationId) => {
     },
   );
 
-  console.log("final jai shree ram splash", response?.data, applicationId);
-  
-
+  console.log("final status fetch in splash", response?.data, applicationId);
   return response?.data?.data || null;
 };
 
@@ -71,107 +71,112 @@ const SplashScreen = () => {
   const navigation = useNavigation();
 
   useEffect(() => {
-    // SPLASH SCREEN: 3 Second Delay
-    // Display splash screen for 3 seconds before navigating to next screen
-    const splashTimer = setTimeout(() => {
-      const checkTokenAndNavigate = async () => {
-        try {
-          const token = await AsyncStorage.getItem('userToken');
+    const checkTokenAndNavigate = async () => {
+      const startTime = Date.now();
+      try {
+        const token = await AsyncStorage.getItem('userToken');
 
-          
-          if (token) {
-            const storedUser = await AsyncStorage.getItem('userData');
-            const user = storedUser ? JSON.parse(storedUser) : null;
-            const phone = (await AsyncStorage.getItem('userPhone')) || user?.phone;
-            let latestUser = user;
+        if (!token) {
+          routeTo('Login', startTime);
+          return;
+        }
 
-            if (phone) {
-              try {
-                const response = await axios.get(`${BASE_URL}/status/${phone}`);
-                const statusUser = response?.data?.data || response?.data;
-                if (statusUser) {
-                  latestUser = {
-                    ...(user || {}),
-                    ...statusUser,
-                  };
-                }
-              } catch (error) {
-                console.log('Error fetching status in splash:', error?.message);
-              }
+        const storedUserRaw = await AsyncStorage.getItem('userData');
+        const user = storedUserRaw ? JSON.parse(storedUserRaw) : null;
+        const phone = (await AsyncStorage.getItem('userPhone')) || user?.phone;
+        
+        let latestUser = user;
+
+        // Perform status checks in parallel if we have a phone number
+        if (phone) {
+          try {
+            const statusResponse = await axios.get(`${BASE_URL}/status/${phone}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            const statusUser = statusResponse?.data?.data || statusResponse?.data;
+            if (statusUser) {
+              latestUser = {
+                ...(user || {}),
+                ...statusUser,
+              };
+              // Persist latest values back to async storage
+              await AsyncStorage.setItem('userData', JSON.stringify(latestUser));
             }
+          } catch (error) {
+            console.log('Error fetching status in splash:', error?.message);
+          }
+        }
 
-            const applicationId = getApplicationId(latestUser);
+        const applicationId = getApplicationId(latestUser);
 
-            if (applicationId) {
-              try {
-                const paymentData = await fetchJoiningFeeStatus(
-                  token,
-                  applicationId,
-                );
+        if (applicationId) {
+          try {
+            const paymentData = await fetchJoiningFeeStatus(token, applicationId);
 
-                if (
-                  !isJoiningFeePaid(paymentData) &&
-                  !isJoiningFeePaid(latestUser)
-                ) {
-                  navigation.replace('JoinFees', {
-                    formData: {
-                      ...(latestUser || {}),
-                      backendData: latestUser,
-                      vehicleType: latestUser?.vehicleType || user?.vehicleType,
-                    },
-                    applicationId,
-                  });
-                  return;
-                }
-
-                latestUser = {
+            if (!isJoiningFeePaid(paymentData) && !isJoiningFeePaid(latestUser)) {
+              routeTo('JoinFees', startTime, {
+                formData: {
                   ...(latestUser || {}),
-                  ...(paymentData || {}),
-                };
-              } catch (error) {
-                console.log(
-                  'Joining fee status check failed:',
-                  error?.response?.data || error?.message,
-                );
-
-                if (!isJoiningFeePaid(latestUser)) {
-                  navigation.replace('JoinFees', {
-                    formData: {
-                      ...(latestUser || {}),
-                      backendData: latestUser,
-                      vehicleType: latestUser?.vehicleType || user?.vehicleType,
-                    },
-                    applicationId,
-                  });
-                  return;
-                }
-              }
-            }
-
-            if (latestUser && isVerified(latestUser)) {
-              console.log("checking condition splash", latestUser, isVerified(latestUser));
-              
-              navigation.replace('MyTabs');
+                  backendData: latestUser,
+                  vehicleType: latestUser?.vehicleType || user?.vehicleType,
+                },
+                applicationId,
+              });
               return;
             }
 
-            navigation.replace('Docs', {
-              phone: latestUser?.phone || user?.phone,
-              data: latestUser,
-            });
-          } else {
-            navigation.replace('Login');
+            latestUser = {
+              ...(latestUser || {}),
+              ...(paymentData || {}),
+            };
+            await AsyncStorage.setItem('userData', JSON.stringify(latestUser));
+          } catch (error) {
+            console.log('Joining fee status check failed:', error?.response?.data || error?.message);
+
+            if (!isJoiningFeePaid(latestUser)) {
+              routeTo('JoinFees', startTime, {
+                formData: {
+                  ...(latestUser || {}),
+                  backendData: latestUser,
+                  vehicleType: latestUser?.vehicleType || user?.vehicleType,
+                },
+                applicationId,
+              });
+              return;
+            }
           }
-        } catch (error) {
-            navigation.replace('Login');
         }
-      };
 
-      checkTokenAndNavigate();
-    }, 3000); // 3 second delay
+        if (latestUser && isVerified(latestUser)) {
+          routeTo('MyTabs', startTime);
+          return;
+        }
 
-    // Cleanup timer on component unmount
-    return () => clearTimeout(splashTimer);
+        routeTo('Docs', startTime, {
+          phone: latestUser?.phone || user?.phone,
+          data: latestUser,
+        });
+
+      } catch (error) {
+        console.error('Splash navigation check failed:', error);
+        routeTo('Login', startTime);
+      }
+    };
+
+    const routeTo = (screenName, startTime, params = null) => {
+      const timeElapsed = Date.now() - startTime;
+      const remainingDelay = Math.max(0, MIN_SPLASH_TIME_MS - timeElapsed);
+
+      setTimeout(() => {
+        if (params) {
+          navigation.replace(screenName, params);
+        } else {
+          navigation.replace(screenName);
+        }
+      }, remainingDelay);
+    };
+
+    checkTokenAndNavigate();
   }, [navigation]);
 
   return (

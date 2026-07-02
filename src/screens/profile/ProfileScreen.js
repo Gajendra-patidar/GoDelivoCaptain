@@ -1214,7 +1214,7 @@ const styles = StyleSheet.create({
   verifiedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#0E2A1A',
+    backgroundColor: theme.colors.primary,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
@@ -1317,7 +1317,7 @@ const styles = StyleSheet.create({
   changeButton: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: '#111827',
+    backgroundColor: theme.colors.primarySoft,
     borderRadius: 6,
   },
   changeButtonText: {
@@ -1343,7 +1343,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#2A1010',
+    backgroundColor: '#ffffff',
     marginHorizontal: 16,
     marginTop: 20,
     marginBottom: 40,
@@ -1467,7 +1467,7 @@ const styles = StyleSheet.create({
   editBankButton: {
     marginTop: 12,
     padding: 8,
-    backgroundColor: '#111827',
+    backgroundColor: theme.colors.primarySoft,
     borderRadius: 6,
     alignItems: 'center',
   },

@@ -45,6 +45,7 @@ import { driverApi } from '../../services/driverApi';
 import { theme } from '../../theme';
 import SwipeToggle from '../../components/SwipeToggle';
 import LinearGradient from 'react-native-linear-gradient';
+import notifee, { EventType } from '@notifee/react-native';
 import {
   requestForegroundNotificationPermission,
   startService,
@@ -55,6 +56,12 @@ import {
   playOrderSound,
   stopOrderSound,
 } from '../../components/playOrderSound';
+import {
+  handleForegroundEvent,
+  processAcceptRide,
+  processRejectRide,
+} from '../../services/rideRequestHandler';
+import { cancelRideRequestNotification } from '../../services/rideRequestNotification';
 import SocketService from '../../services/socketService';
 import { setLocationPermission } from '../../store/slices/permissionSlice';
 import { getLocationPermission } from '../../services/permissionService';
@@ -74,7 +81,7 @@ const getTimeGreeting = () => {
 };
 
 const logComingOrder = (source, order) => {
-  console.log('[COMING_ORDER]', source, order);
+  console.log('[COMING_ORDER Ram ram ram krishna]', source, order);
 };
 
 const HomeScreen = ({ navigation }) => {
@@ -101,6 +108,8 @@ const HomeScreen = ({ navigation }) => {
 
   const pollRef = useRef(null);
   const appState = useRef(AppState.currentState);
+  const toggleRequestRef = useRef(0);
+  const latestToggleTargetRef = useRef(isOnline);
   const DUE_AMOUNT_THRESHOLD = -50;
   const hasDueAmount = Number(walletBalance || 0) < DUE_AMOUNT_THRESHOLD;
   const displayName = profile?.name || 'Captain';
@@ -119,12 +128,34 @@ const HomeScreen = ({ navigation }) => {
     dispatch(getProfile());
   }, [dispatch]);
 
+  useEffect(() => {
+    latestToggleTargetRef.current = isOnline;
+    console.log(
+      '[ONLINE_STATUS] Redux status:',
+      isOnline ? 'online' : 'offline',
+    );
+
+    const syncForegroundNotification = async () => {
+      try {
+        if (isOnline) {
+          await startService('online');
+          return;
+        }
+
+        await stopService();
+      } catch (error) {
+        console.log('Foreground status notification sync error:', error);
+      }
+    };
+
+    syncForegroundNotification();
+  }, [isOnline]);
+
   // Health check for location service
   const checkLocationHealth = useCallback(async () => {
     try {
       const status = LocationService.getConnectionStatus();
       const coords = LocationService.getLastCoords();
-
 
       const isStale = status.lastLocationAge && status.lastLocationAge > 30000;
 
@@ -151,7 +182,7 @@ const HomeScreen = ({ navigation }) => {
         setWalletBalance(local.balance);
         return;
       }
-    } catch { }
+    } catch {}
 
     const fallbackWallet = await getWalletData();
     setWalletBalance(fallbackWallet.balance);
@@ -182,8 +213,7 @@ const HomeScreen = ({ navigation }) => {
         setOrderComing(true);
         playOrderSound();
       }
-    } catch (error) {
-    }
+    } catch (error) {}
   }, [isOnline, navigation, orderComing]);
 
   const loadHomeData = useCallback(async () => {
@@ -193,6 +223,7 @@ const HomeScreen = ({ navigation }) => {
     if (activeOrder) {
       SocketService.setActiveRide(activeOrder.rideId || activeOrder.id);
       navigation.navigate('Map', { order: activeOrder });
+      console.log('comming order data', activeOrder);
       return;
     }
 
@@ -222,8 +253,7 @@ const HomeScreen = ({ navigation }) => {
               setDocDes(profileData.rejectionReason || 'Documents rejected');
             }
           }
-        } catch (error) {
-        }
+        } catch (error) {}
       };
 
       loadHomeData();
@@ -318,7 +348,6 @@ const HomeScreen = ({ navigation }) => {
   const initializeSocketListeners = useCallback(() => {
     // Listen for new ride requests via Socket.io
     SocketService.on('new_ride', async rideData => {
-
       if (isOnline && !orderComing) {
         const activeOrder = await getActiveOrder();
         if (!activeOrder) {
@@ -373,8 +402,7 @@ const HomeScreen = ({ navigation }) => {
 
       // Initialize Socket.io listeners
       initializeSocketListeners();
-    } catch (error) {
-    }
+    } catch (error) {}
   }, [
     handleIncomingMessage,
     handleNotificationPress,
@@ -427,6 +455,75 @@ const HomeScreen = ({ navigation }) => {
     checkLocationHealth,
   ]);
 
+  // ── Listen for foreground notification action events (Accept/Reject) ──────
+  useEffect(() => {
+    const unsubscribeForegroundEvent = notifee.onForegroundEvent(
+      async ({ type, detail }) => {
+        if (type !== EventType.ACTION_PRESS) {
+          return;
+        }
+
+        const pressAction = detail?.pressAction;
+        const notification = detail?.notification;
+        const data = notification?.data || {};
+
+        if (!pressAction) {
+          return;
+        }
+
+        const actionId = pressAction.id;
+
+        if (actionId === 'accept_ride') {
+          // Stop any playing sound
+          stopOrderSound();
+
+          // Cancel the notification immediately
+          const rideId =
+            data?.rideId || data?.id || data?._id || data?.orderId || '';
+          await cancelRideRequestNotification(rideId);
+
+          // If the OrderModal is showing, close it
+          if (orderComing) {
+            setOrderComing(false);
+            setNotificationData(null);
+          }
+
+          // Process accept via the ride request handler
+          const acceptedRide = await processAcceptRide(data);
+          if (acceptedRide) {
+            navigation.navigate('Map', { order: acceptedRide });
+          } else {
+            toast.error('Failed to accept ride. Please try again.');
+          }
+        }
+
+        if (actionId === 'reject_ride') {
+          const rideId =
+            data?.rideId || data?.id || data?._id || data?.orderId || '';
+
+          // Cancel the notification
+          await cancelRideRequestNotification(rideId);
+
+          // If the OrderModal is showing, close it
+          if (orderComing) {
+            stopOrderSound();
+            setOrderComing(false);
+            setNotificationData(null);
+          }
+
+          // Process reject via the ride request handler
+          await processRejectRide(data);
+        }
+      },
+    );
+
+    return () => {
+      if (typeof unsubscribeForegroundEvent === 'function') {
+        unsubscribeForegroundEvent();
+      }
+    };
+  }, [navigation, orderComing, checkNearbyOrders]);
+
   // Periodic location service health check when online
   useEffect(() => {
     let healthInterval;
@@ -460,7 +557,16 @@ const HomeScreen = ({ navigation }) => {
     if (isOnline) {
       checkNearbyOrders();
       pollRef.current = setInterval(() => {
-        checkNearbyOrders();
+        // Reduce API hammering if Socket is connected by scaling request rate
+        const isSocketHealthy = SocketService.isSocketConnected();
+        if (!isSocketHealthy) {
+          checkNearbyOrders();
+        } else {
+          // Dynamic low-frequency verification (approx. once every 60s)
+          if (Math.random() < 0.2) {
+            checkNearbyOrders();
+          }
+        }
       }, 12000);
     }
 
@@ -472,178 +578,24 @@ const HomeScreen = ({ navigation }) => {
   }, [checkNearbyOrders, isOnline]);
 
   const handleToggleOnline = async targetState => {
-    // If targetState is provided, validate it's different from current state
-    // If not provided, toggle to opposite of current state
     const nextStatus = targetState !== undefined ? targetState : !isOnline;
+    const nextStatusLabel = nextStatus ? 'online' : 'offline';
 
-    // Prevent duplicate calls to the same state
-    if (nextStatus === isOnline) {
+    console.log(
+      '[ONLINE_STATUS] Toggle requested:',
+      nextStatus,
+      nextStatusLabel,
+    );
+
+    if (nextStatus === isOnline || toggleBusy) {
+      console.log('[ONLINE_STATUS] Toggle ignored:', {
+        reason: toggleBusy ? 'toggle busy' : 'already in requested status',
+        current: isOnline ? 'online' : 'offline',
+      });
       return false;
     }
 
-    if (toggleBusy) {
-      return false;
-    }
-
-    if (!nextStatus) {
-      const activeOrder = await getActiveOrder();
-      if (activeOrder) {
-        Alert.alert(
-          'Order in Progress',
-          'You cannot go offline while an order is active. Please complete or cancel the current order.',
-          [{ text: 'OK' }],
-        );
-        return false;
-      }
-    }
-
-    setToggleBusy(true);
-    setPendingOnlineStatus(nextStatus);
-    let locationServiceStarted = false;
-    let foregroundServiceStarted = false;
-
-    try {
-      if (nextStatus) {
-        // ========== GOING ONLINE ==========
-        const notificationAllowed =
-          await requestForegroundNotificationPermission();
-
-        if (!notificationAllowed) {
-          throw new Error('notification permission denied');
-        }
-
-        // Start location tracking
-        try {
-          await LocationService.start();
-          locationServiceStarted = true;
-          const status = LocationService.getConnectionStatus();
-
-          if (!status.hasLocation) {
-            throw new Error('device location is off or unavailable');
-          }
-
-          setLocationServiceHealthy(true);
-        } catch (locationError) {
-          console.error('Location service start error:', locationError);
-          throw new Error(
-            'Failed to start location service: ' + locationError.message,
-          );
-        }
-
-        // Start foreground service
-        try {
-          await startService();
-          foregroundServiceStarted = true;
-        } catch (foregroundError) {
-          console.error('Foreground service error:', foregroundError);
-          throw new Error('Failed to start foreground service');
-        }
-
-        // Update server status
-        let serverResult;
-        try {
-          serverResult = await driverApi.updateOnlineStatus(true);
-        } catch (serverError) {
-          console.error('Server status update error:', serverError);
-          throw new Error('Failed to update server status');
-        }
-
-        // Update Redux state only after the server accepts the online request
-        try {
-          dispatch(setOnline());
-        } catch (reduxError) {
-          console.error('Redux update error:', reduxError);
-        }
-
-        // Emit socket events: join driver pool + status change
-        try {
-          SocketService.emitStatusChange(true, true);
-        } catch (socketError) {
-          console.error('Socket status emit error:', socketError);
-        }
-
-        // Update notification service
-        try {
-          await NotificationService.updateOnlineStatus(true);
-        } catch (notificationError) {
-          console.error(
-            'Notification service update error:',
-            notificationError,
-          );
-        }
-
-        // Check for nearby orders
-        if (serverResult?.nearbyOrder) {
-          setNotificationData(serverResult?.nearbyOrder);
-          logComingOrder('online-status-response', serverResult?.nearbyOrder);
-
-          setOrderComing(true);
-        }
-      } else {
-        // ========== GOING OFFLINE ==========
-        // Update server status before changing the local visible state
-        try {
-          await driverApi.updateOnlineStatus(false);
-        } catch (serverError) {
-          console.error('Server status update error:', serverError);
-          throw new Error('Failed to update server status to offline');
-        }
-
-        // Stop location tracking
-        try {
-          await LocationService.stop();
-        } catch (locationError) {
-          console.error('Location service stop error:', locationError);
-        }
-
-        // Stop foreground service
-        try {
-          await stopService();
-        } catch (foregroundError) {
-          console.error('Foreground service stop error:', foregroundError);
-        }
-
-        // Update Redux state
-        try {
-          dispatch(setOffline());
-        } catch (reduxError) {
-          console.error('Redux update error:', reduxError);
-        }
-
-        // Emit socket event: driver going offline
-        try {
-          SocketService.emitStatusChange(false, false);
-        } catch (socketError) {
-          console.error('Socket offline emit error:', socketError);
-        }
-
-        // Update notification service
-        try {
-          await NotificationService.updateOnlineStatus(false);
-        } catch (notificationError) {
-          console.error(
-            'Notification service update error:',
-            notificationError,
-          );
-        }
-
-        // Clear any pending orders
-        try {
-          await clearActiveOrder();
-          SocketService.clearActiveRide();
-          setOrderComing(false);
-          setNotificationData(null);
-
-        } catch (clearError) {
-          console.error('Clear orders error:', clearError);
-        }
-      }
-
-      setStatusModalVisible(true);
-      return true;
-    } catch (error) {
-      console.error('Toggle online error:', error);
-
+    const showToggleFailure = error => {
       let errorMessage = 'Failed to update status. Please try again.';
       const failureReason = String(error?.message || '').toLowerCase();
 
@@ -669,69 +621,222 @@ const HomeScreen = ({ navigation }) => {
       }
 
       Alert.alert('Status Update Failed', errorMessage, [{ text: 'OK' }]);
+    };
 
-      // ROLLBACK CHANGES on failure
-      try {
-        if (nextStatus) {
+    if (!nextStatus) {
+      const activeOrder = await getActiveOrder();
+      if (activeOrder) {
+        Alert.alert(
+          'Order in Progress',
+          'You cannot go offline while an order is active. Please complete or cancel the current order.',
+          [{ text: 'OK' }],
+        );
+        return false;
+      }
+    }
 
-          if (locationServiceStarted) {
-            try {
-              await LocationService.stop();
-            } catch (stopError) {
-              console.error('Rollback stop error:', stopError);
-            }
-          }
+    const requestId = ++toggleRequestRef.current;
+    latestToggleTargetRef.current = nextStatus;
+    const isCurrentToggle = () => toggleRequestRef.current === requestId;
 
-          if (foregroundServiceStarted) {
-            try {
-              await stopService();
-            } catch (stopError) {
-              console.error('Rollback foreground stop error:', stopError);
-            }
-          }
+    console.log('[ONLINE_STATUS] Toggle started:', {
+      requestId,
+      status: nextStatusLabel,
+    });
 
-          try {
-            dispatch(setOffline());
-          } catch (reduxError) {
-            console.error('Rollback redux error:', reduxError);
-          }
+    setToggleBusy(true);
+    setPendingOnlineStatus(nextStatus);
 
-          try {
-            await NotificationService.updateOnlineStatus(false);
-          } catch (notificationError) {
-            console.error('Rollback notification error:', notificationError);
-          }
-        } else {
+    try {
+      if (nextStatus) {
+        const notificationAllowed =
+          await requestForegroundNotificationPermission();
 
-          try {
-            // 
-            await LocationService.start();
-          } catch (startError) {
-            console.error('Rollback start error:', startError);
-          }
-
-          try {
-            await startService();
-          } catch (startError) {
-            console.error('Rollback foreground start error:', startError);
-          }
-
-          try {
-            dispatch(setOnline());
-          } catch (reduxError) {
-            console.error('Rollback redux error:', reduxError);
-          }
-
-          try {
-            await NotificationService.updateOnlineStatus(true);
-          } catch (notificationError) {
-            console.error('Rollback notification error:', notificationError);
-          }
+        if (!notificationAllowed) {
+          console.log('[ONLINE_STATUS] Notification permission denied');
+          throw new Error('notification permission denied');
         }
-      } catch (rollbackError) {
-        console.error('Critical rollback error:', rollbackError);
+
+        const locationAllowed = await getLocationPermission();
+        dispatch(setLocationPermission(locationAllowed));
+        console.log('[ONLINE_STATUS] Location permission:', locationAllowed);
+
+        if (!locationAllowed) {
+          throw new Error('location permission denied');
+        }
+
+        setStatusModalVisible(true);
+
+        Promise.resolve()
+          .then(async () => {
+            const stopStaleOnlineStartup = async () => {
+              if (latestToggleTargetRef.current) {
+                return;
+              }
+
+              LocationService.stop();
+
+              try {
+                await stopService();
+              } catch (foregroundError) {
+                console.error('Stale foreground stop error:', foregroundError);
+              }
+            };
+
+            try {
+              await Promise.all([LocationService.start(), startService()]);
+
+              if (!isCurrentToggle()) {
+                console.log('[ONLINE_STATUS] Online startup stale:', requestId);
+                await stopStaleOnlineStartup();
+                return;
+              }
+
+              const status = LocationService.getConnectionStatus();
+              console.log('[ONLINE_STATUS] Location service status:', status);
+              if (!status.hasLocation) {
+                throw new Error('device location is off or unavailable');
+              }
+
+              setLocationServiceHealthy(true);
+
+              const serverResult = await driverApi.updateOnlineStatus(true);
+              console.log(
+                '[ONLINE_STATUS] Server status synced: online',
+                serverResult,
+              );
+
+              if (!isCurrentToggle()) {
+                console.log(
+                  '[ONLINE_STATUS] Online server sync stale:',
+                  requestId,
+                );
+                await stopStaleOnlineStartup();
+                return;
+              }
+
+              // Update Redux state ONLY after server validation succeeds
+              dispatch(setOnline());
+              console.log('[ONLINE_STATUS] Local status set: online');
+
+              SocketService.emitStatusChange(true, true);
+              console.log('[ONLINE_STATUS] Socket status emitted: online');
+              NotificationService.updateOnlineStatus(true).catch(
+                notificationError => {
+                  console.error(
+                    'Notification service update error:',
+                    notificationError,
+                  );
+                },
+              );
+
+              if (serverResult?.nearbyOrder) {
+                setNotificationData(serverResult.nearbyOrder);
+                logComingOrder(
+                  'online-status-response',
+                  serverResult.nearbyOrder,
+                );
+                setOrderComing(true);
+              }
+            } catch (error) {
+              console.error('Online background sync error:', error);
+
+              if (!isCurrentToggle()) {
+                return;
+              }
+
+              showToggleFailure(error);
+              LocationService.stop();
+
+              try {
+                await stopService();
+              } catch (foregroundError) {
+                console.error(
+                  'Rollback foreground stop error:',
+                  foregroundError,
+                );
+              }
+
+              latestToggleTargetRef.current = false;
+              dispatch(setOffline());
+              console.log('[ONLINE_STATUS] Rollback local status: offline');
+              setLocationServiceHealthy(false);
+
+              NotificationService.updateOnlineStatus(false).catch(
+                notificationError => {
+                  console.error(
+                    'Rollback notification error:',
+                    notificationError,
+                  );
+                },
+              );
+            }
+          })
+          .catch(error => {
+            console.error('Online toggle task error:', error);
+          });
+
+        return true;
       }
 
+      setOrderComing(false);
+      setNotificationData(null);
+      setStatusModalVisible(true);
+
+      Promise.resolve()
+        .then(async () => {
+          LocationService.stop();
+          SocketService.emitStatusChange(false, false);
+          SocketService.clearActiveRide();
+
+          const offlineResults = await Promise.allSettled([
+            driverApi.updateOnlineStatus(false),
+            stopService(),
+            NotificationService.updateOnlineStatus(false),
+            clearActiveOrder(),
+          ]);
+
+          if (!isCurrentToggle()) {
+            console.log('[ONLINE_STATUS] Offline sync stale:', requestId);
+            return;
+          }
+
+          setLocationServiceHealthy(false);
+          console.log('[ONLINE_STATUS] Offline sync results:', offlineResults);
+
+          if (offlineResults[0].status === 'rejected') {
+            console.error(
+              'Server offline sync error:',
+              offlineResults[0].reason,
+            );
+            toast.error('Offline status sync failed. Please try again.');
+
+            // ROLLBACK: Re-enable online state locally and restart tracking
+            dispatch(setOnline());
+            await Promise.all([LocationService.start(), startService()]);
+            SocketService.emitStatusChange(true, true);
+          } else {
+            // SUCCESS: Set offline locally
+            dispatch(setOffline());
+            console.log('[ONLINE_STATUS] Local status set: offline');
+          }
+        })
+        .catch(error => {
+          console.error('Offline background sync error:', error);
+          if (isCurrentToggle()) {
+            toast.error('Offline status sync failed. Please try again.');
+          }
+        });
+
+      return true;
+    } catch (error) {
+      console.error('Toggle online error:', error);
+      showToggleFailure(error);
+      latestToggleTargetRef.current = isOnline;
+
+      if (isCurrentToggle()) {
+        toggleRequestRef.current += 1;
+      }
       return false;
     } finally {
       setToggleBusy(false);
@@ -750,7 +855,7 @@ const HomeScreen = ({ navigation }) => {
     try {
       // Step 3.2: Accept via HTTP API
       const accepted = await driverApi.acceptOrder(order?.rideId);
-      console.log("dbxs csjkc ", accepted);
+      console.log('dbxs csjkc ', accepted);
 
       const finalOrder =
         accepted && accepted.rideId
@@ -797,7 +902,7 @@ const HomeScreen = ({ navigation }) => {
     stopOrderSound();
     try {
       await driverApi.rejectOrder(order.id);
-    } catch { }
+    } catch {}
 
     await addNotification({
       title: 'Order Rejected',
@@ -877,14 +982,19 @@ const HomeScreen = ({ navigation }) => {
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }
       >
-        <ImageBackground source={require('../../assets/header_2.png')} style={styles.headerWrap}>
+        <ImageBackground
+          source={require('../../assets/header_2.png')}
+          style={styles.headerWrap}
+        >
           <View style={styles.headerTopRow}>
             <View style={styles.headerLeft}>
               <Text style={styles.brand}>GoDelivo</Text>
-              <Text style={styles.greeting} numberOfLines={2}>
+              <Text style={styles.greeting} numberOfLines={1}>
                 Hello, {displayName}
               </Text>
-              <Text style={{fontSize:16, fontWeight:'500'}} >{timeGreeting}</Text>
+              <Text style={{ fontSize: 16, fontWeight: '500' }}>
+                {timeGreeting}
+              </Text>
             </View>
 
             <View style={styles.headerActions}>
@@ -948,7 +1058,16 @@ const HomeScreen = ({ navigation }) => {
                       isOnline ? styles.pillOnline : styles.pillOffline,
                     ]}
                   >
-                    <Text style={styles.statusPillText}>
+                    <Text
+                      style={[
+                        styles.statusPillText,
+                        {
+                          color: isOnline
+                            ? theme.colors.success
+                            : theme.colors.ink,
+                        },
+                      ]}
+                    >
                       {isOnline ? t('online') : t('offline')}
                     </Text>
                   </View>
@@ -1347,7 +1466,6 @@ const styles = StyleSheet.create({
   statusPillText: {
     fontWeight: '800',
     fontSize: moderateScale(12),
-    color: theme.colors.ink,
   },
   pillOnline: {
     backgroundColor: 'rgba(255,255,255,0.55)',

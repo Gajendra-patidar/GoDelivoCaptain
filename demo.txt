@@ -1,0 +1,381 @@
+# Driver App: React Native Implementation Guide
+This guide describes how to toggle online status, capture and stream real-time GPS locations, handle trip milestones (arrive, start, complete), and implement chat inside the **Driver React Native codebase**.
+---
+## 1. Setup & Socket Connection
+Install the packages in your Driver App project:
+```bash
+npm install socket.io-client @react-native-community/geolocation
+```
+Create `src/services/socket.js` to manage the WebSocket connection:
+```javascript
+import { io } from 'socket.io-client';
+const BACKEND_URL = 'https://godelivo.com'; // Use local IP for local debugging, e.g., 'http://192.168.1.5:5001'
+let socket = null;
+export const connectSocket = () => {
+  if (!socket || !socket.connected) {
+    socket = io(BACKEND_URL, {
+      transports: ['websocket'],
+      reconnection: true,
+      reconnectionAttempts: 10,
+    });
+    socket.on('connect', () => console.log('Driver Socket connected:', socket.id));
+    socket.on('disconnect', () => console.log('Driver Socket disconnected'));
+  }
+  return socket;
+};
+export const getSocket = () => socket;
+export const disconnectSocket = () => {
+  if (socket) {
+    socket.disconnect();
+    socket = null;
+  }
+};
+```
+---
+## 2. Managing Online Status (General Presence)
+When the driver signs in and toggles "Go Online", connect to the socket and notify the system. This registers the driver in the search pool for receiving nearby requests:
+```javascript
+import { connectSocket } from './services/socket';
+export const goOnline = (driverId) => {
+  const socket = connectSocket();
+  // 1. Join namespace driver list
+  socket.emit('driver:join', driverId);
+  // 2. Set status to online and available
+  socket.emit('driver:status-change', {
+    driverId,
+    isOnline: true,
+    isAvailable: true
+  });
+  
+  // 3. Keep-alive heartbeat (emit every 2 minutes to prevent auto-offline timeout)
+  setInterval(() => {
+    socket.emit('driver:heartbeat', { driverId });
+  }, 120000);
+};
+export const goOffline = (driverId) => {
+  const socket = getSocket();
+  if (socket) {
+    socket.emit('driver:offline', { driverId });
+    disconnectSocket();
+  }
+};
+```
+---
+## 3. Accept Ride, Track GPS, and Handle Milestones
+When the driver accepts a ride request, start the GPS publishing loop and handle trip statuses:
+```javascript
+import React, { useEffect, useState, useRef } from 'react';
+import { StyleSheet, View, Text, Button, Alert } from 'react-native';
+import Geolocation from '@react-native-community/geolocation';
+import { connectSocket, getSocket } from '../services/socket';
+const DriverRideScreen = ({ route, navigation }) => {
+  const { rideId, driverId, driverToken } = route.params;
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const [tripStatus, setTripStatus] = useState('driver_assigned');
+  const locationInterval = useRef(null);
+  useEffect(() => {
+    // 1. Join ride-specific room on socket server
+    const socket = connectSocket();
+    socket.emit('driver:join-tracking', { driverId, rideId });
+    // 2. Start capturing coordinates
+    startLocationStream(socket);
+    return () => {
+      if (locationInterval.current) {
+        clearInterval(locationInterval.current);
+      }
+    };
+  }, [rideId, driverId]);
+  const startLocationStream = (socket) => {
+    // capture and emit location every 3 seconds
+    locationInterval.current = setInterval(() => {
+      Geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude, heading, speed } = position.coords;
+          setCurrentLocation({ latitude, longitude });
+          // Emit coordinate packets
+          socket.emit('driver:location-update', {
+            driverId,
+            rideId,
+            latitude,
+            longitude,
+            bearing: heading || 0,
+            speed: speed ? (speed * 3.6) : 0, // convert m/s to km/h
+            accuracy: position.coords.accuracy,
+          });
+        },
+        (err) => console.log('GPS capture error:', err),
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 1000 }
+      );
+    }, 3000);
+  };
+  const triggerArrival = () => {
+    const socket = getSocket();
+    if (socket && currentLocation) {
+      socket.emit('driver:arrived', {
+        rideId,
+        driverId,
+        location: {
+          type: 'Point',
+          coordinates: [currentLocation.longitude, currentLocation.latitude] // Mongo order: [lng, lat]
+        }
+      });
+      setTripStatus('driver_arrived');
+    }
+  };
+  const triggerStartTrip = () => {
+    const socket = getSocket();
+    if (socket) {
+      socket.emit('ride:started', { rideId, driverId });
+      setTripStatus('in_progress');
+    }
+  };
+  const triggerCompleteTrip = async () => {
+    // 1. Stop sending GPS points
+    if (locationInterval.current) {
+      clearInterval(locationInterval.current);
+    }
+    const socket = getSocket();
+    const finalFare = 150; // Replace with dynamic fare
+    try {
+      // 2. Log transaction on DB
+      const response = await fetch('https://godelivo.com/api/rides/complete', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${driverToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ rideId, fare: finalFare, paymentMethod: 'cash' })
+      });
+      
+      const res = await response.json();
+      if (res.success) {
+        // 3. Tell customer via sockets
+        socket.emit('ride:completed', {
+          rideId,
+          driverId,
+          fare: finalFare,
+          paymentMethod: 'cash'
+        });
+        // 4. Return to available status
+        socket.emit('driver:status-change', {
+          driverId,
+          isOnline: true,
+          isAvailable: true
+        });
+        Alert.alert('Trip Done', 'Earnings credited. Returning to home screen.', [
+          { text: 'OK', onPress: () => navigation.navigate('DriverHome') }
+        ]);
+      } else {
+        Alert.alert('Error', res.message || 'Complete request failed');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Ride: {rideId}</Text>
+      <Text style={styles.status}>Status: {tripStatus.replace('_', ' ').toUpperCase()}</Text>
+      
+      {currentLocation && (
+        <Text style={styles.coords}>
+          GPS: {currentLocation.latitude.toFixed(5)}, {currentLocation.longitude.toFixed(5)}
+        </Text>
+      )}
+      <View style={styles.btnRow}>
+        {tripStatus === 'driver_assigned' && (
+          <Button title="I Have Arrived" onPress={triggerArrival} />
+        )}
+        
+        {tripStatus === 'driver_arrived' && (
+          <Button title="Start Trip" color="green" onPress={triggerStartTrip} />
+        )}
+        
+        {tripStatus === 'in_progress' && (
+          <Button title="Complete Order Delivery" color="red" onPress={triggerCompleteTrip} />
+        )}
+      </View>
+      
+      <Button
+        title="💬 Open Chat"
+        onPress={() => navigation.navigate('DriverChat', { rideId, driverId, driverToken })}
+      />
+    </View>
+  );
+};
+const styles = StyleSheet.create({
+  container: { flex: 1, padding: 24, justifyContent: 'center', alignItems: 'center' },
+  title: { fontSize: 20, fontWeight: 'bold' },
+  status: { fontSize: 16, marginVertical: 8, color: '#0080ff' },
+  coords: { fontSize: 12, color: '#999', marginBottom: 24 },
+  btnRow: { width: '100%', gap: 12, marginBottom: 24 }
+});
+export default DriverRideScreen;
+```
+---
+## 4. Driver Chat Screen (`src/screens/DriverChatScreen.js`)
+This screen establishes real-time message tracking on the Driver codebase side.
+```javascript
+import React, { useEffect, useState, useRef } from 'react';
+import {
+  StyleSheet,
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator
+} from 'react-native';
+import { connectSocket, getSocket } from '../services/socket';
+const DriverChatScreen = ({ route }) => {
+  const { rideId, driverId, driverToken } = route.params;
+  const [messages, setMessages] = useState([]);
+  const [inputText, setInputText] = useState('');
+  const [loading, setLoading] = useState(true);
+  const flatListRef = useRef(null);
+  useEffect(() => {
+    // 1. Fetch old logs
+    fetchChatHistory();
+    // 2. Set up socket connection
+    const socket = connectSocket();
+    // 3. Register presence inside chat namespace
+    socket.emit('chat:join', {
+      rideId,
+      userId: driverId,
+      userType: 'driver'
+    });
+    // 4. Listen for real-time customer replies
+    socket.on('chat:new_message', (msg) => {
+      setMessages((prev) => {
+        if (prev.some((m) => m._id === msg._id)) return prev; // Deduplication
+        return [
+          ...prev,
+          {
+            ...msg,
+            isOwnMessage: msg.senderId.toString() === driverId.toString(),
+          }
+        ];
+      });
+    });
+    return () => {
+      socket.emit('chat:leave');
+      socket.off('chat:new_message');
+    };
+  }, [rideId, driverId]);
+  // Keep FlatList scrolled to bottom
+  useEffect(() => {
+    if (messages.length > 0) {
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    }
+  }, [messages]);
+  const fetchChatHistory = async () => {
+    try {
+      const response = await fetch(`https://godelivo.com/api/chat/history/${rideId}`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${driverToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      const res = await response.json();
+      if (res.success) {
+        setMessages(res.data.messages || []);
+      }
+    } catch (error) {
+      console.error('History API error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+  const handleSendMessage = () => {
+    if (inputText.trim() === '') return;
+    const socket = getSocket();
+    if (socket && socket.connected) {
+      socket.emit('chat:send_message', {
+        rideId,
+        message: inputText.trim()
+      });
+      setInputText('');
+    }
+  };
+  const renderBubble = ({ item }) => {
+    const isOwn = item.isOwnMessage;
+    return (
+      <View style={[styles.bubble, isOwn ? styles.ownBubble : styles.otherBubble]}>
+        <Text style={[styles.senderName, isOwn ? styles.ownText : styles.otherText]}>
+          {isOwn ? 'You' : item.senderName}
+        </Text>
+        <Text style={[styles.messageText, isOwn ? styles.ownText : styles.otherText]}>
+          {item.message}
+        </Text>
+        <Text style={[styles.timestamp, isOwn ? styles.ownTime : styles.otherTime]}>
+          {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </Text>
+      </View>
+    );
+  };
+  if (loading) {
+    return (
+      <View style={styles.loader}>
+        <ActivityIndicator size="large" color="#0080ff" />
+      </View>
+    );
+  }
+  return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+    >
+      <FlatList
+        ref={flatListRef}
+        data={messages}
+        keyExtractor={(item) => item._id || Math.random().toString()}
+        renderItem={renderBubble}
+        contentContainerStyle={styles.listContainer}
+        onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+      />
+      <View style={styles.inputBar}>
+        <TextInput
+          style={styles.textInput}
+          placeholder="Send a message to customer..."
+          value={inputText}
+          onChangeText={setInputText}
+          multiline
+        />
+        <TouchableOpacity style={styles.sendButton} onPress={handleSendMessage}>
+          <Text style={styles.sendText}>Send</Text>
+        </TouchableOpacity>
+      </View>
+    </KeyboardAvoidingView>
+  );
+};
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f9f9f9' },
+  loader: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  listContainer: { padding: 16, gap: 12 },
+  bubble: { maxWidth: '80%', padding: 12, borderRadius: 16 },
+  ownBubble: { alignSelf: 'flex-end', backgroundColor: '#0080ff', borderBottomRightRadius: 2 },
+  otherBubble: { alignSelf: 'flex-start', backgroundColor: '#fff', borderBottomLeftRadius: 2, borderWidth: 1, borderColor: '#eee' },
+  senderName: { fontSize: 11, fontWeight: '600', marginBottom: 2 },
+  messageText: { fontSize: 15, lineHeight: 20 },
+  timestamp: { fontSize: 9, alignSelf: 'flex-end', marginTop: 4 },
+  ownText: { color: '#fff' },
+  otherText: { color: '#333' },
+  ownTime: { color: 'rgba(255,255,255,0.7)' },
+  otherTime: { color: '#999' },
+  inputBar: { flexDirection: 'row', padding: 12, backgroundColor: '#fff', alignItems: 'center', borderTopWidth: 1, borderColor: '#eee' },
+  textInput: { flex: 1, backgroundColor: '#f0f0f0', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8, marginRight: 8, maxHeight: 100 },
+  sendButton: { backgroundColor: '#0080ff', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10 },
+  sendText: { color: '#fff', fontWeight: 'bold' }
+});
+export default DriverChatScreen;
+```
+---
+## 5. Background GPS Captures for Drivers
+Since driver coordinates must be sent continually, even when the driver minimises the app or locks their device, standard React Native javascript timers will be suspended. 
+* To resolve this, integrate the **`react-native-background-geolocation`** library into your Driver codebase to handle coordinate captures from the OS core. Configure it to make direct HTTP requests (`POST /api/rides/update-location`) as fallback tracking loops.

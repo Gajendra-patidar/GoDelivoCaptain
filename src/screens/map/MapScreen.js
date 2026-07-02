@@ -24,11 +24,11 @@ import {
   Animated,
   Image,
 } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE, Polyline } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE, Polyline, AnimatedRegion } from 'react-native-maps';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { moderateScale } from 'react-native-size-matters';
 import MapViewDirections from 'react-native-maps-directions';
-import Geolocation from '@react-native-community/geolocation';
+import LocationService from '../../services/locationService';
 import {
   addNotification,
   completeOrder,
@@ -49,6 +49,7 @@ import { selectProfile } from '../../store/slices/profileSlice';
 import { getLocationPermission } from '../../services/permissionService';
 
 import imgPath from '../../constant/imgPath';
+import toast from '../../utils/toast';
 
 const { width, height } = Dimensions.get('window');
 
@@ -272,7 +273,10 @@ const MapScreen = ({ navigation, route }) => {
 
   const [initialOrder] = useState(() => route?.params?.order || null);
 
-  // 
+  console.log("order hi order ", order, rawOrder);
+  
+
+  //
   // Transform the pending request format to the format expected by the component
   const normalizedOrder = useMemo(() => {
     if (!rawOrder) {
@@ -305,7 +309,7 @@ const MapScreen = ({ navigation, route }) => {
         paymentMode: 'cash', // Default to cash, can be updated from API
         requestedAt: rawOrder.requestedAt,
         distance: rawOrder.rideDetails?.distance || 0,
-        duration: rawOrder.rideDetails?.duration || 0,
+        duration: rawOrder.rideDetails?.eta || 0,
       };
     }
 
@@ -315,7 +319,7 @@ const MapScreen = ({ navigation, route }) => {
 
   const order_data = rawOrder;
 
-  // 
+  //
   const pickup = useMemo(() => {
     const coords = order?.pickupLocation?.coordinates;
     return coords
@@ -348,10 +352,25 @@ const MapScreen = ({ navigation, route }) => {
 
   // Refs
   const mapRef = useRef(null);
-  const watchId = useRef(null);
+  const unsubscribeLocation = useRef(null);
   const appState = useRef(AppState.currentState);
   const directionInterval = useRef(null);
   const lastKnownCoords = useRef(null);
+  const lastRouteFetchedCoords = useRef(null);
+  const lastDestination = useRef(null);
+
+  // Animated coordinates for driver marker
+  const animatedDriverCoords = useRef(
+    new AnimatedRegion({
+      latitude: order?.pickupLocation?.coordinates?.latitude || 22.72592,
+      longitude: order?.pickupLocation?.coordinates?.longitude || 75.89294,
+      latitudeDelta: 0.005,
+      longitudeDelta: 0.005,
+    })
+  ).current;
+
+  // State
+  const [tracksViewChanges, setTracksViewChanges] = useState(true);
 
   // State
   const [tripStage, setTripStage] = useState(STAGES.GOING_TO_PICKUP);
@@ -360,7 +379,7 @@ const MapScreen = ({ navigation, route }) => {
     order?.rideDetails?.distance || null,
   );
   const [duration, setDuration] = useState(
-    order?.rideDetails?.duration || null,
+    order?.rideDetails?.eta || null,
   );
   const [isLoading, setIsLoading] = useState(true);
   const [locationError, setLocationError] = useState(null);
@@ -369,7 +388,7 @@ const MapScreen = ({ navigation, route }) => {
   const [isAtPickup, setIsAtPickup] = useState(false);
   const [isAtDrop, setIsAtDrop] = useState(false);
   const [is3DMode, setIs3DMode] = useState(false);
-  const [arrowRotation, setArrowRotation] = useState(0);
+  const [arrowRotation, setArrowRotation] = useState(90);
   const [nextWaypoint, setNextWaypoint] = useState(null);
 
   // Ripple animation for location marker
@@ -444,8 +463,13 @@ const MapScreen = ({ navigation, route }) => {
       const status = String(order?.status || '').toLowerCase();
       if (
         status === 'picked_up' ||
-        status === 'pickedup' ||
-        status === 'accepted'
+        status === 'pickedup' 
+      ) {
+        setTripStage(STAGES.GOING_TO_DROP);
+        setShowDropRoute(true);
+      } else if (
+        status === 'accepted' || 
+        status === 'pending'
       ) {
         setTripStage(STAGES.GOING_TO_PICKUP);
         setShowDropRoute(true);
@@ -486,14 +510,18 @@ const MapScreen = ({ navigation, route }) => {
       // Emit driver:arrived socket event
       const rideId = order?.rideId || order?.id;
       SocketService.emitDriverArrived(rideId, {
-        latitude: driverCoords.latitude,
-        longitude: driverCoords.longitude,
+        type: 'Point',
+        coordinates: [driverCoords.longitude, driverCoords.latitude]
       });
 
       // HTTP fallback: notify backend driver arrived at pickup
       driverApi
         .arrivedAtPickup(rideId)
-        .catch(err => console.error('Arrived at pickup error:', err));
+        .catch(err => {
+          if (err?.response?.status !== 404) {
+             console.error('Arrived at pickup error:', err);
+          }
+        });
     }
 
     if (reachedDrop && tripStage === STAGES.GOING_TO_DROP) {
@@ -501,12 +529,57 @@ const MapScreen = ({ navigation, route }) => {
     }
   }, [driverCoords, pickup, drop, tripStage]);
 
-  // Fetch shortest path when destination changes
+  // Fetch shortest path when destination changes or when driver drifts significantly (>150m)
   useEffect(() => {
-    if (driverCoords && destination && GOOGLE_MAPS_APIKEY) {
-      fetchAndDisplayShortestPath();
+    if (!driverCoords || !destination || !GOOGLE_MAPS_APIKEY) return;
+
+    let shouldFetch = false;
+    
+    // Check if destination changed
+    const destChanged = !lastDestination.current || 
+      lastDestination.current.latitude !== destination.latitude || 
+      lastDestination.current.longitude !== destination.longitude;
+
+    if (destChanged) {
+      shouldFetch = true;
+    } else if (!lastRouteFetchedCoords.current) {
+      shouldFetch = true;
+    } else {
+      const distanceFromLastFetch = calculateHaversineDistance(
+        driverCoords,
+        lastRouteFetchedCoords.current
+      );
+      if (distanceFromLastFetch > 150) {
+        shouldFetch = true;
+      }
     }
-  }, [driverCoords, destination, travelMode]);
+
+    if (shouldFetch) {
+      fetchAndDisplayShortestPath();
+      lastRouteFetchedCoords.current = driverCoords;
+      lastDestination.current = destination;
+    }
+  }, [driverCoords?.latitude, driverCoords?.longitude, destination?.latitude, destination?.longitude, travelMode]);
+
+  // Interpolate driver coordinate updates and manage tracksViewChanges dynamically
+  useEffect(() => {
+    if (driverCoords) {
+      animatedDriverCoords.timing({
+        latitude: driverCoords.latitude,
+        longitude: driverCoords.longitude,
+        duration: 1500,
+        useNativeDriver: false,
+      }).start();
+    }
+  }, [driverCoords?.latitude, driverCoords?.longitude]);
+
+  useEffect(() => {
+    setTracksViewChanges(true);
+    const timer = setTimeout(() => {
+      setTracksViewChanges(false);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [driverCoords?.latitude, driverCoords?.longitude, arrowRotation]);
 
   const fetchAndDisplayShortestPath = async () => {
     if (!driverCoords || !destination) return;
@@ -640,7 +713,7 @@ const MapScreen = ({ navigation, route }) => {
           const camera = {
             center: coords,
             pitch: is3DMode ? 60 : 0,
-            heading: heading || 0,
+            heading: is3DMode ? (heading || 0) : 0,
             altitude: is3DMode ? 1200 : 600,
             zoom: is3DMode ? 17 : 18,
           };
@@ -681,9 +754,9 @@ const MapScreen = ({ navigation, route }) => {
 
   const stopLocationTracking = useCallback(() => {
     try {
-      if (watchId.current !== null) {
-        Geolocation.clearWatch(watchId.current);
-        watchId.current = null;
+      if (unsubscribeLocation.current) {
+        unsubscribeLocation.current();
+        unsubscribeLocation.current = null;
       }
       if (directionInterval.current) {
         clearInterval(directionInterval.current);
@@ -695,76 +768,45 @@ const MapScreen = ({ navigation, route }) => {
 
   const startLocationTracking = useCallback(() => {
     try {
-      Geolocation.getCurrentPosition(
-        position => {
-          try {
-            const coords = {
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-            };
-
+      LocationService.requestCurrentPosition()
+        .then(coords => {
+          if (coords) {
             setDriverCoords(coords);
             lastKnownCoords.current = coords;
             setIsLoading(false);
-
-            // Only update camera after initial location is set
             setTimeout(() => {
               if (mapRef.current) {
                 updateCamera(coords, 0, false);
               }
             }, 500);
-          } catch (error) {
-            console.error('Error processing position:', error);
           }
-        },
-        error => {
-          console.error('Location error:', error);
+        })
+        .catch(error => {
+          console.error('Location startup error:', error);
           setDriverCoords({
             latitude: pickup.latitude - 0.01,
             longitude: pickup.longitude - 0.01,
           });
           setLocationError('Using approximate location');
           setIsLoading(false);
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 15000,
-          maximumAge: 5000,
-        },
-      );
+        });
 
-      watchId.current = Geolocation.watchPosition(
-        position => {
-          try {
-            const newCoords = {
-              latitude: position.coords.latitude,
-              longitude: position.coords.longitude,
-            };
-
-            setDriverCoords(newCoords);
-            lastKnownCoords.current = newCoords;
-
-            // Don't update camera here, let the useEffect handle it with debouncing
-          } catch (error) {
-            console.error('Error processing watch position:', error);
-          }
-        },
-        error => {
-          console.error('Watch position error:', error);
-        },
-        {
-          enableHighAccuracy: true,
-          distanceFilter: 10,
-          interval: 5000,
-          fastestInterval: 2000,
+      if (unsubscribeLocation.current) {
+        unsubscribeLocation.current();
+      }
+      unsubscribeLocation.current = LocationService.subscribe(newCoords => {
+        if (newCoords) {
+          setDriverCoords(newCoords);
+          lastKnownCoords.current = newCoords;
         }
-      );
+      });
+      setIsLoading(false);
     } catch (error) {
       console.error('Error starting location tracking:', error);
       setIsLoading(false);
       setLocationError('Could not start location tracking');
     }
-  }, [pickup.latitude, pickup.longitude, updateCamera]);
+  }, [updateCamera, pickup]);
 
   useEffect(() => {
     const resolvePermission = async () => {
@@ -852,7 +894,9 @@ const MapScreen = ({ navigation, route }) => {
             updateCamera(drop, 0);
           }
 
-          toast.info('You have reached the destination. Complete delivery when ready.');
+          toast.info(
+            'You have reached the destination. Complete delivery when ready.',
+          );
         }
       }
     } catch (error) {
@@ -872,7 +916,6 @@ const MapScreen = ({ navigation, route }) => {
   // Emit location to socket every 3 seconds for real-time tracking
   useEffect(() => {
     if (!driverCoords || !tripStage || tripStage === STAGES.COMPLETED) return;
-
 
     const locationUpdateInterval = setInterval(() => {
       try {
@@ -912,7 +955,9 @@ const MapScreen = ({ navigation, route }) => {
   };
 
   const handleCallCustomer = () => {
-    const phone = order?.customer?.phone || order?.customerPhone;
+    console.log('chek call number', order);
+
+    const phone = order?.receiver?.phone || order?.customer?.phone;
     if (!phone) {
       toast.error('Customer phone number is not available for this order.');
       return;
@@ -923,7 +968,9 @@ const MapScreen = ({ navigation, route }) => {
         if (supported) {
           Linking.openURL(url);
         } else {
-          toast.error(`Unable to call customer. Please dial ${phone} manually.`);
+          toast.error(
+            `Unable to call customer. Please dial ${phone} manually.`,
+          );
         }
       })
       .catch(() => {
@@ -940,12 +987,12 @@ const MapScreen = ({ navigation, route }) => {
     const cancelId =
       order?.rideId || order?.id || initialOrder?.rideId || initialOrder?.id;
 
-
     setIsCancelling(true);
     try {
       await driverApi.cancelOrder(cancelId, cancelReason);
     } catch (error) {
-      console.error('Cancel order failed but clearing local state:', error);
+      console.log('Status:', error?.response?.status);
+      console.log('Response:', error?.response?.data);
       // Proceed even if backend fails — clear local state
     }
 
@@ -982,7 +1029,9 @@ const MapScreen = ({ navigation, route }) => {
     const expectedCode = order?.pickupCode || order?.otp || order?.pickup_otp;
     // If no OTP is set by backend, allow any 4-digit code
     if (expectedCode && pickupOtp !== String(expectedCode)) {
-      toast.error('The pickup verification code is incorrect. Please check with the customer.');
+      toast.error(
+        'The pickup verification code is incorrect. Please check with the customer.',
+      );
       return;
     }
     if (pickupOtp.length < 4) {
@@ -992,11 +1041,6 @@ const MapScreen = ({ navigation, route }) => {
     setShowPickupOtpModal(false);
     setPickupOtp('');
     handlePickupConfirmActual();
-  };
-
-  const handlePickupConfirm = () => {
-    setPickupOtp('');
-    setShowPickupOtpModal(true);
   };
 
   const handlePickupConfirmActual = async () => {
@@ -1038,15 +1082,19 @@ const MapScreen = ({ navigation, route }) => {
         updateCamera(driverCoords, arrowRotation);
       }
 
-      // Fetch shortest path for drop
-      if (driverCoords && drop) {
-        fetchAndDisplayShortestPath();
-      }
+
     } catch (error) {
       console.error('Pickup confirmation error:', error);
       toast.error('Failed to confirm pickup. Please try again.');
     }
   };
+
+  const rideAmount =
+    order?.amount ||
+    order?.fare ||
+    order?.rideDetails?.estimatedFare ||
+    normalizedOrder?.amount ||
+    0;
 
   const handleCashCollected = async () => {
     try {
@@ -1068,7 +1116,7 @@ const MapScreen = ({ navigation, route }) => {
       const amount =
         paymentMethod === 'cash'
           ? parseFloat(cashCollected)
-          : order?.amount || 0;
+          : order?.amount || order?.fare || 0;
 
       const rideId = order?.rideId || order?.id;
 
@@ -1088,8 +1136,7 @@ const MapScreen = ({ navigation, route }) => {
             order.id,
             distance || 0,
           );
-        } catch (fallbackError) {
-        }
+        } catch (fallbackError) {}
       }
 
       // ── Step 3.3: Emit ride:completed socket event BEFORE disconnecting ───
@@ -1150,6 +1197,31 @@ const MapScreen = ({ navigation, route }) => {
     }
   };
 
+  const getVehicleImage = () => {
+    switch (vehicleType?.toLowerCase()) {
+      case 'bike':
+        return imgPath.ic_bike;
+
+      case 'scooter':
+        return imgPath.ic_scooter;
+
+      case '3 wheeler':
+        return imgPath.ic_auto;
+
+      case 'e loader':
+        return imgPath.ic_auto;
+
+      case 'mini 3w':
+        return imgPath.ic_auto;
+
+      case 'tata ace':
+        return imgPath.ic_auto;
+
+      default:
+        return imgPath.ic_bike;
+    }
+  };
+
   const handleCompleteDelivery = () => {
     setCashCollected(order?.amount?.toString() || '');
     setPaymentMethod('cash');
@@ -1205,26 +1277,26 @@ const MapScreen = ({ navigation, route }) => {
           // Use liteMode for better performance (optional)
           liteMode={false}
         >
-          {/* Direction Arrow Marker with Auto-rotation */}
-          {/* Direction Arrow Marker with Proper Rotation */}
+          {/* Driver Vehicle Marker — rotation applied via Image transform
+              because Marker.Animated rotation prop is unreliable on Android
+              with custom Image children */}
           {driverCoords && (
-            <Marker
-              coordinate={driverCoords}
+            <Marker.Animated
+              coordinate={animatedDriverCoords}
               anchor={{ x: 0.5, y: 0.5 }}
               flat={true}
-              rotation={arrowRotation}
-              tracksViewChanges={true} // Change to true to track view changes for rotation
+              tracksViewChanges={tracksViewChanges}
             >
               <Image
-                source={imgPath.ic_bike}
+                source={getVehicleImage()}
                 style={{
                   width: 50,
                   height: 50,
-                  transform: [{ rotate: `${arrowRotation}deg` }],
+                  transform: [{ rotate: `${arrowRotation || 0}deg` }],
                 }}
                 resizeMode="contain"
               />
-            </Marker>
+            </Marker.Animated>
           )}
 
           {/* Pickup Marker */}
@@ -1232,7 +1304,6 @@ const MapScreen = ({ navigation, route }) => {
             <Marker
               coordinate={pickup}
               anchor={{ x: 0.5, y: 1.0 }}
-              tracksViewChanges={false}
             >
               <Image
                 source={imgPath.ic_pick}
@@ -1247,7 +1318,6 @@ const MapScreen = ({ navigation, route }) => {
             <Marker
               coordinate={drop}
               anchor={{ x: 0.5, y: 1.0 }}
-              tracksViewChanges={false}
             >
               <Image
                 source={imgPath.ic_drop}
@@ -1372,7 +1442,7 @@ const MapScreen = ({ navigation, route }) => {
                         style={[
                           styles.travelModeButtonText,
                           travelMode === mode &&
-                          styles.travelModeButtonTextActive,
+                            styles.travelModeButtonTextActive,
                         ]}
                       >
                         {mode === 'driving' && '🚗'}
@@ -1452,7 +1522,7 @@ const MapScreen = ({ navigation, route }) => {
           >
             <Ionicons name="arrow-back" size={24} color={theme.colors.ink} />
           </TouchableOpacity>
-          <TouchableOpacity
+          {/* <TouchableOpacity
             style={[styles.map3DButton, is3DMode && styles.map3DButtonActive]}
             onPress={() => {
               setIs3DMode(prev => !prev);
@@ -1464,7 +1534,7 @@ const MapScreen = ({ navigation, route }) => {
             <Text style={styles.map3DButtonText}>
               {is3DMode ? '2D View' : '3D View'}
             </Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
 
           {/* <View style={styles.headerTitleCard}>
             <Text style={styles.headerTripId}>
@@ -1498,14 +1568,14 @@ const MapScreen = ({ navigation, route }) => {
             <View style={styles.navInfoItem}>
               <Text style={styles.navInfoLabel}>DISTANCE</Text>
               <Text style={styles.navInfoValue}>
-                {distance ? `${distance.toFixed(1)} km` : '--'}
+                {distance !== null && distance !== undefined ? `${Number(distance).toFixed(1)} km` : '--'}
               </Text>
             </View>
             <View style={styles.navInfoDivider} />
             <View style={styles.navInfoItem}>
               <Text style={styles.navInfoLabel}>TIME</Text>
               <Text style={styles.navInfoValue}>
-                {duration ? `${duration} min` : '--'}
+                {duration !== null && duration !== undefined ? `${duration} min` : '--'}
               </Text>
             </View>
             <>
@@ -1515,7 +1585,7 @@ const MapScreen = ({ navigation, route }) => {
                 <Text
                   style={[styles.navInfoValue, { color: theme.colors.success }]}
                 >
-                  ₹{Number(order?.fare || 0)}
+                  ₹{rideAmount}
                 </Text>
               </View>
             </>
@@ -1543,12 +1613,20 @@ const MapScreen = ({ navigation, route }) => {
                 {tripStage.includes('PICKUP') ? pickupAddress : dropAddress}
               </Text>
             </View>
-            <TouchableOpacity
-              style={styles.phoneCircle}
-              onPress={handleCallCustomer}
-            >
-              <Ionicons name="call" size={22} color="#fff" />
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity
+                style={styles.phoneCircle}
+                onPress={handleCallCustomer}
+              >
+                <Ionicons name="call" size={22} color="#fff" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.phoneCircle, { backgroundColor: '#0080ff' }]}
+                onPress={() => navigation.navigate('DriverChat', { rideId: order?.rideId || order?.id })}
+              >
+                <Ionicons name="chatbubble" size={22} color="#fff" />
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View style={styles.actionRowPrimary}>
@@ -1576,7 +1654,7 @@ const MapScreen = ({ navigation, route }) => {
                   styles.primaryActionBtn,
                   { backgroundColor: theme.colors.success },
                 ]}
-                onPress={handlePickupConfirm}
+                onPress={handlePickupConfirmActual}
                 activeOpacity={0.8}
               >
                 <Text style={styles.primaryActionText}>START TRIP</Text>
@@ -1792,7 +1870,7 @@ const MapScreen = ({ navigation, route }) => {
                       style={[
                         styles.paymentMethodText,
                         paymentMethod === method &&
-                        styles.paymentMethodTextActive,
+                          styles.paymentMethodTextActive,
                       ]}
                     >
                       {method === 'cash' && '💵 Cash'}

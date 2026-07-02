@@ -10,7 +10,7 @@ import { BRAND_YELLOW } from '../theme';
 
 const CHANNEL_ID = 'godelivo_partner_online';
 const NOTIFICATION_ID = 'godelivo_partner_foreground_service';
-const APP_NAME = 'GoDelivo Partner';
+const APP_NAME = 'now';
 const ONLINE_TITLE = 'GoDelivo Partner';
 const ONLINE_BODY = 'You are online and ready to receive orders';
 const OFFLINE_BODY = 'You are offline and go online for orders';
@@ -22,6 +22,7 @@ let isServiceRunning = false;
 let currentMode = 'offline';
 let currentTripInfo = null;
 let appStateSubscription = null;
+let serviceRevision = 0;
 
 export const requestForegroundNotificationPermission = async () => {
   if (Platform.OS !== 'android') {
@@ -43,22 +44,25 @@ const ensureChannel = async () => {
   await requestForegroundNotificationPermission();
 
   await notifee.createChannel({
-    id: CHANNEL_ID,
-    name: 'Online Status',
-    description: 'Persistent status shown while you are online',
-    importance: AndroidImportance.LOW,
-    lights: false,
-    vibration: false,
-    sound: undefined,
-  });
+  id: CHANNEL_ID,
+  name: 'GoDelivo Partner Status',
+  description: 'Persistent status notification for partner online/offline state',
+  importance: AndroidImportance.LOW,
+  lights: false,
+  vibration: false,
+  sound: undefined,
+});
 
   return CHANNEL_ID;
 };
 
-const getForegroundServiceTypes = () => [
-  AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_LOCATION,
-];
+const getForegroundServiceTypes = mode => {
+  if (mode === 'offline') {
+    return [];
+  }
 
+  return [AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_LOCATION];
+};
 const buildBody = (mode, tripInfo) => {
   if (mode === 'offline') {
     return OFFLINE_BODY;
@@ -88,62 +92,102 @@ const buildBody = (mode, tripInfo) => {
 
 const buildNotification = async (mode = 'online', tripInfo = null) => {
   const channelId = await ensureChannel();
+
+  const isOffline = mode === 'offline';
   const isTrip = mode === 'on_trip';
-  const body = buildBody(mode, tripInfo);
+
+  const title = isOffline
+    ? 'GoDelivo Partner'
+    : isTrip
+    ? 'GoDelivo Partner - Trip in progress'
+    : 'GoDelivo Partner';
+
+  const body = isOffline
+    ? 'You are OFFLINE'
+    : isTrip
+    ? buildBody(mode, tripInfo)
+    : 'You are ONLINE';
+
+  const android = {
+    channelId,
+    asForegroundService: true,
+    smallIcon: NOTIFICATION_SMALL_ICON,
+    // largeIcon: NOTIFICATION_LARGE_ICON,
+
+    ongoing: true,
+    autoCancel: false,
+    onlyAlertOnce: true,
+    showTimestamp: false,
+    // timestamp: Date.now(),
+
+    category: AndroidCategory.SERVICE,
+    importance: AndroidImportance.LOW,
+
+    color: BRAND_YELLOW,
+    colorized: false,
+
+    pressAction: {
+      id: 'default',
+    },
+
+    style: {
+      type: AndroidStyle.BIGTEXT,
+      text: body,
+    },
+  };
+
+  if (!isOffline) {
+    android.foregroundServiceTypes = [
+      AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_LOCATION,
+    ];
+  }
+  
 
   return {
     id: NOTIFICATION_ID,
-    title: isTrip ? TRIP_TITLE : ONLINE_TITLE,
-    subtitle: APP_NAME,
+    title,
     body,
-    android: {
-      channelId,
-      asForegroundService: true,
-      foregroundServiceTypes: getForegroundServiceTypes(),
-      smallIcon: NOTIFICATION_SMALL_ICON,
-      largeIcon: NOTIFICATION_LARGE_ICON,
-      color: BRAND_YELLOW,
-      colorized: false,
-      ongoing: true,
-      autoCancel: false,
-      onlyAlertOnce: true,
-      showTimestamp: true,
-      timestamp: Date.now(),
-      category: AndroidCategory.SERVICE,
-      pressAction: {
-        id: 'default',
-      },
-      style: {
-        type: AndroidStyle.BIGTEXT,
-        text: body,
-      },
-    },
+    android,
   };
 };
 
-const displayForegroundNotification = async (mode = 'online', tripInfo = null) => {
+const displayForegroundNotification = async (
+  mode = 'online',
+  tripInfo = null,
+  revision = serviceRevision,
+) => {
   if (Platform.OS !== 'android') {
     return;
   }
 
+  // console.log('displayForegroundNotification called');
+  // console.trace();
+
   const notification = await buildNotification(mode, tripInfo);
+
+  if (revision !== serviceRevision) {
+    return;
+  }
+
   await notifee.displayNotification(notification);
 };
 
 const ensureAppStateListener = () => {
-  if (appStateSubscription || Platform.OS !== 'android') {
-    return;
-  }
+  // if (appStateSubscription || Platform.OS !== 'android') {
+  //   return;
+  // }
 
-  appStateSubscription = AppState.addEventListener('change', nextState => {
-    if (nextState === 'active' && isServiceRunning) {
-      displayForegroundNotification(currentMode, currentTripInfo).catch(
-        error => {
-          console.log('Foreground notification refresh error:', error);
-        },
-      );
-    }
-  });
+  // appStateSubscription = AppState.addEventListener('change', nextState => {
+  //   console.log('AppState Changed:', nextState);
+  //   if (nextState === 'active' && isServiceRunning) {
+  //     displayForegroundNotification(currentMode, currentTripInfo).catch(
+  //       error => {
+  //         console.log('Foreground notification refresh error:', error);
+  //       },
+  //     );
+  //   }
+  // });
+  return;
 };
 
 export const startService = async (mode = 'online', tripInfo = null) => {
@@ -151,10 +195,16 @@ export const startService = async (mode = 'online', tripInfo = null) => {
     return;
   }
 
+  const revision = ++serviceRevision;
   currentMode = mode;
   currentTripInfo = tripInfo;
 
-  await displayForegroundNotification(mode, tripInfo);
+  await displayForegroundNotification(mode, tripInfo, revision);
+
+  if (revision !== serviceRevision) {
+    return;
+  }
+
   isServiceRunning = true;
   ensureAppStateListener();
 };
@@ -178,9 +228,9 @@ export const updateServiceBody = async body => {
     android: {
       channelId,
       asForegroundService: true,
-      foregroundServiceTypes: getForegroundServiceTypes(),
+      foregroundServiceTypes: getForegroundServiceTypes('on_trip'),
       smallIcon: NOTIFICATION_SMALL_ICON,
-      largeIcon: NOTIFICATION_LARGE_ICON,
+      // largeIcon: NOTIFICATION_LARGE_ICON,
       color: BRAND_YELLOW,
       ongoing: true,
       autoCancel: false,
@@ -202,11 +252,17 @@ export const stopService = async () => {
     return;
   }
 
+  const revision = ++serviceRevision;
   currentMode = 'offline';
   currentTripInfo = null;
 
   try {
-    await displayForegroundNotification('offline');
+    await displayForegroundNotification('offline', null, revision);
+
+    if (revision !== serviceRevision) {
+      return;
+    }
+
     isServiceRunning = true;
     ensureAppStateListener();
   } catch (error) {

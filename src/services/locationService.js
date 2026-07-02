@@ -1,11 +1,13 @@
-import Geolocation from '@react-native-community/geolocation';
+import Geolocation from 'react-native-geolocation-service'; // Keeping for foreground requests if needed
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BASE_URL } from './api';
 import SocketService from './socketService';
 
-const REPORT_INTERVAL_MS = 60000; // Increased to 60s because Socket.IO handles real-time updates now.
-const INITIAL_LOCATION_TIMEOUT_MS = 12000;
-const LOCATION_MAX_AGE_MS = 5000;
+const REPORT_INTERVAL_MS = 45000; // Low frequency backup HTTP sync (Sockets do real-time tracking now)
+const INITIAL_LOCATION_TIMEOUT_MS = 20000;
+const FALLBACK_LOCATION_TIMEOUT_MS = 15000;
+const LOCATION_MAX_AGE_MS = 10000;
+const FALLBACK_LOCATION_MAX_AGE_MS = 60000;
 
 const buildCoords = position => ({
   latitude: position.coords.latitude,
@@ -37,6 +39,19 @@ class LocationService {
     this.lastLocationAt = null;
     this.lastError = null;
     this.isRunning = false;
+    this.listeners = [];
+  }
+
+  subscribe(callback) {
+    if (typeof callback === 'function') {
+      this.listeners.push(callback);
+      if (this.lastCoords) {
+        callback(this.lastCoords);
+      }
+    }
+    return () => {
+      this.listeners = this.listeners.filter(cb => cb !== callback);
+    };
   }
 
   async start() {
@@ -47,32 +62,42 @@ class LocationService {
     this.isRunning = true;
 
     try {
-      const coords = await this.requestCurrentPosition();
+      const coords = await this.requestStartupPosition();
 
-      // Instantiate high-perf socket connection only after location is verified.
+      // Connect socket connection for real-time tracking
       await SocketService.connect();
 
       this.emitCurrentLocation();
-      this.reportLocation(); // Execute HTTP as an initial redundant guarantee
+      this.reportLocation(); // Initial HTTP sync guarantee
 
-      // Watch position changes aggressively for Live Mapping with high performance
+      // Configure and start Geolocation watcher
       this.watchId = Geolocation.watchPosition(
         position => {
-          this.setLastPosition(position);
+          const newCoords = this.setLastPosition(position);
           this.emitCurrentLocation();
+          
+          this.listeners.forEach(cb => {
+            try {
+              cb(newCoords);
+            } catch (err) {
+              console.error('[LocationService] Subscriber notification error:', err);
+            }
+          });
         },
         error => {
+          console.warn('[LocationService] Background location error:', error);
           this.lastError = error;
         },
         {
           enableHighAccuracy: true,
-          distanceFilter: 10,
+          distanceFilter: 5,
           interval: 3000,
           fastestInterval: 2000,
-        },
+          showsBackgroundLocationIndicator: true,
+        }
       );
 
-      // Report location to backend on interval (fallback HTTP strategy)
+      // Low-frequency database reporting fallback
       this.intervalId = setInterval(() => {
         this.reportLocation();
       }, REPORT_INTERVAL_MS);
@@ -97,7 +122,7 @@ class LocationService {
       this.intervalId = null;
     }
 
-    // Drop the TCP persistent connection to save server resources and driver battery
+    // Disconnect socket connection to preserve device resources when offline
     SocketService.disconnect();
 
     this.lastCoords = null;
@@ -105,6 +130,38 @@ class LocationService {
   }
 
   requestCurrentPosition() {
+    return this.requestPosition({
+      enableHighAccuracy: true,
+      timeout: INITIAL_LOCATION_TIMEOUT_MS,
+      maximumAge: LOCATION_MAX_AGE_MS,
+    });
+  }
+
+  async requestStartupPosition() {
+    try {
+      return await this.requestPosition({
+        enableHighAccuracy: true,
+        timeout: INITIAL_LOCATION_TIMEOUT_MS,
+        maximumAge: LOCATION_MAX_AGE_MS,
+      });
+    } catch (error) {
+      const isTimeout = String(error?.message || '')
+        .toLowerCase()
+        .includes('timed out');
+
+      if (!isTimeout) {
+        throw error;
+      }
+
+      return this.requestPosition({
+        enableHighAccuracy: false,
+        timeout: FALLBACK_LOCATION_TIMEOUT_MS,
+        maximumAge: FALLBACK_LOCATION_MAX_AGE_MS,
+      });
+    }
+  }
+
+  requestPosition(options) {
     return new Promise((resolve, reject) => {
       Geolocation.getCurrentPosition(
         position => {
@@ -114,11 +171,7 @@ class LocationService {
           this.lastError = error;
           reject(new Error(getLocationErrorMessage(error)));
         },
-        {
-          enableHighAccuracy: true,
-          timeout: INITIAL_LOCATION_TIMEOUT_MS,
-          maximumAge: LOCATION_MAX_AGE_MS,
-        },
+        options,
       );
     });
   }
@@ -150,13 +203,17 @@ class LocationService {
 
     try {
       const driverId = await AsyncStorage.getItem('driverId');
-      if (!driverId) {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!driverId || !token) {
         return;
       }
 
       await fetch(`${BASE_URL}/location`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({
           driverId,
           latitude: this.lastCoords.latitude,
@@ -164,7 +221,7 @@ class LocationService {
         }),
       });
     } catch {
-      // Silent failure - location reporting is best-effort
+      // Silent failure - location reporting fallback is best-effort
     }
   }
 

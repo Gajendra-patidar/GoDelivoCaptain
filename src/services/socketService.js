@@ -8,27 +8,38 @@ class SocketService {
   constructor() {
     this.socket = null;
     this.isConnected = false;
+    this.isConnecting = false; // Mutex lock to prevent duplicate concurrent connects
     this.driverId = null;
     this.listeners = {};
     this.currentRideId = null;
-    this.pendingRideRequests = [];
     this.networkSubscription = null;
+    this.reconnectDebounceTimer = null;
+    this.heartbeatTimer = null;
     this.initNetworkMonitoring();
   }
 
   initNetworkMonitoring() {
+    if (this.networkSubscription) return;
+
     this.networkSubscription = NetInfo.addEventListener(state => {
-            if (state.isConnected && !this.isSocketConnected() && this.driverId) {
-                this.reconnect();
-      } else if (!state.isConnected) {
-              }
+      if (state.isConnected && !this.isSocketConnected() && this.driverId) {
+        console.log('📶 Network available. Reconnecting socket with debounce...');
+        if (this.reconnectDebounceTimer) {
+          clearTimeout(this.reconnectDebounceTimer);
+        }
+        this.reconnectDebounceTimer = setTimeout(() => {
+          this.reconnect();
+        }, 3000);
+      }
     });
   }
 
   setActiveRide(rideId) {
-        this.currentRideId = rideId;
-    if (rideId && this.socket && this.isConnected) {
-      this.joinRideTracking(rideId);
+    this.currentRideId = rideId;
+    if (rideId && this.socket && this.isSocketConnected()) {
+      this.joinRideTracking(rideId).catch(error => {
+        console.error('Failed to join ride tracking on setActiveRide:', error);
+      });
     }
   }
 
@@ -49,27 +60,32 @@ class SocketService {
 
   async connect() {
     if (this.socket?.connected) {
-            return;
+      this.isConnected = true;
+      this.isConnecting = false;
+      return this.socket;
     }
+
+    if (this.isConnecting) {
+      console.log('⏳ Socket connection attempt already in progress...');
+      return null;
+    }
+
+    this.isConnecting = true;
 
     try {
       const token = await AsyncStorage.getItem('userToken');
       this.driverId = await AsyncStorage.getItem('driverId');
 
-      
-      if (!this.driverId) {
-                return;
-      }
-
-      if (!token) {
-                return;
+      if (!this.driverId || !token) {
+        this.isConnecting = false;
+        return null;
       }
 
       const socketUrl = this.getBaseHost();
 
       this.socket = io(socketUrl, {
         path: '/socket.io/',
-        transports: ['websocket', 'polling'],
+        transports: ['websocket'], // Force websocket for fast handshake & lower battery overhead
         auth: {
           token: token,
           userId: this.driverId,
@@ -80,106 +96,133 @@ class SocketService {
           userType: 'driver',
         },
         reconnection: true,
-        reconnectionAttempts: 5,
+        reconnectionAttempts: Infinity, // Ensure persistent reconnects during driver transit
         reconnectionDelay: 2000,
-        reconnectionDelayMax: 5000,
+        reconnectionDelayMax: 10000,
         timeout: 15000,
-        forceNew: true,
+        forceNew: false,
       });
 
       this.socket.on('connect', () => {
         this.isConnected = true;
+        this.isConnecting = false;
+        console.log('⚡ Socket connected to server:', this.socket.id);
         
         // Authenticate with backend
-        this.socket.emit('authenticate', {
-          token: token,
-          driverId: this.driverId,
-          userType: 'driver',
-        });
+        // this.socket.emit('authenticate', {
+        //   token: token,
+        //   driverId: this.driverId,
+        //   userType: 'driver',
+        // });
 
         // Notify backend that driver is online
-        this.socket.emit('driver_online', {
-          driverId: this.driverId,
-          timestamp: Date.now(),
-        });
+        // this.socket.emit('driver_online', {
+        //   driverId: this.driverId,
+        //   timestamp: Date.now(),
+        // });
 
         // Join the general driver pool
         this.socket.emit('driver:join', this.driverId);
+
+        // Start heartbeat
+        if (this.heartbeatTimer) {
+          clearInterval(this.heartbeatTimer);
+        }
+        this.heartbeatTimer = setInterval(() => {
+          if (this.socket && this.socket.connected) {
+            this.socket.emit('driver:heartbeat', { driverId: this.driverId });
+          }
+        }, 120000);
 
         // Emit driver status as online & available
         this.socket.emit('driver:status-change', {
           driverId: this.driverId,
           isOnline: true,
-          isAvailable: !this.currentRideId, // Not available if already on a ride
+          isAvailable: !this.currentRideId,
         });
 
         // Join ride tracking if there's an active ride
         if (this.currentRideId) {
-                    this.joinRideTracking(this.currentRideId).catch(error => {
+          this.joinRideTracking(this.currentRideId).catch(error => {
             console.error('Failed to join ride tracking on reconnect:', error);
           });
         }
       });
 
-      this.socket.on('disconnect', reason => {
-        this.isConnected = false;
-              });
+      // this.socket.on('disconnect', reason => {
+      //   this.isConnected = false;
+      //   this.isConnecting = false;
+      //   console.log('🔌 Socket disconnected. Reason:', reason);
+      //   if (reason === 'io server disconnect') {
+      //     // Reconnect if the server dropped the connection
+      //     this.connect();
+      //   }
+      // });
 
-      this.socket.on('connect_error', error => {
-        this.isConnected = false;
-                      });
-
-      this.socket.on('connect_timeout', timeout => {
-              });
+      // this.socket.on('connect_error', error => {
+      //   this.isConnected = false;
+      //   this.isConnecting = false;
+      //   console.warn('❌ Socket connection error:', error.message);
+      // });
 
       this.socket.on('reconnect', attemptNumber => {
-                this.isConnected = true;
+        this.isConnected = true;
+        this.isConnecting = false;
+        console.log(`🔄 Socket reconnected successfully (attempt ${attemptNumber})`);
 
-        // Join ride tracking if there's an active ride after reconnection
         if (this.currentRideId) {
-                    this.joinRideTracking(this.currentRideId).catch(error => {
+          this.joinRideTracking(this.currentRideId).catch(error => {
             console.error('Failed to rejoin ride tracking after reconnect:', error);
           });
         }
       });
 
-      this.socket.on('reconnect_error', error => {
-              });
-
-      this.socket.on('authenticated', data => {
-              });
-
       this.socket.on('unauthorized', data => {
-                this.disconnect();
+        console.error('❌ Socket unauthorized. Disconnecting...', data);
+        this.disconnect();
       });
 
-      // Apply any queued listeners
+      // Re-apply any registered listeners to the new socket instance
       Object.keys(this.listeners).forEach(event => {
         this.listeners[event].forEach(cb => {
           this.socket.on(event, cb);
         });
       });
+
+      return this.socket;
     } catch (e) {
       console.error('❌ Socket connect exception:', e);
       this.isConnected = false;
+      this.isConnecting = false;
+      return null;
     }
   }
 
   disconnect() {
     if (this.socket) {
-      if (this.driverId) {
-        this.socket.emit('driver_offline', { driverId: this.driverId });
+      if (this.driverId && this.socket.connected) {
+        this.socket.emit('driver:offline', { driverId: this.driverId });
+        this.socket.emit('driver_offline', { driverId: this.driverId }); // keep legacy
       }
       this.socket.disconnect();
       this.socket = null;
     }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
     this.isConnected = false;
+    this.isConnecting = false;
   }
 
   cleanup() {
     if (this.networkSubscription) {
       this.networkSubscription();
       this.networkSubscription = null;
+    }
+    if (this.reconnectDebounceTimer) {
+      clearTimeout(this.reconnectDebounceTimer);
+      this.reconnectDebounceTimer = null;
     }
     this.disconnect();
   }
@@ -197,7 +240,7 @@ class SocketService {
   }
 
   async reconnect() {
-        this.disconnect();
+    this.disconnect();
     await this.connect();
   }
 
@@ -213,9 +256,7 @@ class SocketService {
   }
 
   off(event) {
-    if (this.listeners[event]) {
-      delete this.listeners[event];
-    }
+    delete this.listeners[event];
     if (this.socket) {
       this.socket.off(event);
     }
@@ -223,24 +264,11 @@ class SocketService {
 
   emitLocation(latitude, longitude, heading = 0, speed = 0) {
     if (!this.socket || !this.isConnected || !this.driverId) {
-            return;
+      return;
     }
 
-    const payload = {
-      driverId: this.driverId,
-      latitude,
-      longitude,
-      heading,
-      speed,
-      timestamp: Date.now(),
-    };
-
-    
-    // volatile.emit ensures that if the packet gets dropped or connection lags,
-    // Socket.io won't buffer stale locations. (Perfect for fast-moving targets)
-    // this.socket.volatile.emit('driver_location_update', payload);
-
     if (this.currentRideId) {
+      // Use volatile so stale location updates are dropped under network congestion
       this.socket.volatile.emit('driver:location-update', {
         driverId: this.driverId,
         rideId: this.currentRideId,
@@ -250,18 +278,20 @@ class SocketService {
         bearing: heading || 0,
         speed: speed ? (speed * 3.6) : 0, // Convert m/s to km/h
       });
-          }
+    }
   }
 
   async joinRideTracking(rideId) {
     if (!this.socket || !this.isConnected) {
-      console.error('Socket not connected');
+      await this.connect();
+    }
+
+    if (!this.socket || !this.isConnected) {
+      console.warn('Cannot join tracking, socket offline');
       return false;
     }
 
     return new Promise((resolve, reject) => {
-      
-      // Set up one-time listener for confirmation
       const timeout = setTimeout(() => {
         this.socket.off('tracking:joined', handler);
         reject(new Error('Join tracking timeout'));
@@ -271,14 +301,12 @@ class SocketService {
         if (data.success && data.rideId === rideId) {
           clearTimeout(timeout);
           this.currentRideId = rideId;
-          this.hasJoinedTracking = true;
-                    resolve(data);
+          resolve(data);
         }
       };
 
       this.socket.once('tracking:joined', handler);
 
-      // Send join request
       this.socket.emit('driver:join-tracking', {
         driverId: this.driverId,
         rideId,
@@ -286,15 +314,9 @@ class SocketService {
     });
   }
 
-  // ─── RIDE STATUS EMISSION METHODS ───────────────────────────────────────
-
-  /**
-   * Emit driver:status-change to update online/available status.
-   * Call this when going online, offline, or becoming available after a ride.
-   */
   emitStatusChange(isOnline, isAvailable = true) {
     if (!this.socket || !this.isConnected || !this.driverId) {
-            return;
+      return;
     }
 
     this.socket.emit('driver:status-change', {
@@ -302,14 +324,11 @@ class SocketService {
       isOnline,
       isAvailable,
     });
-      }
+  }
 
-  /**
-   * Emit driver:arrived when driver reaches the pickup location.
-   */
   emitDriverArrived(rideId, location) {
     if (!this.socket || !this.isConnected || !this.driverId) {
-            return;
+      return;
     }
 
     this.socket.emit('driver:arrived', {
@@ -317,29 +336,22 @@ class SocketService {
       driverId: this.driverId,
       location: location || {},
     });
-      }
+  }
 
-  /**
-   * Emit ride:started when the driver confirms pickup and starts trip to destination.
-   */
   emitRideStarted(rideId) {
     if (!this.socket || !this.isConnected || !this.driverId) {
-            return;
+      return;
     }
 
     this.socket.emit('ride:started', {
       rideId: rideId || this.currentRideId,
       driverId: this.driverId,
     });
-      }
+  }
 
-  /**
-   * Emit ride:completed when the driver finishes the trip.
-   * Also re-emits driver:status-change to mark driver as available again.
-   */
   emitRideCompleted(rideId, fare, paymentMethod = 'cash') {
     if (!this.socket || !this.isConnected || !this.driverId) {
-            return;
+      return;
     }
 
     this.socket.emit('ride:completed', {
@@ -349,7 +361,6 @@ class SocketService {
       paymentMethod,
     });
     
-    // Mark driver as available again
     this.emitStatusChange(true, true);
   }
 }

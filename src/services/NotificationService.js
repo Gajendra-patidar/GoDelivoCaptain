@@ -3,6 +3,10 @@ import notifee, { EventType } from '@notifee/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { BASE_URL } from './api';
+import {
+  createRideRequestChannels,
+  showRideRequestNotification,
+} from './rideRequestNotification';
 
 class NotificationService {
   constructor() {
@@ -39,7 +43,8 @@ class NotificationService {
         await this.saveTokenToBackend(this.driverId, token);
       }
     } catch (error) {
-          }
+      console.log('[NotificationService] Initialize error:', error);
+    }
   }
 
   async requestPermissions() {
@@ -55,7 +60,8 @@ class NotificationService {
 
       return enabled;
     } catch (error) {
-            return false;
+      console.log('[NotificationService] Permission error:', error);
+      return false;
     }
   }
 
@@ -72,11 +78,30 @@ class NotificationService {
     ];
 
     await Promise.all(channels.map(channel => notifee.createChannel(channel)));
+
+    // Create ride request channels (with sound)
+    await createRideRequestChannels();
   }
 
   setupListeners() {
     const unsubscribeOnMessage = messaging().onMessage(async remoteMessage => {
       this.notifyListeners('message', remoteMessage);
+
+      const { data } = remoteMessage;
+      const type = String(data?.type || '').toUpperCase();
+
+      // Route ride requests to the ride request notification system
+      if (
+        type === 'RIDE_REQUEST' ||
+        type === 'NEW_RIDE' ||
+        type === 'NEW_ORDER' ||
+        type === 'ORDER'
+      ) {
+        await showRideRequestNotification(data);
+        return;
+      }
+
+      // Handle other notifications
       await this.displayNotification(remoteMessage);
     });
 
@@ -102,14 +127,8 @@ class NotificationService {
       }
     });
 
-    notifee.onBackgroundEvent(async ({ type, detail }) => {
-      if (type === EventType.PRESS) {
-        this.notifyListeners('press', detail.notification);
-      }
-      if (type === EventType.ACTION_PRESS) {
-        this.notifyListeners('action', detail);
-      }
-    });
+    // Background events are handled in index.js but we keep this for notification listeners
+    // that may need to be aware of actions in the foreground
 
     messaging()
       .getInitialNotification()
@@ -173,7 +192,8 @@ class NotificationService {
         },
       });
     } catch (error) {
-          }
+      console.log('[NotificationService] Display error:', error);
+    }
   }
 
   async getFCMToken() {
@@ -182,7 +202,8 @@ class NotificationService {
       await this.saveToken(token);
       return token;
     } catch (error) {
-            return null;
+      console.log('[NotificationService] FCM token error:', error);
+      return null;
     }
   }
 
@@ -205,7 +226,8 @@ class NotificationService {
         }),
       });
     } catch (error) {
-          }
+      console.log('[NotificationService] Token backend save error:', error);
+    }
   }
 
   async updateOnlineStatus(isOnline) {
@@ -225,7 +247,8 @@ class NotificationService {
         }),
       });
     } catch (error) {
-          }
+      console.log('[NotificationService] Online status error:', error);
+    }
   }
 
   async removeToken() {
@@ -243,7 +266,8 @@ class NotificationService {
       await AsyncStorage.removeItem('fcmToken');
       this.driverId = null;
     } catch (error) {
-          }
+      console.log('[NotificationService] Remove token error:', error);
+    }
   }
 
   addListener(event, callback) {

@@ -51,13 +51,13 @@ const MoreScreen = ({ navigation }) => {
       badge: 'New',
       route: 'Referral',
     },
-    {
-      id: 6,
-      title: 'incentives',
-      icon: 'trophy-outline',
-      color: '#E91E63',
-      route: 'Incentives',
-    },
+    // {
+    //   id: 6,
+    //   title: 'incentives',
+    //   icon: 'trophy-outline',
+    //   color: '#E91E63',
+    //   route: 'Incentives',
+    // },
   ];
 
   const { t } = useTranslation();

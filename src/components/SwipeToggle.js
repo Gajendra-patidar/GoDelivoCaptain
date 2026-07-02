@@ -36,7 +36,7 @@ const SwipeToggle = ({
   const trackColor = useMemo(() => {
     return translateX.interpolate({
       inputRange: [0, MAX_TRANSLATION],
-      outputRange: ['#D64545', '#1BB15B'],
+      outputRange: ['#1BB15B', '#D64545'],
     });
   }, [translateX]);
 
@@ -139,6 +139,12 @@ const SwipeToggle = ({
     (_, gestureState) => {
       if (isAnimating.current || disabled || loading) return;
 
+      const isTap = Math.abs(gestureState.dx) < 10 && Math.abs(gestureState.dy) < 10;
+      if (isTap) {
+        animateToggle(isOnline ? 0 : MAX_TRANSLATION, !isOnline);
+        return;
+      }
+
       const currentX = isOnline
         ? MAX_TRANSLATION + gestureState.dx
         : gestureState.dx;
@@ -161,6 +167,7 @@ const SwipeToggle = ({
       onMoveShouldSetPanResponder: (_, gestureState) => {
         return !disabled && !loading && Math.abs(gestureState.dx) > 5;
       },
+      onPanResponderTerminationRequest: () => false,
       onPanResponderMove: handlePanResponderMove,
       onPanResponderRelease: handlePanResponderRelease,
       onPanResponderTerminate: () => {
@@ -197,6 +204,7 @@ const SwipeToggle = ({
   return (
     <View style={styles.container}>
       <Animated.View
+        {...panResponder.panHandlers}
         style={[
           styles.track,
           { backgroundColor: trackColor },
@@ -208,7 +216,6 @@ const SwipeToggle = ({
         </View>
 
         <Animated.View
-          {...panResponder.panHandlers}
           style={[
             styles.thumb,
             styles.thumbShadow,

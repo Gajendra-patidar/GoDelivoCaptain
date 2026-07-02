@@ -20,6 +20,7 @@ import HelpDetailScreen from '../screens/helpsupport/HelpDetailScreen';
 import ReferralScreen from '../screens/referral/ReferralScreen';
 import JoiningFeesScreen from '../screens/earnings/JoiningFeesScreen';
 import CommingSoonScreen from '../screens/CommingSoon/CommingSoonScreen';
+import DriverChatScreen from '../screens/chat/DriverChatScreen';
 import navigationRef from '../navigations/navigationRef';
 import { getThemeForScheme } from '../theme';
 
@@ -43,6 +44,7 @@ function RootStack() {
       <Stack.Screen name="Referral" component={ReferralScreen} />
       <Stack.Screen name="JoinFees" component={JoiningFeesScreen} />
       <Stack.Screen name="CommingSoon" component={CommingSoonScreen} />
+      <Stack.Screen name="DriverChat" component={DriverChatScreen} />
     </Stack.Navigator>
   );
 }

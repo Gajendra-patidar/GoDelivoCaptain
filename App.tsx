@@ -11,7 +11,7 @@ import NotificationService from './src/services/NotificationService';
 import ErrorBoundary from './src/components/ErrorBoundary';
 import { OfflineQueue } from './src/services/offlineQueue';
 import SocketService from './src/services/socketService';
-import ToastManager from 'toastify-react-native';
+import PremiumToast from './src/components/PremiumToast';
 import { getThemeForScheme } from './src/theme';
 
 
@@ -66,7 +66,7 @@ function App() {
             <ErrorBoundary>
               <MainNavigation />
             </ErrorBoundary>
-            <ToastManager />
+            <PremiumToast />
           </SafeAreaView>
         </SafeAreaProvider>
       </Provider>
