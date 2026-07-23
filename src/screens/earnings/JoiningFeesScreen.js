@@ -763,7 +763,7 @@ const JoiningFeesScreen = ({ navigation, route }) => {
             styles.payBtn,
             (loading || feeLoading || checkingStatus) && styles.payBtnDisabled,
           ]}
-          onPress={()=> navigation.navigate(handlePayNow)}//handlePayNow
+          onPress={handlePayNow}
           disabled={loading || feeLoading || checkingStatus}
         >
           {loading || checkingStatus ? (

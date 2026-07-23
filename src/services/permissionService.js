@@ -1,4 +1,4 @@
-import {Platform} from 'react-native';
+import {Platform, Alert} from 'react-native';
 import {
   check,
   request,
@@ -19,10 +19,29 @@ export const getLocationPermission = async () => {
     return true;
   }
 
-  // Step 2: Request only if needed
+  // Step 2: Prominent Disclosure and Request
   if (result === RESULTS.DENIED) {
-    result = await request(permission);
-    return result === RESULTS.GRANTED;
+    return new Promise((resolve) => {
+      Alert.alert(
+        'Location Permission Required',
+        'GoDelivo Captain collects location data to enable tracking your deliveries, providing accurate ETAs, and assigning nearby orders even when the app is closed or not in use.',
+        [
+          {
+            text: 'Cancel',
+            onPress: () => resolve(false),
+            style: 'cancel',
+          },
+          {
+            text: 'Accept',
+            onPress: async () => {
+              const requestResult = await request(permission);
+              resolve(requestResult === RESULTS.GRANTED);
+            },
+          },
+        ],
+        {cancelable: false},
+      );
+    });
   }
 
   // BLOCKED / UNAVAILABLE

@@ -1,4 +1,4 @@
-import { StyleSheet, useColorScheme } from 'react-native';
+import { StyleSheet, useColorScheme, AppState, Platform } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import MainNavigation from './src/navigations/mainNavigation';
@@ -13,6 +13,8 @@ import { OfflineQueue } from './src/services/offlineQueue';
 import SocketService from './src/services/socketService';
 import PremiumToast from './src/components/PremiumToast';
 import { getThemeForScheme } from './src/theme';
+import { startOverlayBubble } from './src/services/FloatingBubbleService';
+import { navigationRef } from './src/navigations/navigationRef';
 
 
 function App() {
@@ -39,6 +41,11 @@ function App() {
         // Start offline queue
         OfflineQueue.startListening();
 
+        // Start system-level floating bubble (Android only)
+        if (Platform.OS === 'android') {
+          await startOverlayBubble();
+        }
+
       } catch (error) {
         console.error('❌ App initialization error:', error);
       }
@@ -46,9 +53,21 @@ function App() {
 
     initApp();
 
+    // Re-attempt starting the bubble when user returns from Settings
+    // (they may have just granted the Draw-over-other-apps permission)
+    const appStateSub = AppState.addEventListener('change', async (state) => {
+      if (state === 'active' && Platform.OS === 'android') {
+        await startOverlayBubble();
+      }
+    });
+
     return () => {
+      appStateSub.remove();
       OfflineQueue.stopListening();
       SocketService.cleanup();
+      // Bubble service keeps running after app closes (stopWithTask=false)
+      // Uncomment below to stop it on unmount instead:
+      // stopOverlayBubble();
     };
   }, []);
 

@@ -338,9 +338,15 @@ const HomeScreen = ({ navigation }) => {
 
     if (data.type === 'NEW_ORDER' || data.type === 'ORDER') {
       logComingOrder('notification-message', data);
-      setOrderComing(true);
-      playOrderSound();
-      setNotificationData(data);
+      
+      const activeOrder = await getActiveOrder();
+      if (!activeOrder) {
+        setOrderComing(true);
+        playOrderSound();
+        setNotificationData(data);
+      } else {
+        console.log('Skipping NEW_ORDER notification because driver is already on an active ride.');
+      }
     }
   }, []);
 
@@ -512,7 +518,9 @@ const HomeScreen = ({ navigation }) => {
           }
 
           // Process reject via the ride request handler
-          await processRejectRide(data);
+          if (!activeOrder) {
+            await processRejectRide(data);
+          }
         }
       },
     );
@@ -789,12 +797,20 @@ const HomeScreen = ({ navigation }) => {
           SocketService.emitStatusChange(false, false);
           SocketService.clearActiveRide();
 
-          const offlineResults = await Promise.allSettled([
+          const offlinePromises = [
             driverApi.updateOnlineStatus(false),
             stopService(),
             NotificationService.updateOnlineStatus(false),
             clearActiveOrder(),
-          ]);
+          ];
+
+          const offlineResults = await Promise.all(
+            offlinePromises.map(p => 
+              Promise.resolve(p)
+                .then(value => ({ status: 'fulfilled', value }))
+                .catch(reason => ({ status: 'rejected', reason }))
+            )
+          );
 
           if (!isCurrentToggle()) {
             console.log('[ONLINE_STATUS] Offline sync stale:', requestId);

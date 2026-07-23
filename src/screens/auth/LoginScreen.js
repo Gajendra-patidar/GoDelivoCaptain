@@ -236,13 +236,23 @@ const LoginScreen = ({ navigation }) => {
 
     try {
       stopOtpAutoFill();
-      otpListenerRef.current = RNOtpVerify.startOtpListener
-        ? await RNOtpVerify.startOtpListener(handleIncomingOtp)
-        : null;
+      
+      const startRetriever = async () => {
+        try {
+          await RNOtpVerify.getOtp();
+          otpListenerRef.current = RNOtpVerify.addListener(handleIncomingOtp);
+        } catch (e) {
+          console.log('Fallback OTP listener', e);
+        }
+      };
 
-      if (!otpListenerRef.current) {
-        await RNOtpVerify.getOtp();
-        otpListenerRef.current = RNOtpVerify.addListener(handleIncomingOtp);
+      if (RNOtpVerify.startOtpListener) {
+        otpListenerRef.current = await RNOtpVerify.startOtpListener(handleIncomingOtp);
+        if (!otpListenerRef.current) {
+          await startRetriever();
+        }
+      } else {
+        await startRetriever();
       }
     } catch (error) {
       console.log('OTP Auto Fill Listener Error:', error);
@@ -346,7 +356,10 @@ const LoginScreen = ({ navigation }) => {
 
     try {
       const payload = await buildSendOtpPayload(mobile);
-      const response = await axios.post(`${BASE_URL}/send-otp`, payload);
+      const response = await axios.post(`${BASE_URL}/send-otp`, payload, {
+        timeout: 15000,
+        headers: { 'Connection': 'close' },
+      });
 
       console.log("checking daa s us", response);
       
@@ -394,6 +407,9 @@ const LoginScreen = ({ navigation }) => {
         const response = await axios.post(`${BASE_URL}/verify-otp`, {
           phone: mobile,
           otp: otpString,
+        }, {
+          timeout: 15000,
+          headers: { 'Connection': 'close' },
         });
 
         console.log('token checking res', response);
@@ -504,7 +520,10 @@ const LoginScreen = ({ navigation }) => {
 
     try {
       const payload = await buildSendOtpPayload(mobile);
-      const response = await axios.post(`${BASE_URL}/send-otp`, payload);
+      const response = await axios.post(`${BASE_URL}/send-otp`, payload, {
+        timeout: 15000,
+        headers: { 'Connection': 'close' },
+      });
 
       if (response.data.success) {
         startTimer();
