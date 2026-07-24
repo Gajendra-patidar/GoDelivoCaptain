@@ -168,10 +168,7 @@ const JoiningFeesScreen = ({ navigation, route }) => {
     }
 
     navigation.replace('Docs', {
-      phone:
-        data?.phone ||
-        formData?.phone ||
-        formData?.backendData?.phone,
+      phone: data?.phone || formData?.phone || formData?.backendData?.phone,
       data: completeReviewData,
     });
   };
@@ -684,7 +681,7 @@ const JoiningFeesScreen = ({ navigation, route }) => {
           </TouchableOpacity>
         )}
 
-        <Text style={styles.headerTitle}>Joining Fees</Text>
+        <Text style={styles.headerTitle}>Partner Security Balence</Text>
 
         <View style={styles.backBtnPlaceholder} />
       </LinearGradient>
@@ -697,7 +694,9 @@ const JoiningFeesScreen = ({ navigation, route }) => {
         <Text style={styles.title}>Start Earning with GoDelivo</Text>
 
         <Text style={styles.subtitle}>
-          Pay one-time joining fees to complete your Captain registration.
+          This amount is maintained as your Partner Adjustment Balance.
+          Applicable platform commission and other approved deductions will be
+          adjusted automatically from this balance until it is exhausted
         </Text>
 
         <View style={styles.card}>
@@ -711,41 +710,46 @@ const JoiningFeesScreen = ({ navigation, route }) => {
           <View style={styles.divider} />
 
           <View style={styles.row}>
-            <Text style={styles.label}>Joining Fees</Text>
+            <Text style={styles.label}>Partner Security Balence</Text>
             {feeLoading ? (
               <ActivityIndicator size="small" color="#fccf1e" />
             ) : (
-              <Text style={styles.amount}>₹{subscriptionFee}</Text>
+              
+                subscriptionFee === 0 ? <Text style={styles.amountFree}>Free</Text> : <Text style={styles.amount}>₹{subscriptionFee}</Text>
             )}
           </View>
         </View>
 
-        <View style={styles.benefitCard}>
-          <View style={styles.benefitRow}>
-            <Icon name="check-circle" size={20} color="#4CAF50" />
-            <Text style={styles.benefitText}>Fast verification process</Text>
-          </View>
+        {subscriptionFee != 0 && (
+          <View style={styles.benefitCard}>
+            <View style={styles.benefitRow}>
+              <Icon name="check-circle" size={20} color="#4CAF50" />
+              <Text style={styles.benefitText}>Fast verification process</Text>
+            </View>
 
-          <View style={styles.benefitRow}>
-            <Icon name="check-circle" size={20} color="#4CAF50" />
-            <Text style={styles.benefitText}>
-              Start accepting rides after approval
-            </Text>
-          </View>
+            <View style={styles.benefitRow}>
+              <Icon name="check-circle" size={20} color="#4CAF50" />
+              <Text style={styles.benefitText}>
+                Start accepting rides after approval
+              </Text>
+            </View>
 
-          <View style={styles.benefitRow}>
-            <Icon name="check-circle" size={20} color="#4CAF50" />
-            <Text style={styles.benefitText}>Secure payment via Razorpay</Text>
-          </View>
+            <View style={styles.benefitRow}>
+              <Icon name="check-circle" size={20} color="#4CAF50" />
+              <Text style={styles.benefitText}>
+                Secure payment via Razorpay
+              </Text>
+            </View>
 
-          <View style={styles.benefitRow}>
-            <Icon name="alarm" size={25} color="#4CAF50" />
-            <Text style={[styles.benefitText, { marginRight: 10 }]}>
-              After paying joining fees, document verification might takes up to
-              5 Days
-            </Text>
+            <View style={styles.benefitRow}>
+              <Icon name="alarm" size={25} color="#4CAF50" />
+              <Text style={[styles.benefitText, { marginRight: 10 }]}>
+                After paying joining fees, document verification might takes up
+                to 5 Days
+              </Text>
+            </View>
           </View>
-        </View>
+        )}
 
         {subscriptionFee === 0 && !feeLoading && (
           <View style={styles.freeCard}>
@@ -881,6 +885,11 @@ const styles = StyleSheet.create({
   amount: {
     fontSize: 26,
     color: '#111827',
+    fontWeight: '900',
+  },
+  amountFree: {
+    fontSize: 26,
+    color: '#15b307',
     fontWeight: '900',
   },
   divider: {

@@ -1,6 +1,6 @@
 import { moderateScale } from 'react-native-size-matters';
 
-export const BRAND_YELLOW = '#fccf1e';
+export const BRAND_YELLOW = '#fdd31f';
 export const BRAND_BLACK = '#000000';
 
 export const lightColors = {

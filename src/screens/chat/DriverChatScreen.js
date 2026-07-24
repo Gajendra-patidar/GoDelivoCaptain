@@ -15,6 +15,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import SocketService from '../../services/socketService';
+import { API_HOST } from '../../services/api';
 
 const DriverChatScreen = ({ route, navigation }) => {
   const { rideId } = route.params;
@@ -52,42 +53,54 @@ const DriverChatScreen = ({ route, navigation }) => {
   useEffect(() => {
     if (!driverId) return;
 
-    // 2. Set up socket connection
-    // Ensure socket is connected
-    if (!SocketService.isSocketConnected()) {
-      SocketService.connect();
-    }
+    let cleanedUp = false;
 
-    // 3. Register presence inside chat namespace
-    if (SocketService.socket) {
-      SocketService.socket.emit('chat:join', {
-        rideId,
-        userId: driverId,
-        userType: 'driver'
-      });
+    const setupSocket = async () => {
+      // Ensure socket is connected before emitting – connect() is async
+      if (!SocketService.isSocketConnected()) {
+        await SocketService.connect();
+      }
 
-      // 4. Listen for real-time customer replies
-      SocketService.socket.on('chat:new_message', (msg) => {
-        setMessages((prev) => {
-          if (prev.some((m) => m._id === msg._id)) return prev; // Deduplication
-          return [
-            ...prev,
-            {
-              ...msg,
-              isOwnMessage: msg.senderId.toString() === driverId.toString(),
-            }
-          ];
+      // Guard: component may have unmounted during the async connect
+      if (cleanedUp) return;
+
+      if (SocketService.socket) {
+        // Register presence inside chat namespace
+        SocketService.socket.emit('chat:join', {
+          rideId,
+          userId: driverId,
+          userType: 'driver',
         });
-      });
-    }
+
+        // Listen for real-time messages (own + customer replies)
+        SocketService.socket.on('chat:new_message', (msg) => {
+          setMessages((prev) => {
+            // Deduplication: skip if already in list (optimistic or echoed)
+            if (prev.some((m) => m._id && m._id === msg._id)) return prev;
+            return [
+              ...prev,
+              {
+                ...msg,
+                isOwnMessage:
+                  msg.senderId != null &&
+                  msg.senderId.toString() === driverId.toString(),
+              },
+            ];
+          });
+        });
+      }
+    };
+
+    setupSocket();
 
     return () => {
+      cleanedUp = true;
       if (SocketService.socket) {
-        SocketService.socket.emit('chat:leave');
+        SocketService.socket.emit('chat:leave', { rideId });
         SocketService.socket.off('chat:new_message');
       }
     };
-  }, [rideId, driverId]); // Added dependency on driverId since it may be fetched asynchronously
+  }, [rideId, driverId]);
 
   // Keep FlatList scrolled to bottom
   useEffect(() => {
@@ -100,16 +113,25 @@ const DriverChatScreen = ({ route, navigation }) => {
 
   const fetchChatHistory = async (token) => {
     try {
-      const response = await fetch(`https://godelivo.com/api/chat/history/${rideId}`, {
+      const response = await fetch(`${API_HOST}/chat/history/${rideId}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
+          'Content-Type': 'application/json',
+        },
       });
       const res = await response.json();
       if (res.success) {
-        setMessages(res.data.messages || []);
+        // Mark each historical message with isOwnMessage flag
+        const currentDriverId = driverId;
+        const enriched = (res.data.messages || []).map(msg => ({
+          ...msg,
+          isOwnMessage:
+            msg.senderId != null &&
+            currentDriverId != null &&
+            msg.senderId.toString() === currentDriverId.toString(),
+        }));
+        setMessages(enriched);
       }
     } catch (error) {
       console.error('History API error:', error);
@@ -119,14 +141,21 @@ const DriverChatScreen = ({ route, navigation }) => {
   };
 
   const handleSendMessage = () => {
-    if (inputText.trim() === '') return;
+    const text = inputText.trim();
+    if (text === '') return;
 
     if (SocketService.socket && SocketService.socket.connected) {
+      setInputText('');
+
       SocketService.socket.emit('chat:send_message', {
         rideId,
-        message: inputText.trim()
+        senderId: driverId,
+        message: text,
       });
-      setInputText('');
+    } else {
+      // Socket not ready – reconnect and inform driver
+      console.warn('[Chat] Socket not connected. Attempting reconnect...');
+      SocketService.connect();
     }
   };
 
@@ -163,7 +192,6 @@ const DriverChatScreen = ({ route, navigation }) => {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
-        {/* Custom Header */}
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.backButton}
@@ -176,7 +204,7 @@ const DriverChatScreen = ({ route, navigation }) => {
             <Text style={styles.headerTitle}>Customer Support</Text>
             <Text style={styles.headerSubtitle}>Order #{String(rideId).slice(-6).toUpperCase()}</Text>
           </View>
-          <View style={{ width: 40 }} /> {/* Spacer for alignment */}
+          <View style={{ width: 40 }} />
         </View>
 
         <FlatList

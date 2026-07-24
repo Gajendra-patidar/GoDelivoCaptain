@@ -26,12 +26,20 @@ import { Toast } from 'toastify-react-native';
 const OTP_LENGTH = 6;
 
 const extractOtp = message => {
-  const labelledMatch = message?.match(
-    /(?:otp|code|verification|password)[^\d]*(\d{6})/i,
+  if (!message) return null;
+  const strMsg =
+    typeof message === 'string'
+      ? message
+      : String(message?.message || message || '');
+
+  if (!strMsg) return null;
+
+  const labelledMatch = strMsg.match(
+    /(?:otp|code|verification|passcode|password|is)[^\d]*(\d{6})/i,
   );
   if (labelledMatch?.[1]) return labelledMatch[1];
 
-  const match = message?.match(/\b\d{6}\b/);
+  const match = strMsg.match(/\b\d{6}\b/);
   return match ? match[0] : null;
 };
 
@@ -204,19 +212,36 @@ const LoginScreen = ({ navigation }) => {
   const stopOtpAutoFill = useCallback(() => {
     if (Platform.OS !== 'android') return;
 
-    otpListenerRef.current?.remove?.();
-    otpListenerRef.current = null;
-    RNOtpVerify.removeListener();
+    try {
+      if (otpListenerRef.current?.remove) {
+        otpListenerRef.current.remove();
+      }
+      otpListenerRef.current = null;
+      if (typeof RNOtpVerify?.removeListener === 'function') {
+        RNOtpVerify.removeListener();
+      }
+    } catch (e) {
+      console.log('Error stopping OTP listener:', e);
+    }
   }, []);
 
   const handleIncomingOtp = useCallback(
     message => {
-      if (message === 'Timeout Error.') {
+      if (!message) return;
+      const strMsg =
+        typeof message === 'string'
+          ? message
+          : String(message?.message || message || '');
+
+      if (
+        strMsg.includes('Timeout Error') ||
+        strMsg.includes('TimeoutError')
+      ) {
         stopOtpAutoFill();
         return;
       }
 
-      const detectedOtp = extractOtp(message);
+      const detectedOtp = extractOtp(strMsg);
 
       if (!detectedOtp) return;
 
@@ -236,23 +261,20 @@ const LoginScreen = ({ navigation }) => {
 
     try {
       stopOtpAutoFill();
-      
-      const startRetriever = async () => {
-        try {
-          await RNOtpVerify.getOtp();
-          otpListenerRef.current = RNOtpVerify.addListener(handleIncomingOtp);
-        } catch (e) {
-          console.log('Fallback OTP listener', e);
-        }
-      };
 
-      if (RNOtpVerify.startOtpListener) {
-        otpListenerRef.current = await RNOtpVerify.startOtpListener(handleIncomingOtp);
-        if (!otpListenerRef.current) {
-          await startRetriever();
+      if (typeof RNOtpVerify?.startOtpListener === 'function') {
+        const sub = await RNOtpVerify.startOtpListener(handleIncomingOtp);
+        if (sub) {
+          otpListenerRef.current = sub;
+          return;
         }
-      } else {
-        await startRetriever();
+      }
+
+      if (typeof RNOtpVerify?.getOtp === 'function') {
+        await RNOtpVerify.getOtp();
+        if (typeof RNOtpVerify?.addListener === 'function') {
+          otpListenerRef.current = RNOtpVerify.addListener(handleIncomingOtp);
+        }
       }
     } catch (error) {
       console.log('OTP Auto Fill Listener Error:', error);
@@ -263,8 +285,15 @@ const LoginScreen = ({ navigation }) => {
     if (Platform.OS !== 'android') return null;
 
     try {
+      if (typeof RNOtpVerify?.getHash !== 'function') return null;
+
       const hashes = await RNOtpVerify.getHash();
-      return Array.isArray(hashes) ? hashes[0] : hashes;
+      if (Array.isArray(hashes) && hashes.length > 0) {
+        return hashes[0] || null;
+      } else if (typeof hashes === 'string' && hashes.length > 0) {
+        return hashes;
+      }
+      return null;
     } catch (error) {
       console.log('OTP Hash Error:', error);
       return null;

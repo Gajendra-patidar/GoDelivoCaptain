@@ -72,12 +72,46 @@ export const updateProfile = createAsyncThunk(
   }
 );
 
+// UPLOAD PROFILE IMAGE
+export const uploadProfileImage = createAsyncThunk(
+  'profile/uploadProfileImage',
+  async (imageUri, { rejectWithValue }) => {
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) throw new Error('Missing user token');
+
+      const formData = new FormData();
+      formData.append('profileImage', {
+        uri: imageUri,
+        type: 'image/jpeg',
+        name: 'profile_image.jpg',
+      });
+
+      const response = await axios.put(
+        `${PROFILE_URL}/avatar`,
+        formData,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'multipart/form-data',
+          },
+        },
+      );
+      return response.data?.data?.profileImage || response.data?.profileImage || response.data?.data?.imageUrl || null;
+    } catch (error) {
+      return rejectWithValue(errorMessage(error));
+    }
+  }
+);
+
 const profileSlice = createSlice({
   name: 'profile',
   initialState: {
     profile: null,
     loading: false,
     error: null,
+    imageUploading: false,
+    imageError: null,
   },
 
   reducers: {
@@ -135,6 +169,23 @@ const profileSlice = createSlice({
       .addCase(updateProfile.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
+      })
+
+      // UPLOAD PROFILE IMAGE
+      .addCase(uploadProfileImage.pending, state => {
+        state.imageUploading = true;
+        state.imageError = null;
+      })
+      .addCase(uploadProfileImage.fulfilled, (state, action) => {
+        state.imageUploading = false;
+        if (action.payload && state.profile) {
+          state.profile = { ...state.profile, profileImage: action.payload };
+        }
+        state.imageError = null;
+      })
+      .addCase(uploadProfileImage.rejected, (state, action) => {
+        state.imageUploading = false;
+        state.imageError = action.payload;
       });
   },
 });
@@ -144,5 +195,7 @@ export const { clearProfile, setProfile } = profileSlice.actions;
 export const selectProfile = state => state.profile.profile;
 export const selectProfileLoading = state => state.profile.loading;
 export const selectProfileError = state => state.profile.error;
+export const selectImageUploading = state => state.profile.imageUploading;
+export const selectImageError = state => state.profile.imageError;
 
 export default profileSlice.reducer;

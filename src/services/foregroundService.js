@@ -15,7 +15,7 @@ const ONLINE_TITLE = 'GoDelivo Partner';
 const ONLINE_BODY = 'You are online and ready to receive orders';
 const OFFLINE_BODY = 'You are offline and go online for orders';
 const TRIP_TITLE = 'GoDelivo Partner - Trip in progress';
-const NOTIFICATION_SMALL_ICON = 'ic_notif_driver';
+const NOTIFICATION_SMALL_ICON = 'ic_launcher';
 const NOTIFICATION_LARGE_ICON = require('../assets/godelivo_notification_logo.png');
 
 let isServiceRunning = false;

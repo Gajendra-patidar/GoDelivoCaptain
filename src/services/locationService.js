@@ -4,10 +4,10 @@ import { BASE_URL } from './api';
 import SocketService from './socketService';
 
 const REPORT_INTERVAL_MS = 45000; // Low frequency backup HTTP sync (Sockets do real-time tracking now)
-const INITIAL_LOCATION_TIMEOUT_MS = 20000;
-const FALLBACK_LOCATION_TIMEOUT_MS = 15000;
-const LOCATION_MAX_AGE_MS = 10000;
-const FALLBACK_LOCATION_MAX_AGE_MS = 60000;
+const INITIAL_LOCATION_TIMEOUT_MS = 7000;   // Reduced: fast GPS request; fallback handles slow devices
+const FALLBACK_LOCATION_TIMEOUT_MS = 8000;  // Reduced: low-accuracy fallback (uses cached OS fix)
+const LOCATION_MAX_AGE_MS = 30000;          // Increased: reuse recent GPS cache so startup is instant
+const FALLBACK_LOCATION_MAX_AGE_MS = 120000; // Extended: accept older cached position for fallback
 
 const buildCoords = position => ({
   latitude: position.coords.latitude,
@@ -62,10 +62,11 @@ class LocationService {
     this.isRunning = true;
 
     try {
-      const coords = await this.requestStartupPosition();
-
-      // Connect socket connection for real-time tracking
-      await SocketService.connect();
+      // Run GPS request and socket connect IN PARALLEL — they are independent
+      const [coords] = await Promise.all([
+        this.requestStartupPosition(),
+        SocketService.connect(),
+      ]);
 
       this.emitCurrentLocation();
       this.reportLocation(); // Initial HTTP sync guarantee
@@ -122,10 +123,8 @@ class LocationService {
       this.intervalId = null;
     }
 
-    // Disconnect socket connection to preserve device resources when offline
-    SocketService.disconnect();
-
-    this.lastCoords = null;
+    // NOTE: intentionally keep lastCoords so a restart can use stale coords
+    // as a Stage-3 fallback without requiring a brand-new GPS fix.
     this.lastLocationAt = null;
   }
 
@@ -138,27 +137,41 @@ class LocationService {
   }
 
   async requestStartupPosition() {
+    // Stage 1: High-accuracy GPS with short timeout (uses OS cache if fresh)
     try {
       return await this.requestPosition({
         enableHighAccuracy: true,
         timeout: INITIAL_LOCATION_TIMEOUT_MS,
         maximumAge: LOCATION_MAX_AGE_MS,
       });
-    } catch (error) {
-      const isTimeout = String(error?.message || '')
-        .toLowerCase()
-        .includes('timed out');
-
-      if (!isTimeout) {
-        throw error;
+    } catch (stage1Error) {
+      const msg = String(stage1Error?.message || '').toLowerCase();
+      // Non-timeout errors (e.g. permission denied) bubble up immediately
+      if (!msg.includes('timed out') && !msg.includes('unavailable')) {
+        throw stage1Error;
       }
+      console.warn('[LocationService] Stage 1 GPS timed out, trying low-accuracy fallback...');
+    }
 
-      return this.requestPosition({
+    // Stage 2: Low-accuracy fallback — accepts much older OS cache
+    try {
+      return await this.requestPosition({
         enableHighAccuracy: false,
         timeout: FALLBACK_LOCATION_TIMEOUT_MS,
         maximumAge: FALLBACK_LOCATION_MAX_AGE_MS,
       });
+    } catch (stage2Error) {
+      console.warn('[LocationService] Stage 2 GPS timed out, checking stale coords...');
     }
+
+    // Stage 3: Use the last known coords (preserved across stop/start cycles)
+    if (this.lastCoords) {
+      console.warn('[LocationService] Using stale last coords as Stage-3 fallback.');
+      return this.lastCoords;
+    }
+
+    // All stages exhausted — GPS is completely unavailable
+    throw new Error('location request timed out');
   }
 
   requestPosition(options) {

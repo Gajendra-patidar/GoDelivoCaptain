@@ -13,7 +13,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { theme } from '../theme';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-const BUBBLE_SIZE = 60;
+const BUBBLE_SIZE = 30;
 const MENU_ITEM_SIZE = 50;
 const EDGE_PADDING = 10;
 
@@ -272,7 +272,7 @@ const FloatingBubble = ({ navigation, isVisible = true }) => {
             activeOpacity={0.9}
           >
             <Image
-              source={require('../assets/logo.png')}
+              source={require('../assets/godelivo_notification_logo.png')}
               style={styles.logo}
               resizeMode="contain"
             />

@@ -10,6 +10,7 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import MaterialIcons from 'react-native-vector-icons/MaterialIcons';
@@ -19,6 +20,7 @@ import { changeLanguage } from '../../utils/changeLanguage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NotificationService from '../../services/NotificationService';
 import SocketService from '../../services/socketService';
+import { launchImageLibrary } from 'react-native-image-picker';
 import {
   resetDriverLocalData,
   getActiveOrder,
@@ -28,8 +30,10 @@ import {
   clearProfile,
   getProfile,
   updateProfile,
+  uploadProfileImage,
   selectProfile,
   selectProfileLoading,
+  selectImageUploading,
 } from '../../store/slices/profileSlice';
 import { theme } from '../../theme';
 
@@ -38,26 +42,25 @@ const ProfileScreen = ({ navigation }) => {
   const dispatch = useDispatch();
   const profile = useSelector(selectProfile);
   const loading = useSelector(selectProfileLoading);
+  const imageUploading = useSelector(selectImageUploading);
 
-  const profileAddress =
-    profile?.address || profile?.applicationDetails?.address;
-  const profileBankDetails =
-    profile?.bankDetails || profile?.applicationDetails?.bankDetails;
+  const profileAddress = profile?.address || profile?.applicationDetails?.address;
+  const profileBankDetails = profile?.bankDetails || profile?.applicationDetails?.bankDetails;
   const profileVehicleDetails = profile?.vehicleDetails ||
     profile?.applicationDetails?.vehicleDetails || {
       type: profile?.vehicleType,
       number: profile?.vehicleNumber,
     };
   const profileStats = profile?.stats || {};
-  const applicationDetails = profile?.applicationDetails || {};
+
+  console.log("profile check: ", profile);
+  
 
   // State for modals
   const [addressModalVisible, setAddressModalVisible] = useState(false);
   const [phoneModalVisible, setPhoneModalVisible] = useState(false);
   const [bankModalVisible, setBankModalVisible] = useState(false);
-  const [languageModalVisible, setLanguageModalVisible] = useState(false);
-  const [trainingLanguageModalVisible, setTrainingLanguageModalVisible] =
-    useState(false);
+  const [editProfileModalVisible, setEditProfileModalVisible] = useState(false);
 
   // State for form data
   const [homeAddress, setHomeAddress] = useState('');
@@ -66,6 +69,13 @@ const ProfileScreen = ({ navigation }) => {
   const [newPhoneNumber, setNewPhoneNumber] = useState('');
   const [otp, setOtp] = useState('');
   const [showOtpField, setShowOtpField] = useState(false);
+
+  // Edit Profile state
+  const [editProfileData, setEditProfileData] = useState({
+    name: '',
+    vehicleType: '',
+    vehicleNumber: '',
+  });
 
   // Bank details state
   const [bankDetails, setBankDetails] = useState({
@@ -80,19 +90,20 @@ const ProfileScreen = ({ navigation }) => {
 
   // Language state
   const [appLanguage, setAppLanguage] = useState('English');
-  const [trainingLanguage, setTrainingLanguage] = useState('हिन्दी');
 
   useEffect(() => {
     dispatch(getProfile());
   }, [dispatch]);
 
   useEffect(() => {
-    console.log('profiledata', profile);
-
     if (profile) {
       setPhoneNumber(profile.phone || '');
+      setEditProfileData({
+        name: profile.name || '',
+        vehicleType: profileVehicleDetails?.type || profile.vehicleType || '',
+        vehicleNumber: profileVehicleDetails?.number || profile.vehicleNumber || '',
+      });
 
-      // Handle address - it may come from applicationDetails.address
       if (profileAddress) {
         const addressObj = profileAddress;
         const formattedAddress = `${addressObj.street || ''}, ${
@@ -101,7 +112,6 @@ const ProfileScreen = ({ navigation }) => {
         setSavedAddress(formattedAddress);
       }
 
-      // Handle bank details from either root or nested applicationDetails
       if (profileBankDetails) {
         setSavedBankDetails({
           accountHolderName: profileBankDetails.accountHolderName || '',
@@ -114,7 +124,6 @@ const ProfileScreen = ({ navigation }) => {
     }
   }, [profile]);
 
-  // Load language from AsyncStorage
   useEffect(() => {
     const loadLanguage = async () => {
       try {
@@ -122,184 +131,58 @@ const ProfileScreen = ({ navigation }) => {
         if (language) {
           setAppLanguage(language === 'en' ? 'English' : 'हिन्दी');
         }
-      } catch (error) {
-        console.error('Error loading language:', error);
-      }
+      } catch (error) {}
     };
-
     loadLanguage();
   }, []);
 
-  const handleAddressSave = useCallback(() => {
-    if (homeAddress.trim()) {
-      // Parse the address input (you might want to improve this parsing)
-      const addressParts = homeAddress.split(',').map(part => part.trim());
-
-      const addressObj = {
-        street: addressParts[0] || '',
-        city: addressParts[1] || profile?.address?.city || '',
-        state: addressParts[2] || profile?.address?.state || '',
-        pincode: addressParts[3] || profile?.address?.pincode || '',
-      };
-
-      dispatch(
-        updateProfile({
-          address: addressObj,
-        }),
-      );
-
-      setSavedAddress(homeAddress);
-      setHomeAddress('');
-      setAddressModalVisible(false);
-
-      toast.success('Address updated successfully!');
-    } else {
-      toast.error('Please enter an address');
-    }
-  }, [dispatch, homeAddress, profile]);
-
-  const handlePhoneSendOTP = useCallback(() => {
-    if (newPhoneNumber.length === 10) {
-      setShowOtpField(true);
-      toast.info('A verification code has been sent to your new number');
-    } else {
-      toast.error('Please enter a valid 10-digit mobile number');
-    }
-  }, [newPhoneNumber]);
-
-  const handlePhoneVerifyOTP = useCallback(() => {
-    if (otp.length === 6) {
-      dispatch(
-        updateProfile({
-          phone: newPhoneNumber,
-        }),
-      );
-
-      setPhoneNumber(newPhoneNumber);
-      setPhoneModalVisible(false);
-      setShowOtpField(false);
-      setNewPhoneNumber('');
-      setOtp('');
-
-      toast.success('Mobile number updated successfully!');
-    } else {
-      toast.error('Please enter valid OTP');
-    }
-  }, [dispatch, newPhoneNumber, otp]);
-
-  const handleBankSave = useCallback(() => {
-    if (
-      bankDetails.accountHolderName &&
-      bankDetails.accountNumber &&
-      bankDetails.ifscCode &&
-      bankDetails.bankName
-    ) {
-      if (bankDetails.accountNumber === bankDetails.confirmAccountNumber) {
-        // Remove confirmAccountNumber before sending to API
-        const { confirmAccountNumber, ...bankDataToSave } = bankDetails;
-
-        dispatch(
-          updateProfile({
-            bankDetails: bankDataToSave,
-          }),
-        );
-
-        setSavedBankDetails(bankDataToSave);
-        setBankModalVisible(false);
-
-        toast.success('Bank details saved successfully!');
-      } else {
-        toast.error('Account numbers do not match');
+  const handleImageUpload = () => {
+    launchImageLibrary({ mediaType: 'photo', quality: 0.8 }, (response) => {
+      if (response.didCancel) return;
+      if (response.errorMessage) {
+        toast.error('Image picker error: ' + response.errorMessage);
+        return;
       }
-    } else {
-      toast.error('Please fill all required fields');
+      if (response.assets && response.assets.length > 0) {
+        const uri = response.assets[0].uri;
+        dispatch(uploadProfileImage(uri))
+          .unwrap()
+          .then(() => toast.success('Profile picture updated successfully'))
+          .catch((err) => toast.error(err || 'Failed to update profile picture'));
+      }
+    });
+  };
+
+  const handleEditProfileSave = () => {
+    if (!editProfileData.name.trim()) {
+      toast.error('Name is required');
+      return;
     }
-  }, [bankDetails, dispatch]);
-
-  const handleLanguageSelect = useCallback((lang, isTraining) => {
-    if (!isTraining) {
-      setAppLanguage(lang);
-      changeLanguage(lang === 'English' ? 'en' : 'hi');
+    
+    // Determine how to update vehicle details based on existing structure
+    let updatePayload = { name: editProfileData.name };
+    
+    if (profile?.vehicleDetails || profile?.applicationDetails?.vehicleDetails) {
+      updatePayload.vehicleDetails = {
+        ...profileVehicleDetails,
+        type: editProfileData.vehicleType,
+        number: editProfileData.vehicleNumber,
+      };
     } else {
-      setTrainingLanguage(lang);
+      updatePayload.vehicleType = editProfileData.vehicleType;
+      updatePayload.vehicleNumber = editProfileData.vehicleNumber;
     }
-  }, []);
 
-  const AddressModal = useMemo(
-    () => (
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={addressModalVisible}
-        onRequestClose={() => setAddressModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Add Home Address</Text>
-              <TouchableOpacity onPress={() => setAddressModalVisible(false)}>
-                <Ionicons name="close" size={24} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.inputLabel}>Street Address *</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="Enter street address"
-              value={homeAddress}
-              onChangeText={setHomeAddress}
-            />
-
-            <Text style={styles.inputLabel}>City</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="City"
-              value={profileAddress?.city || ''}
-              editable={false}
-            />
-
-            <Text style={styles.inputLabel}>State</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="State"
-              value={profileAddress?.state || ''}
-              editable={false}
-            />
-
-            <Text style={styles.inputLabel}>Pincode</Text>
-            <TextInput
-              style={styles.modalInput}
-              placeholder="Pincode"
-              value={profileAddress?.pincode || ''}
-              editable={false}
-            />
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.cancelButton]}
-                onPress={() => {
-                  setHomeAddress('');
-                  setAddressModalVisible(false);
-                }}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.saveButton]}
-                onPress={handleAddressSave}
-              >
-                <Text style={styles.saveButtonText}>Save Address</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    ),
-    [addressModalVisible, homeAddress, handleAddressSave, profile],
-  );
+    dispatch(updateProfile(updatePayload))
+      .unwrap()
+      .then(() => {
+        toast.success('Profile updated successfully');
+        setEditProfileModalVisible(false);
+      })
+      .catch((err) => toast.error(err || 'Failed to update profile'));
+  };
 
   const handleLogout = async () => {
-    // Check if there's an active order
     const activeOrder = await getActiveOrder();
     if (activeOrder) {
       Alert.alert(
@@ -309,7 +192,6 @@ const ProfileScreen = ({ navigation }) => {
       );
       return;
     }
-
     await NotificationService.removeToken();
     await AsyncStorage.multiRemove(['userToken', 'userData', 'driverId']);
     await resetDriverLocalData();
@@ -319,350 +201,8 @@ const ProfileScreen = ({ navigation }) => {
     navigation.replace('Login');
   };
 
-  const PhoneModal = useMemo(
-    () => (
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={phoneModalVisible}
-        onRequestClose={() => {
-          setPhoneModalVisible(false);
-          setShowOtpField(false);
-          setNewPhoneNumber('');
-          setOtp('');
-        }}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {showOtpField ? 'Verify OTP' : 'Change Mobile Number'}
-              </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setPhoneModalVisible(false);
-                  setShowOtpField(false);
-                  setNewPhoneNumber('');
-                  setOtp('');
-                }}
-              >
-                <Ionicons name="close" size={24} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
-
-            {!showOtpField ? (
-              <>
-                <Text style={styles.inputLabel}>New Mobile Number</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="Enter new mobile number"
-                  value={newPhoneNumber}
-                  onChangeText={setNewPhoneNumber}
-                  keyboardType="phone-pad"
-                  maxLength={10}
-                />
-                <TouchableOpacity
-                  style={styles.fullWidthButton}
-                  onPress={handlePhoneSendOTP}
-                >
-                  <Text style={styles.saveButtonText}>Send OTP</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                <Text style={styles.otpSentText}>
-                  OTP sent to {newPhoneNumber}
-                </Text>
-                <Text style={styles.inputLabel}>Enter OTP</Text>
-                <TextInput
-                  style={styles.modalInput}
-                  placeholder="Enter OTP"
-                  value={otp}
-                  onChangeText={setOtp}
-                  keyboardType="number-pad"
-                  maxLength={6}
-                />
-                <View style={styles.modalButtons}>
-                  <TouchableOpacity
-                    style={[styles.modalButton, styles.cancelButton]}
-                    onPress={() => {
-                      setShowOtpField(false);
-                      setNewPhoneNumber('');
-                      setOtp('');
-                    }}
-                  >
-                    <Text style={styles.cancelButtonText}>Back</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.modalButton, styles.saveButton]}
-                    onPress={handlePhoneVerifyOTP}
-                  >
-                    <Text style={styles.saveButtonText}>Verify & Update</Text>
-                  </TouchableOpacity>
-                </View>
-              </>
-            )}
-          </View>
-        </View>
-      </Modal>
-    ),
-    [
-      phoneModalVisible,
-      showOtpField,
-      newPhoneNumber,
-      otp,
-      handlePhoneSendOTP,
-      handlePhoneVerifyOTP,
-    ],
-  );
-
-  const BankModal = useMemo(
-    () => (
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={bankModalVisible}
-        onRequestClose={() => setBankModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <ScrollView contentContainerStyle={styles.scrollModalContent}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>
-                  {savedBankDetails ? 'Edit Bank Details' : 'Add Bank Details'}
-                </Text>
-                <TouchableOpacity onPress={() => setBankModalVisible(false)}>
-                  <Ionicons name="close" size={24} color="#6B7280" />
-                </TouchableOpacity>
-              </View>
-
-              <Text style={styles.inputLabel}>Account Holder Name *</Text>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Account Holder Name"
-                value={bankDetails.accountHolderName}
-                onChangeText={text =>
-                  setBankDetails({ ...bankDetails, accountHolderName: text })
-                }
-              />
-
-              <Text style={styles.inputLabel}>Account Number *</Text>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Account Number"
-                value={bankDetails.accountNumber}
-                onChangeText={text =>
-                  setBankDetails({ ...bankDetails, accountNumber: text })
-                }
-                keyboardType="numeric"
-              />
-
-              <Text style={styles.inputLabel}>Confirm Account Number *</Text>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Confirm Account Number"
-                value={bankDetails.confirmAccountNumber}
-                onChangeText={text =>
-                  setBankDetails({ ...bankDetails, confirmAccountNumber: text })
-                }
-                keyboardType="numeric"
-              />
-
-              <Text style={styles.inputLabel}>IFSC Code *</Text>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="IFSC Code"
-                value={bankDetails.ifscCode}
-                onChangeText={text =>
-                  setBankDetails({
-                    ...bankDetails,
-                    ifscCode: text.toUpperCase(),
-                  })
-                }
-                autoCapitalize="characters"
-              />
-
-              <Text style={styles.inputLabel}>Bank Name *</Text>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="Bank Name"
-                value={bankDetails.bankName}
-                onChangeText={text =>
-                  setBankDetails({ ...bankDetails, bankName: text })
-                }
-              />
-
-              <Text style={styles.inputLabel}>UPI ID (Optional)</Text>
-              <TextInput
-                style={styles.modalInput}
-                placeholder="UPI ID"
-                value={bankDetails.upiId}
-                onChangeText={text =>
-                  setBankDetails({ ...bankDetails, upiId: text })
-                }
-              />
-
-              <View style={styles.modalButtons}>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.cancelButton]}
-                  onPress={() => {
-                    setBankModalVisible(false);
-                    setBankDetails({
-                      accountHolderName: '',
-                      accountNumber: '',
-                      confirmAccountNumber: '',
-                      ifscCode: '',
-                      bankName: '',
-                      upiId: '',
-                    });
-                  }}
-                >
-                  <Text style={styles.cancelButtonText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalButton, styles.saveButton]}
-                  onPress={handleBankSave}
-                >
-                  <Text style={styles.saveButtonText}>Save Details</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </ScrollView>
-        </View>
-      </Modal>
-    ),
-    [bankModalVisible, bankDetails, savedBankDetails, handleBankSave],
-  );
-
-  const LanguageModal = useCallback(
-    ({ visible, onClose, currentLanguage, onSelect, title, isTraining }) => (
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={visible}
-        onRequestClose={onClose}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>{title}</Text>
-              <TouchableOpacity onPress={onClose}>
-                <Ionicons name="close" size={24} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
-
-            {['English', 'हिन्दी'].map(lang => (
-              <TouchableOpacity
-                key={lang}
-                style={[
-                  styles.languageOption,
-                  currentLanguage === lang && styles.selectedLanguageOption,
-                ]}
-                onPress={() => {
-                  onSelect(lang);
-                  handleLanguageSelect(lang, isTraining);
-                  onClose();
-                }}
-              >
-                <Text
-                  style={[
-                    styles.languageOptionText,
-                    currentLanguage === lang &&
-                      styles.selectedLanguageOptionText,
-                  ]}
-                >
-                  {lang}
-                </Text>
-                {currentLanguage === lang && (
-                  <Ionicons name="checkmark" size={20} color="#4169E1" />
-                )}
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-      </Modal>
-    ),
-    [handleLanguageSelect],
-  );
-
-  // Render bank details if saved
-  const renderBankDetails = useCallback(() => {
-    const bankInfo = savedBankDetails || profileBankDetails;
-    if (bankInfo) {
-      // Mask account number for display
-      const maskedAccountNumber = bankInfo.accountNumber
-        ? `••••${bankInfo.accountNumber.slice(-4)}`
-        : '';
-
-      return (
-        <View style={styles.bankDetailsCard}>
-          <View style={styles.bankDetailRow}>
-            <Text style={styles.bankDetailLabel}>Account Holder:</Text>
-            <Text style={styles.bankDetailValue}>
-              {bankInfo.accountHolderName}
-            </Text>
-          </View>
-          <View style={styles.bankDetailRow}>
-            <Text style={styles.bankDetailLabel}>Account No:</Text>
-            <Text style={styles.bankDetailValue}>{maskedAccountNumber}</Text>
-          </View>
-          <View style={styles.bankDetailRow}>
-            <Text style={styles.bankDetailLabel}>IFSC:</Text>
-            <Text style={styles.bankDetailValue}>{bankInfo.ifscCode}</Text>
-          </View>
-          <View style={styles.bankDetailRow}>
-            <Text style={styles.bankDetailLabel}>Bank:</Text>
-            <Text style={styles.bankDetailValue}>{bankInfo.bankName}</Text>
-          </View>
-          {bankInfo.upiId ? (
-            <View style={styles.bankDetailRow}>
-              <Text style={styles.bankDetailLabel}>UPI ID:</Text>
-              <Text style={styles.bankDetailValue}>{bankInfo.upiId}</Text>
-            </View>
-          ) : null}
-
-          <TouchableOpacity
-            style={styles.editBankButton}
-            onPress={() => {
-              setBankDetails({
-                accountHolderName: bankInfo.accountHolderName || '',
-                accountNumber: bankInfo.accountNumber || '',
-                confirmAccountNumber: bankInfo.accountNumber || '',
-                ifscCode: bankInfo.ifscCode || '',
-                bankName: bankInfo.bankName || '',
-                upiId: bankInfo.upiId || '',
-              });
-              setBankModalVisible(true);
-            }}
-          >
-            <Text style={styles.editBankButtonText}>Edit Details</Text>
-          </TouchableOpacity>
-        </View>
-      );
-    }
-    return (
-      <TouchableOpacity
-        style={styles.addDetailsButton}
-        onPress={() => {
-          setBankDetails({
-            accountHolderName: '',
-            accountNumber: '',
-            confirmAccountNumber: '',
-            ifscCode: '',
-            bankName: '',
-            upiId: '',
-          });
-          setBankModalVisible(true);
-        }}
-      >
-        <Ionicons name="add-circle-outline" size={20} color="#fccf1e" />
-        <Text style={styles.addDetailsText}>+ Add Details</Text>
-      </TouchableOpacity>
-    );
-  }, [savedBankDetails, profile, setBankDetails, setBankModalVisible]);
-
   // Loading state
-  if (loading) {
+  if (loading && !profile) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#fccf1e" />
@@ -683,18 +223,27 @@ const ProfileScreen = ({ navigation }) => {
         <Text style={styles.headerTitle}>Profile</Text>
       </View>
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
-      >
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        
         {/* Profile Info Card */}
         <View style={styles.profileCard}>
           <View style={styles.profileHeader}>
             <View style={styles.avatarContainer}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {profile?.name ? profile.name.charAt(0).toUpperCase() : 'U'}
-                </Text>
+              <View>
+                {profile?.profileimage ? (
+                  <Image source={{ uri: profile?.profileimage}} style={styles.avatarImage} />
+                ) : (
+                  <View style={styles.avatar}>
+                    <Text style={styles.avatarText}>
+                      {profile?.name ? profile.name.charAt(0).toUpperCase() : 'U'}
+                    </Text>
+                  </View>
+                )}
+                {imageUploading && (
+                  <View style={styles.imageOverlay}>
+                    <ActivityIndicator size="small" color="#fff" />
+                  </View>
+                )}
               </View>
               {isOnline && <View style={styles.onlineDot} />}
             </View>
@@ -703,13 +252,10 @@ const ProfileScreen = ({ navigation }) => {
               <View style={styles.nameRow}>
                 <Text style={styles.name}>{profile?.name || 'Driver'}</Text>
                 <View style={styles.ratingBadge}>
-                  <Text style={styles.starRating}>
-                    ★ {profileStats.rating || 0}
-                  </Text>
+                  <Text style={styles.starRating}>★ {profileStats.rating || 0}</Text>
                 </View>
               </View>
               <View style={styles.vehicleRow}>
-                {}
                 <Text style={styles.vehicleText}>
                   {profileVehicleDetails?.type || profile?.vehicleType || 'Vehicle'} •{' '}
                   {profileVehicleDetails?.number || profile?.vehicleNumber || '--'}
@@ -717,12 +263,13 @@ const ProfileScreen = ({ navigation }) => {
               </View>
             </View>
 
-            <TouchableOpacity
+            {/* <TouchableOpacity
               style={styles.editButton}
-              onPress={() => toast.info('View full profile details')}
+              onPress={() => setEditProfileModalVisible(true)}
+
             >
-              <Ionicons name="chevron-forward" size={24} color="#CBD5E1" />
-            </TouchableOpacity>
+              <Ionicons name="pencil" size={20} color="#4169E1" />
+            </TouchableOpacity> */}
           </View>
         </View>
 
@@ -730,15 +277,11 @@ const ProfileScreen = ({ navigation }) => {
         <View style={styles.statsCard}>
           <View style={styles.statsRow}>
             <View style={styles.statsItem}>
-              <Text style={styles.statsValue}>
-                ₹{profileStats.totalEarnings ?? 0}
-              </Text>
+              <Text style={styles.statsValue}>₹{profileStats.totalEarnings ?? 0}</Text>
               <Text style={styles.statsLabel}>Total Earnings</Text>
             </View>
             <View style={styles.statsItem}>
-              <Text style={styles.statsValue}>
-                {profileStats.totalTrips ?? 0}
-              </Text>
+              <Text style={styles.statsValue}>{profileStats.totalTrips ?? 0}</Text>
               <Text style={styles.statsLabel}>Total Trips</Text>
             </View>
           </View>
@@ -748,828 +291,132 @@ const ProfileScreen = ({ navigation }) => {
               <Text style={styles.statsLabel}>Rating</Text>
             </View>
             <View style={styles.statsItem}>
-              <Text style={styles.statsValue}>
-                ₹{profileStats.walletBalance ?? 0}
-              </Text>
+              <Text style={styles.statsValue}>₹{profileStats.walletBalance ?? 0}</Text>
               <Text style={styles.statsLabel}>Wallet</Text>
             </View>
           </View>
         </View>
 
-        {/* Home Address Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Home Address</Text>
-            <TouchableOpacity onPress={() => setAddressModalVisible(true)}>
-              <Ionicons name="add-circle-outline" size={22} color="#4169E1" />
-            </TouchableOpacity>
-          </View>
-          <View style={styles.addressBox}>
-            <Text style={styles.addressText}>
-              {savedAddress ||
-                (profileAddress
-                  ? `${profileAddress.street || ''}, ${
-                      profileAddress.city || ''
-                    }, ${profileAddress.state || ''} - ${
-                      profileAddress.pincode || ''
-                    }`
-                  : 'No address added')}
-            </Text>
-          </View>
-        </View>
-
-        {/* Mobile Number Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Mobile number</Text>
-            <TouchableOpacity onPress={() => setPhoneModalVisible(true)}>
-              <Text style={styles.changeText}>Change</Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.phoneBox}>
-            <View style={styles.phoneRow}>
-              <MaterialIcons name="phone" size={18} color="#6B7280" />
-              <Text style={styles.phoneText}>{phoneNumber}</Text>
-            </View>
-            <View style={styles.verifiedBadge}>
-              <MaterialIcons name="verified" size={16} color="#4CAF50" />
-              <Text style={styles.verifiedText}>Verified</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Bank Details Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Bank details</Text>
-          </View>
-          {renderBankDetails()}
-        </View>
-
-        {/* My Vehicles Section */}
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>My Vehicles</Text>
-          </View>
-
-          {/* Vehicle Card */}
-          <View style={styles.vehicleCard}>
-            <View style={styles.vehicleCardLeft}>
-              <View style={styles.vehicleIconBg}>
-                <Text style={{ fontSize: 15, fontFamily: 'Poppins-SemiBold' }}>
-                  {profile?.name ? profile.name.charAt(0).toUpperCase() : 'U'}
-                </Text>
-              </View>
-              <View style={styles.vehicleDetails}>
-                <Text style={styles.vehicleName}>
-                  {profile?.vehicleDetails?.type || profile?.vehicleType || 'Vehicle'}
-                </Text>
-                <Text style={styles.vehicleNumber}>
-                  {profile?.vehicleDetails?.number || profile?.vehicleNumber || '--'}
-                </Text>
-              </View>
-            </View>
-          </View>
-        </View>
-
-        {/* Document Status Section */}
-        {profile?.documents && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>Document Status</Text>
-            </View>
-
-            {Object.entries(profile.documents).map(([docType, docData]) => {
-              if (docType === 'aadharCard' && docData.front) {
-                return (
-                  <View key={docType} style={styles.documentRow}>
-                    <Text style={styles.documentLabel}>Aadhar Card</Text>
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        docData.front.status === 'verified'
-                          ? styles.statusVerified
-                          : docData.front.status === 'rejected'
-                          ? styles.statusRejected
-                          : styles.statusPending,
-                      ]}
-                    >
-                      <Text style={styles.statusText}>
-                        {docData.front.status === 'verified'
-                          ? '✓ Verified'
-                          : docData.front.status === 'rejected'
-                          ? '✗ Rejected'
-                          : '⏳ Pending'}
-                      </Text>
-                    </View>
-                  </View>
-                );
-              } else if (docType !== 'aadharCard') {
-                return (
-                  <View key={docType} style={styles.documentRow}>
-                    <Text style={styles.documentLabel}>
-                      {docType.replace(/([A-Z])/g, ' $1').trim()}
-                    </Text>
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        docData.status === 'verified'
-                          ? styles.statusVerified
-                          : docData.status === 'rejected'
-                          ? styles.statusRejected
-                          : styles.statusPending,
-                      ]}
-                    >
-                      <Text style={styles.statusText}>
-                        {docData.status === 'verified'
-                          ? '✓ Verified'
-                          : docData.status === 'rejected'
-                          ? '✗ Rejected'
-                          : '⏳ Pending'}
-                      </Text>
-                    </View>
-                  </View>
-                );
-              }
-              return null;
-            })}
-
-            <View style={styles.applicationStatus}>
-              <Text style={styles.applicationStatusLabel}>
-                Application Status:
-              </Text>
-              <View
-                style={[
-                  styles.statusBadge,
-                  profile.verificationStatus === 'verified'
-                    ? styles.statusVerified
-                    : profile.verificationStatus === 'rejected'
-                    ? styles.statusRejected
-                    : styles.statusPending,
-                ]}
-              >
-                <Text style={styles.statusText}>
-                  {profile.verificationStatus === 'verified'
-                    ? '✓ Verified'
-                    : profile.verificationStatus === 'rejected'
-                    ? '✗ Rejected'
-                    : profile.verificationStatus === 'submitted'
-                    ? '⏳ Under Review'
-                    : 'Pending'}
-                </Text>
-              </View>
-            </View>
-
-            {profile.submittedAt && (
-              <Text style={styles.submittedDate}>
-                Submitted: {new Date(profile.submittedAt).toLocaleDateString()}
-              </Text>
-            )}
-          </View>
-        )}
-
-        {/* Language Preferences */}
-        <View style={styles.languageSection}>
-          <Text style={styles.languageSectionTitle}>Language Preferences</Text>
-
-          {/* Preferred App Language */}
-          <View style={styles.languageRow}>
-            <View style={styles.languageInfo}>
-              <Text style={styles.languageLabel}>Preferred app language</Text>
-              <Text style={styles.languageValue}>{appLanguage}</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.changeButton}
-              onPress={() => setLanguageModalVisible(true)}
-            >
-              <Text style={styles.changeButtonText}>Change</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.divider} />
-
-          {/* Change Training Language */}
-          <View style={styles.languageRow}>
-            <View style={styles.languageInfo}>
-              <Text style={styles.languageLabel}>Change Training Language</Text>
-              <Text style={styles.languageValue}>{trainingLanguage}</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.changeButton}
-              onPress={() => setTrainingLanguageModalVisible(true)}
-            >
-              <Text style={styles.changeButtonText}>Change</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* App Version */}
-        <View style={styles.versionContainer}>
-          <Text style={styles.versionText}>App Version 1.0.0</Text>
-        </View>
-
-        {/* Logout Button */}
-        <TouchableOpacity
-          style={styles.logoutButton}
-          onPress={() =>
-            Alert.alert('Logout', 'Are you sure you want to logout?', [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Logout',
-                style: 'destructive',
-                onPress: () => handleLogout(),
-              },
-            ])
-          }
-        >
-          <MaterialIcons name="logout" size={20} color="#FF5252" />
+        {/* Logout Section */}
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+          <Ionicons name="log-out-outline" size={24} color="#EF4444" />
           <Text style={styles.logoutText}>Logout</Text>
         </TouchableOpacity>
+
       </ScrollView>
 
-      {/* Modals */}
-      {AddressModal}
-      {PhoneModal}
-      {BankModal}
-      <LanguageModal
-        visible={languageModalVisible}
-        onClose={() => setLanguageModalVisible(false)}
-        currentLanguage={appLanguage}
-        onSelect={setAppLanguage}
-        title="Select App Language"
-        isTraining={false}
-      />
-      <LanguageModal
-        visible={trainingLanguageModalVisible}
-        onClose={() => setTrainingLanguageModalVisible(false)}
-        currentLanguage={trainingLanguage}
-        onSelect={setTrainingLanguage}
-        title="Select Training Language"
-        isTraining={true}
-      />
+      {/* Edit Profile Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={editProfileModalVisible}
+        onRequestClose={() => setEditProfileModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Edit Profile</Text>
+              <TouchableOpacity onPress={() => setEditProfileModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#6B7280" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.inputLabel}>Full Name</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editProfileData.name}
+              onChangeText={(t) => setEditProfileData(p => ({ ...p, name: t }))}
+              placeholder="Enter your name"
+            />
+
+            <Text style={styles.inputLabel}>Vehicle Type</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editProfileData.vehicleType}
+              onChangeText={(t) => setEditProfileData(p => ({ ...p, vehicleType: t }))}
+              placeholder="e.g. Bike, Scooter, Auto"
+            />
+
+            <Text style={styles.inputLabel}>Vehicle Number</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={editProfileData.vehicleNumber}
+              onChangeText={(t) => setEditProfileData(p => ({ ...p, vehicleNumber: t }))}
+              placeholder="e.g. MP 09 AB 1234"
+              autoCapitalize="characters"
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.cancelButton]}
+                onPress={() => setEditProfileModalVisible(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.saveButton]}
+                onPress={handleEditProfileSave}
+              >
+                <Text style={styles.saveButtonText}>Save Changes</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#111827',
-    marginLeft: 20,
-  },
-  scrollContent: {
-    paddingBottom: 30,
-  },
-  profileCard: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
-    marginTop: 16,
-    marginBottom: 8,
-    padding: 16,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  profileHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  avatarContainer: {
-    position: 'relative',
-    marginRight: 12,
-  },
-  avatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#fccf1e',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#000',
-  },
-  onlineDot: {
-    position: 'absolute',
-    bottom: 2,
-    right: 2,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#4CAF50',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-  },
-  profileInfo: {
-    flex: 1,
-  },
-  nameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  smallInfoText: {
-    color: '#6B7280',
-    fontSize: 12,
-    marginTop: 4,
-  },
-  statsCard: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
-    marginTop: 12,
-    padding: 16,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  statsItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  statsValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  statsLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 4,
-    textAlign: 'center',
-  },
-  name: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#111827',
-    marginRight: 8,
-  },
-  ratingBadge: {
-    backgroundColor: '#FFF7D6',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-  },
-  starRating: {
-    fontSize: 12,
-    color: '#fccf1e',
-    fontWeight: '600',
-  },
-  vehicleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  vehicleText: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginLeft: 4,
-  },
-  editButton: {
-    padding: 8,
-  },
-  section: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
-    marginTop: 12,
-    padding: 16,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  addressBox: {
-    backgroundColor: '#F8F9FA',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderStyle: 'dashed',
-  },
-  addressText: {
-    color: '#111827',
-    fontSize: 14,
-  },
-  changeText: {
-    color: '#4169E1',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  phoneBox: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#F8F9FA',
-    padding: 12,
-    borderRadius: 8,
-  },
-  phoneRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  phoneText: {
-    fontSize: 16,
-    color: '#111827',
-    marginLeft: 8,
-    fontWeight: '500',
-  },
-  verifiedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.colors.primary,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  verifiedText: {
-    fontSize: 12,
-    color: '#4CAF50',
-    marginLeft: 4,
-    fontWeight: '500',
-  },
-  addDetailsButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFF7D6',
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#fccf1e',
-    borderStyle: 'dashed',
-  },
-  addDetailsText: {
-    color: '#fccf1e',
-    fontSize: 14,
-    fontWeight: '500',
-    marginLeft: 8,
-  },
-  vehicleCard: {
-    backgroundColor: '#F8F9FA',
-    padding: 12,
-    borderRadius: 8,
-  },
-  vehicleCardLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  vehicleIconBg: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FFF7D6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  vehicleDetails: {
-    flex: 1,
-  },
-  vehicleName: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#111827',
-    marginBottom: 2,
-  },
-  vehicleNumber: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 2,
-  },
-  vehicleModel: {
-    fontSize: 12,
-    color: '#8A8A8A',
-  },
-  languageSection: {
-    backgroundColor: '#FFFFFF',
-    marginHorizontal: 16,
-    marginTop: 12,
-    padding: 16,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  languageSectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 12,
-  },
-  languageRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  languageInfo: {
-    flex: 1,
-  },
-  languageLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 4,
-  },
-  languageValue: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#111827',
-  },
-  changeButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: theme.colors.primarySoft,
-    borderRadius: 6,
-  },
-  changeButtonText: {
-    color: '#4169E1',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#E5E7EB',
-    marginVertical: 4,
-  },
-  versionContainer: {
-    alignItems: 'center',
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  versionText: {
-    fontSize: 12,
-    color: '#8A8A8A',
-  },
-  logoutButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#ffffff',
-    marginHorizontal: 16,
-    marginTop: 20,
-    marginBottom: 40,
-    padding: 18,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#6A2A2A',
-    ...theme.shadow.card,
-  },
-  logoutText: {
-    color: '#EF4444',
-    fontSize: 16,
-    fontWeight: '900',
-    marginLeft: 10,
-    letterSpacing: 1,
-  },
-  // Modal Styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    paddingHorizontal: 20,
-  },
-  modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
-    width: '100%',
-  },
-  scrollModalContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    paddingVertical: 20,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#111827',
-  },
-  inputLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 4,
-    marginTop: 8,
-  },
-  modalInput: {
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    marginBottom: 16,
-    backgroundColor: '#F8F9FA',
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 10,
-  },
-  modalButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginHorizontal: 5,
-  },
-  cancelButton: {
-    backgroundColor: '#F8F9FA',
-  },
-  saveButton: {
-    backgroundColor: '#fccf1e',
-  },
-  cancelButtonText: {
-    color: '#6B7280',
-    fontSize: 16,
-    fontWeight: '500',
-  },
-  saveButtonText: {
-    color: '#000',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  fullWidthButton: {
-    backgroundColor: '#fccf1e',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 10,
-  },
-  otpSentText: {
-    textAlign: 'center',
-    color: '#6B7280',
-    marginBottom: 16,
-    fontSize: 14,
-  },
-  bankDetailsCard: {
-    backgroundColor: '#F8F9FA',
-    padding: 12,
-    borderRadius: 8,
-  },
-  bankDetailRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 8,
-  },
-  bankDetailLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  bankDetailValue: {
-    fontSize: 14,
-    color: '#111827',
-    fontWeight: '500',
-  },
-  editBankButton: {
-    marginTop: 12,
-    padding: 8,
-    backgroundColor: theme.colors.primarySoft,
-    borderRadius: 6,
-    alignItems: 'center',
-  },
-  editBankButtonText: {
-    color: '#4169E1',
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  languageOption: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 15,
-    paddingHorizontal: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  selectedLanguageOption: {
-    backgroundColor: '#111827',
-  },
-  languageOptionText: {
-    fontSize: 16,
-    color: '#111827',
-  },
-  selectedLanguageOptionText: {
-    color: '#4169E1',
-    fontWeight: '500',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: '#6B7280',
-  },
-  // Document status styles
-  documentRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  documentLabel: {
-    fontSize: 14,
-    color: '#111827',
-    textTransform: 'capitalize',
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    minWidth: 70,
-    alignItems: 'center',
-  },
-  statusVerified: {
-    backgroundColor: '#0E2A1A',
-  },
-  statusPending: {
-    backgroundColor: '#FFF7D6',
-  },
-  statusRejected: {
-    backgroundColor: '#2A1010',
-  },
-  statusText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  applicationStatus: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 12,
-    marginTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-  },
-  applicationStatusLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  verificationStatusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-  },
-  submittedDate: {
-    fontSize: 12,
-    color: '#8A8A8A',
-    textAlign: 'right',
-    marginTop: 8,
-  },
+  container: { flex: 1, backgroundColor: '#F3F4F6' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F3F4F6' },
+  loadingText: { marginTop: 10, fontSize: 16, color: '#4B5563' },
+  header: { flexDirection: 'row', alignItems: 'center', padding: 16, backgroundColor: '#FFFFFF', elevation: 2 },
+  headerTitle: { fontSize: 20, fontWeight: '700', color: '#111827', marginLeft: 16 },
+  scrollContent: { padding: 16, paddingBottom: 40 },
+  
+  profileCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, marginBottom: 16, elevation: 1 },
+  profileHeader: { flexDirection: 'row', alignItems: 'center' },
+  avatarContainer: { position: 'relative', marginRight: 16 },
+  avatar: { width: 70, height: 70, borderRadius: 35, backgroundColor: '#fccf1e', justifyContent: 'center', alignItems: 'center' },
+  avatarImage: { width: 70, height: 70, borderRadius: 35, resizeMode: 'cover' },
+  imageOverlay: { position: 'absolute', width: 70, height: 70, borderRadius: 35, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
+  avatarText: { fontSize: 28, fontWeight: 'bold', color: '#000' },
+  onlineDot: { position: 'absolute', bottom: 2, right: 2, width: 14, height: 14, borderRadius: 7, backgroundColor: '#10B981', borderWidth: 2, borderColor: '#FFFFFF' },
+  editIconBadge: { position: 'absolute', bottom: -4, right: -4, backgroundColor: '#4169E1', width: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#fff' },
+  
+  profileInfo: { flex: 1 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  name: { fontSize: 18, fontWeight: '700', color: '#111827', marginRight: 8 },
+  ratingBadge: { backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 12 },
+  starRating: { fontSize: 12, fontWeight: '700', color: '#D97706' },
+  vehicleRow: { flexDirection: 'row', alignItems: 'center' },
+  vehicleText: { fontSize: 14, color: '#6B7280' },
+  editButton: { padding: 8 },
+  
+  statsCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 16, marginBottom: 16, elevation: 1 },
+  statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
+  statsItem: { flex: 1, alignItems: 'center' },
+  statsValue: { fontSize: 20, fontWeight: '700', color: '#111827', marginBottom: 4 },
+  statsLabel: { fontSize: 12, color: '#6B7280', fontWeight: '500' },
+  
+  logoutButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#FEE2E2', padding: 16, borderRadius: 12, marginTop: 24 },
+  logoutText: { fontSize: 16, fontWeight: '700', color: '#EF4444', marginLeft: 8 },
+  
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalContent: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20, width: '100%', maxWidth: 400 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#111827' },
+  inputLabel: { fontSize: 14, fontWeight: '500', color: '#374151', marginBottom: 8 },
+  modalInput: { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 8, padding: 12, fontSize: 16, color: '#111827', marginBottom: 16, backgroundColor: '#F9FAFB' },
+  
+  modalButtons: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
+  modalButton: { flex: 1, paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
+  cancelButton: { backgroundColor: '#F3F4F6', marginRight: 8 },
+  saveButton: { backgroundColor: '#fccf1e', marginLeft: 8 },
+  cancelButtonText: { fontSize: 16, fontWeight: '600', color: '#4B5563' },
+  saveButtonText: { fontSize: 16, fontWeight: '700', color: '#000' },
 });
 
 export default ProfileScreen;

@@ -360,21 +360,34 @@ const MapScreen = ({ navigation, route }) => {
   const lastDestination = useRef(null);
 
   // Animated coordinates for driver marker
-  const animatedDriverCoords = useRef(
-    new AnimatedRegion({
-      latitude: order?.pickupLocation?.coordinates?.latitude || 22.72592,
-      longitude: order?.pickupLocation?.coordinates?.longitude || 75.89294,
+  const animatedDriverCoords = useRef((() => {
+    // Try to get last known coords from location service first
+    const lastCoords = LocationService.getLastCoords();
+    if (lastCoords && typeof lastCoords.latitude === 'number') {
+      return new AnimatedRegion({
+        latitude: lastCoords.latitude,
+        longitude: lastCoords.longitude,
+        latitudeDelta: 0.005,
+        longitudeDelta: 0.005,
+      });
+    }
+    // Fall back to normalized pickup coordinates
+    const normalizedPickup = normalizeCoordinates(order?.pickupLocation?.coordinates);
+    return new AnimatedRegion({
+      latitude: normalizedPickup?.latitude || 22.72592,
+      longitude: normalizedPickup?.longitude || 75.89294,
       latitudeDelta: 0.005,
       longitudeDelta: 0.005,
-    })
-  ).current;
+    });
+  })()).current;
 
   // State
   const [tracksViewChanges, setTracksViewChanges] = useState(true);
 
   // State
   const [tripStage, setTripStage] = useState(STAGES.GOING_TO_PICKUP);
-  const [driverCoords, setDriverCoords] = useState(null);
+  const [driverCoords, setDriverCoords] = useState(() => LocationService.getLastCoords() || null);
+  const [routeOrigin, setRouteOrigin] = useState(null);
   const [distance, setDistance] = useState(
     order?.rideDetails?.distance || null,
   );
@@ -430,10 +443,12 @@ const MapScreen = ({ navigation, route }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [modalError, setModalError] = useState('');
 
-  // Cancel trip states
+  // Cancel trip states (only allowed before reaching pickup)
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [isCancelling, setIsCancelling] = useState(false);
+
+
 
   // Pickup OTP states
   const [showPickupOtpModal, setShowPickupOtpModal] = useState(false);
@@ -472,7 +487,7 @@ const MapScreen = ({ navigation, route }) => {
         status === 'pending'
       ) {
         setTripStage(STAGES.GOING_TO_PICKUP);
-        setShowDropRoute(true);
+        setShowDropRoute(false);
       } else {
         setTripStage(STAGES.GOING_TO_DROP);
         setShowDropRoute(false);
@@ -558,6 +573,7 @@ const MapScreen = ({ navigation, route }) => {
       fetchAndDisplayShortestPath();
       lastRouteFetchedCoords.current = driverCoords;
       lastDestination.current = destination;
+      setRouteOrigin(driverCoords); // Update the stable route origin for MapViewDirections
     }
   }, [driverCoords?.latitude, driverCoords?.longitude, destination?.latitude, destination?.longitude, travelMode]);
 
@@ -768,7 +784,7 @@ const MapScreen = ({ navigation, route }) => {
 
   const startLocationTracking = useCallback(() => {
     try {
-      LocationService.requestCurrentPosition()
+      LocationService.requestStartupPosition()
         .then(coords => {
           if (coords) {
             setDriverCoords(coords);
@@ -783,10 +799,16 @@ const MapScreen = ({ navigation, route }) => {
         })
         .catch(error => {
           console.error('Location startup error:', error);
-          setDriverCoords({
-            latitude: pickup.latitude - 0.01,
-            longitude: pickup.longitude - 0.01,
-          });
+          // Try to use last known coords as fallback
+          const fallback = LocationService.getLastCoords();
+          if (fallback) {
+            setDriverCoords(fallback);
+          } else if (pickup && typeof pickup.latitude === 'number') {
+            setDriverCoords({
+              latitude: pickup.latitude - 0.005,
+              longitude: pickup.longitude,
+            });
+          }
           setLocationError('Using approximate location');
           setIsLoading(false);
         });
@@ -795,7 +817,13 @@ const MapScreen = ({ navigation, route }) => {
         unsubscribeLocation.current();
       }
       unsubscribeLocation.current = LocationService.subscribe(newCoords => {
-        if (newCoords) {
+        if (
+          newCoords &&
+          typeof newCoords.latitude === 'number' &&
+          typeof newCoords.longitude === 'number' &&
+          newCoords.latitude >= -90 && newCoords.latitude <= 90 &&
+          newCoords.longitude >= -180 && newCoords.longitude <= 180
+        ) {
           setDriverCoords(newCoords);
           lastKnownCoords.current = newCoords;
         }
@@ -977,7 +1005,6 @@ const MapScreen = ({ navigation, route }) => {
         toast.error('Failed to initiate call.');
       });
   };
-
   const handleCancelTrip = async () => {
     if (!cancelReason) {
       toast.warn('Please select a reason for cancellation.');
@@ -993,7 +1020,6 @@ const MapScreen = ({ navigation, route }) => {
     } catch (error) {
       console.log('Status:', error?.response?.status);
       console.log('Response:', error?.response?.data);
-      // Proceed even if backend fails — clear local state
     }
 
     await setActiveOrder(null);
@@ -1008,22 +1034,21 @@ const MapScreen = ({ navigation, route }) => {
     setShowCancelModal(false);
     setCancelReason('');
 
-    // ── Notify socket & make driver available BEFORE disconnecting ────────
-    SocketService.emitStatusChange(true, true); // back online & available
+    SocketService.emitStatusChange(true, true);
     SocketService.clearActiveRide();
 
-    // Switch foreground notification back to online/waiting mode
     try {
       await updateService('online');
     } catch (error) {
       console.error('Error updating service after cancellation:', error);
     }
 
-    // Stop GPS LAST (disconnects socket)
     stopLocationTracking();
 
     navigation.navigate('MyTabs');
   };
+
+
 
   const handlePickupOtpSubmit = async () => {
     const expectedCode = order?.pickupCode || order?.otp || order?.pickup_otp;
@@ -1336,14 +1361,15 @@ const MapScreen = ({ navigation, route }) => {
             </Marker>
           )}
 
-          <MapViewDirections
-            origin={pickup}
-            destination={drop}
-            apikey={GOOGLE_MAPS_APIKEY}
-            strokeWidth={6}
-            strokeColor={theme.colors.primary}
-            optimizeWaypoints={true}
-            lineDashPattern={[0]}
+          {destination && (
+            <MapViewDirections
+              origin={showDropRoute ? pickup : (routeOrigin || pickup)}
+              destination={destination}
+              apikey={GOOGLE_MAPS_APIKEY}
+              strokeWidth={6}
+              strokeColor={theme.colors.primary}
+              optimizeWaypoints={true}
+              lineDashPattern={[0]}
             lineCap="round"
             lineJoin="round"
             onReady={result => {
@@ -1357,6 +1383,7 @@ const MapScreen = ({ navigation, route }) => {
               });
             }}
           />
+          )}
 
           {/* Selected Route Polyline */}
           {/* {selectedRoute && selectedRoute.coordinates && (
@@ -1682,26 +1709,26 @@ const MapScreen = ({ navigation, route }) => {
                   styles.primaryActionBtn,
                   { backgroundColor: theme.colors.success },
                 ]}
-                onPress={() => setShowCashModal(true)}
+                onPress={handleCompleteDelivery}
                 activeOpacity={0.8}
               >
                 <Text style={styles.primaryActionText}>COMPLETE ORDER</Text>
               </TouchableOpacity>
             )}
           </View>
-          <View>
-            {tripStage !== STAGES.COMPLETED && (
+          {tripStage === STAGES.GOING_TO_PICKUP && (
+            <View style={{ marginTop: 12, alignItems: 'center' }}>
               <TouchableOpacity
                 style={styles.cancelTripButton}
                 onPress={() => setShowCancelModal(true)}
                 activeOpacity={0.8}
               >
-                <Text style={{ color: '#ff0303', fontSize: 13 }}>
+                <Text style={{ color: '#ff0303', fontSize: 13, fontWeight: '600' }}>
                   Cancel trip
                 </Text>
               </TouchableOpacity>
-            )}
-          </View>
+            </View>
+          )}
         </View>
 
         {/* Cancel Trip Modal */}
@@ -1721,7 +1748,7 @@ const MapScreen = ({ navigation, route }) => {
                   <Text style={styles.closeButton}>✕</Text>
                 </TouchableOpacity>
               </View>
-              <Text style={styles.cancelSubtext}>
+              <Text style={styles.modalSubtext}>
                 Select a reason for cancellation:
               </Text>
               {[
@@ -1779,7 +1806,6 @@ const MapScreen = ({ navigation, route }) => {
             </View>
           </View>
         </Modal>
-
         {/* Pickup OTP Modal */}
         <Modal
           visible={showPickupOtpModal}
@@ -1795,7 +1821,7 @@ const MapScreen = ({ navigation, route }) => {
                   <Text style={styles.closeButton}>✕</Text>
                 </TouchableOpacity>
               </View>
-              <Text style={styles.cancelSubtext}>
+              <Text style={styles.modalSubtext}>
                 Enter the 4-digit code provided by the customer to verify
                 pickup:
               </Text>
@@ -2307,84 +2333,15 @@ const styles = StyleSheet.create({
     fontSize: moderateScale(16),
     letterSpacing: 1.2,
   },
-  cancelTripButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  orderId: {
-    fontSize: 14,
-    color: '#6B7280',
-    fontWeight: '500',
-  },
-  stageBadge: {
-    backgroundColor: theme.colors.primary + '20',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-  },
-  stageBadgeText: {
-    fontSize: 12,
-    color: theme.colors.primary,
-    fontWeight: '600',
-  },
-  address: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 12,
-    lineHeight: 20,
-  },
-  infoContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    backgroundColor: '#F8F9FA',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-  },
-  infoItem: {
-    alignItems: 'center',
-  },
-  infoLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginBottom: 2,
-  },
-  infoValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  button: {
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  primaryButton: {
-    backgroundColor: theme.colors.primary,
-  },
-  successButton: {
-    backgroundColor: theme.colors.success,
-  },
-  disabledButton: {
-    opacity: 0.5,
-  },
-  primaryButtonText: {
-    color: theme.colors.ink,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  successButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  dangerButton: {
-    backgroundColor: theme.colors.danger,
-  },
-  cancelSubtext: {
+  modalSubtext: {
     fontSize: 14,
     color: '#6B7280',
     marginBottom: 14,
+  },
+  cancelTripButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 4,
   },
   cancelReasonItem: {
     flexDirection: 'row',

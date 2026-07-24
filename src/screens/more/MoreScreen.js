@@ -5,6 +5,7 @@ import {
   ScrollView,
   TouchableOpacity,
   StatusBar,
+  Share,
 } from 'react-native';
 import React from 'react';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -48,9 +49,16 @@ const MoreScreen = ({ navigation }) => {
       title: 'refer & earn',
       icon: 'gift-outline',
       color: '#FF9800',
-      badge: 'New',
-      route: 'Referral',
+      badge: 'Share',
+      route: 'ShareApp',
     },
+    // {
+    //   id: 6,
+    //   title: 'subscription plans',
+    //   icon: 'card-outline',
+    //   color: '#9C27B0',
+    //   route: 'Subscription',
+    // },
     // {
     //   id: 6,
     //   title: 'incentives',
@@ -62,7 +70,18 @@ const MoreScreen = ({ navigation }) => {
 
   const { t } = useTranslation();
 
-  const handleNavigate = route => {
+  const handleNavigate = async route => {
+    if (route === 'ShareApp') {
+      try {
+        await Share.share({
+          message:
+            'Download GoDelivo Captain App now! https://play.google.com/store/apps/details?id=com.godelivo.captain&pcampaignid=web_share',
+        });
+      } catch (error) {
+        console.error('Error sharing:', error);
+      }
+      return;
+    }
     if (route) {
       navigation.navigate(route);
     }

@@ -24,7 +24,6 @@ import NotificationService from '../../services/NotificationService';
 import LocationService from '../../services/locationService';
 import RechargeNowModal from '../../modals/RechargeNowModal';
 import EmergencyModal from '../../modals/EmergencyModal';
-import StatusModal from '../../modals/StatusModal';
 import { OrderModal } from '../../modals/OrderModal';
 import {
   selectIsOnline,
@@ -94,7 +93,6 @@ const HomeScreen = ({ navigation }) => {
   const [modalVisible, setModalVisible] = useState(false);
   const [alertVisible, setAlertVisible] = useState(false);
   const [docDes, setDocDes] = useState('');
-  const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [orderComing, setOrderComing] = useState(false);
   const [notificationData, setNotificationData] = useState(null);
   const [walletBalance, setWalletBalance] = useState(0);
@@ -126,7 +124,23 @@ const HomeScreen = ({ navigation }) => {
 
   useEffect(() => {
     dispatch(getProfile());
-  }, [dispatch]);
+
+    const restoreOnlineStatus = async () => {
+      try {
+        const storedStatus = await AsyncStorage.getItem('driver_isOnline');
+        // Only run if the local status is currently offline
+        if (storedStatus === 'true' && !latestToggleTargetRef.current) {
+          console.log('[ONLINE_STATUS] Restoring previous online session...');
+          // Trigger the standard online flow to ensure sockets and GPS start correctly
+          handleToggleOnline(true);
+        }
+      } catch (e) {}
+    };
+    
+    // Give Redux a moment to settle, then restore status
+    setTimeout(restoreOnlineStatus, 500);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     latestToggleTargetRef.current = isOnline;
@@ -338,14 +352,16 @@ const HomeScreen = ({ navigation }) => {
 
     if (data.type === 'NEW_ORDER' || data.type === 'ORDER') {
       logComingOrder('notification-message', data);
-      
+
       const activeOrder = await getActiveOrder();
       if (!activeOrder) {
         setOrderComing(true);
         playOrderSound();
         setNotificationData(data);
       } else {
-        console.log('Skipping NEW_ORDER notification because driver is already on an active ride.');
+        console.log(
+          'Skipping NEW_ORDER notification because driver is already on an active ride.',
+        );
       }
     }
   }, []);
@@ -429,8 +445,15 @@ const HomeScreen = ({ navigation }) => {
           await loadHomeData();
           const isHealthy = await checkLocationHealth();
           if (!isHealthy) {
-            await LocationService.stop();
-            await LocationService.start();
+            try {
+              await LocationService.stop();
+              await LocationService.start();
+              setLocationServiceHealthy(true);
+            } catch (locationError) {
+              // GPS unavailable after returning to foreground — not a crash
+              console.warn('[HomeScreen] Location restart failed:', locationError?.message);
+              setLocationServiceHealthy(false);
+            }
           }
         }
         appState.current = nextAppState;
@@ -673,30 +696,44 @@ const HomeScreen = ({ navigation }) => {
           throw new Error('location permission denied');
         }
 
-        setStatusModalVisible(true);
+        // ── OPTIMISTIC UPDATE ──────────────────────────────────────────────
+        // Flip the UI to "online" instantly. Background tasks (GPS + server)
+        // run async. If anything fails we rollback to offline.
+        dispatch(setOnline());
+        setToggleBusy(false);
+        setPendingOnlineStatus(null);
+        AsyncStorage.setItem('driver_isOnline', 'true').catch(() => {});
+        toast.success('You are now Online. Ready to receive orders!', 'Online');
+        console.log('[ONLINE_STATUS] Optimistic local status set: online');
+        // ──────────────────────────────────────────────────────────────────
 
         Promise.resolve()
           .then(async () => {
-            const stopStaleOnlineStartup = async () => {
-              if (latestToggleTargetRef.current) {
-                return;
-              }
-
+            const rollbackOnline = async error => {
+              if (!isCurrentToggle()) return;
+              console.error('Online background sync error:', error);
+              showToggleFailure(error);
               LocationService.stop();
-
-              try {
-                await stopService();
-              } catch (foregroundError) {
-                console.error('Stale foreground stop error:', foregroundError);
-              }
+              try { await stopService(); } catch {}
+              latestToggleTargetRef.current = false;
+              dispatch(setOffline());
+              setLocationServiceHealthy(false);
+              console.log('[ONLINE_STATUS] Rollback local status: offline');
+              SocketService.emitStatusChange(false, false);
+              SocketService.disconnect();
+              NotificationService.updateOnlineStatus(false).catch(() => {});
             };
 
             try {
+              // Start location service + foreground notification in parallel
               await Promise.all([LocationService.start(), startService()]);
 
               if (!isCurrentToggle()) {
-                console.log('[ONLINE_STATUS] Online startup stale:', requestId);
-                await stopStaleOnlineStartup();
+                // Another toggle happened — silently stop what we started
+                if (!latestToggleTargetRef.current) {
+                  LocationService.stop();
+                  try { await stopService(); } catch {}
+                }
                 return;
               }
 
@@ -708,76 +745,23 @@ const HomeScreen = ({ navigation }) => {
 
               setLocationServiceHealthy(true);
 
+              // Server sync (needs GPS coords, which are now ready)
               const serverResult = await driverApi.updateOnlineStatus(true);
-              console.log(
-                '[ONLINE_STATUS] Server status synced: online',
-                serverResult,
-              );
+              console.log('[ONLINE_STATUS] Server status synced: online', serverResult);
 
-              if (!isCurrentToggle()) {
-                console.log(
-                  '[ONLINE_STATUS] Online server sync stale:',
-                  requestId,
-                );
-                await stopStaleOnlineStartup();
-                return;
-              }
-
-              // Update Redux state ONLY after server validation succeeds
-              dispatch(setOnline());
-              console.log('[ONLINE_STATUS] Local status set: online');
+              if (!isCurrentToggle()) return;
 
               SocketService.emitStatusChange(true, true);
               console.log('[ONLINE_STATUS] Socket status emitted: online');
-              NotificationService.updateOnlineStatus(true).catch(
-                notificationError => {
-                  console.error(
-                    'Notification service update error:',
-                    notificationError,
-                  );
-                },
-              );
+              NotificationService.updateOnlineStatus(true).catch(() => {});
 
               if (serverResult?.nearbyOrder) {
                 setNotificationData(serverResult.nearbyOrder);
-                logComingOrder(
-                  'online-status-response',
-                  serverResult.nearbyOrder,
-                );
+                logComingOrder('online-status-response', serverResult.nearbyOrder);
                 setOrderComing(true);
               }
             } catch (error) {
-              console.error('Online background sync error:', error);
-
-              if (!isCurrentToggle()) {
-                return;
-              }
-
-              showToggleFailure(error);
-              LocationService.stop();
-
-              try {
-                await stopService();
-              } catch (foregroundError) {
-                console.error(
-                  'Rollback foreground stop error:',
-                  foregroundError,
-                );
-              }
-
-              latestToggleTargetRef.current = false;
-              dispatch(setOffline());
-              console.log('[ONLINE_STATUS] Rollback local status: offline');
-              setLocationServiceHealthy(false);
-
-              NotificationService.updateOnlineStatus(false).catch(
-                notificationError => {
-                  console.error(
-                    'Rollback notification error:',
-                    notificationError,
-                  );
-                },
-              );
+              await rollbackOnline(error);
             }
           })
           .catch(error => {
@@ -789,60 +773,39 @@ const HomeScreen = ({ navigation }) => {
 
       setOrderComing(false);
       setNotificationData(null);
-      setStatusModalVisible(true);
 
-      Promise.resolve()
-        .then(async () => {
-          LocationService.stop();
-          SocketService.emitStatusChange(false, false);
-          SocketService.clearActiveRide();
+      // ── OPTIMISTIC OFFLINE ─────────────────────────────────────────────
+      // Capture coords NOW before stop() clears them (needed for server call)
+      const lastCoords = LocationService.getLastCoords();
 
-          const offlinePromises = [
-            driverApi.updateOnlineStatus(false),
-            stopService(),
-            NotificationService.updateOnlineStatus(false),
-            clearActiveOrder(),
-          ];
+      // Stop local services immediately — UI responds instantly
+      LocationService.stop();
+      SocketService.emitStatusChange(false, false);
+      SocketService.clearActiveRide();
+      SocketService.disconnect();
 
-          const offlineResults = await Promise.all(
-            offlinePromises.map(p => 
-              Promise.resolve(p)
-                .then(value => ({ status: 'fulfilled', value }))
-                .catch(reason => ({ status: 'rejected', reason }))
-            )
-          );
+      // Flip UI to offline right away
+      dispatch(setOffline());
+      setToggleBusy(false);
+      setPendingOnlineStatus(null);
+      setLocationServiceHealthy(false);
+      AsyncStorage.setItem('driver_isOnline', 'false').catch(() => {});
+      toast.success('You are now Offline.', 'Offline');
+      console.log('[ONLINE_STATUS] Optimistic local status set: offline');
+      // ──────────────────────────────────────────────────────────────────
 
-          if (!isCurrentToggle()) {
-            console.log('[ONLINE_STATUS] Offline sync stale:', requestId);
-            return;
-          }
-
-          setLocationServiceHealthy(false);
-          console.log('[ONLINE_STATUS] Offline sync results:', offlineResults);
-
-          if (offlineResults[0].status === 'rejected') {
-            console.error(
-              'Server offline sync error:',
-              offlineResults[0].reason,
-            );
-            toast.error('Offline status sync failed. Please try again.');
-
-            // ROLLBACK: Re-enable online state locally and restart tracking
-            dispatch(setOnline());
-            await Promise.all([LocationService.start(), startService()]);
-            SocketService.emitStatusChange(true, true);
-          } else {
-            // SUCCESS: Set offline locally
-            dispatch(setOffline());
-            console.log('[ONLINE_STATUS] Local status set: offline');
-          }
-        })
-        .catch(error => {
-          console.error('Offline background sync error:', error);
-          if (isCurrentToggle()) {
-            toast.error('Offline status sync failed. Please try again.');
-          }
-        });
+      // Background: sync with server — fire-and-forget, never rollback UI
+      Promise.all([
+        driverApi.updateOnlineStatus(false, lastCoords).catch(err => {
+          // Log only — a 400/network error must NOT flip driver back online
+          console.warn('[ONLINE_STATUS] Server offline sync error (ignored):', err?.response?.status, err?.message);
+        }),
+        stopService().catch(() => {}),
+        NotificationService.updateOnlineStatus(false).catch(() => {}),
+        clearActiveOrder().catch(() => {}),
+      ]).then(() => {
+        console.log('[ONLINE_STATUS] Offline background sync complete');
+      });
 
       return true;
     } catch (error) {
@@ -855,7 +818,6 @@ const HomeScreen = ({ navigation }) => {
       }
       return false;
     } finally {
-      setToggleBusy(false);
       setPendingOnlineStatus(null);
     }
   };
@@ -1045,7 +1007,11 @@ const HomeScreen = ({ navigation }) => {
             <View style={styles.profileLeft}>
               <View style={styles.avatarWrap}>
                 <Image
-                  source={require('../../assets/profile.png')}
+                  source={{
+                    uri:
+                      profile?.profileimage ||
+                      'https://t3.ftcdn.net/jpg/08/05/28/22/360_F_805282248_LHUxw7t2pnQ7x8lFEsS2IZgK8IGFXePS.jpg',
+                  }}
                   style={styles.avatar}
                 />
                 {isOnline ? (
@@ -1319,12 +1285,6 @@ const HomeScreen = ({ navigation }) => {
       <EmergencyModal
         visible={alertVisible}
         onClose={() => setAlertVisible(false)}
-      />
-
-      <StatusModal
-        visible={statusModalVisible}
-        isOnline={isOnline}
-        onClose={() => setStatusModalVisible(false)}
       />
 
       <OrderModal
