@@ -15,6 +15,7 @@ import PremiumToast from './src/components/PremiumToast';
 import { getThemeForScheme } from './src/theme';
 import { startOverlayBubble } from './src/services/FloatingBubbleService';
 import { navigationRef } from './src/navigations/navigationRef';
+import BubbleController from './src/components/BubbleController';
 
 
 function App() {
@@ -41,11 +42,6 @@ function App() {
         // Start offline queue
         OfflineQueue.startListening();
 
-        // Start system-level floating bubble (Android only)
-        if (Platform.OS === 'android') {
-          await startOverlayBubble();
-        }
-
       } catch (error) {
         console.error('❌ App initialization error:', error);
       }
@@ -53,16 +49,7 @@ function App() {
 
     initApp();
 
-    // Re-attempt starting the bubble when user returns from Settings
-    // (they may have just granted the Draw-over-other-apps permission)
-    const appStateSub = AppState.addEventListener('change', async (state) => {
-      if (state === 'active' && Platform.OS === 'android') {
-        await startOverlayBubble();
-      }
-    });
-
     return () => {
-      appStateSub.remove();
       OfflineQueue.stopListening();
       SocketService.cleanup();
       // Bubble service keeps running after app closes (stopWithTask=false)
@@ -84,6 +71,7 @@ function App() {
           >
             <ErrorBoundary>
               <MainNavigation />
+              <BubbleController />
             </ErrorBoundary>
             <PremiumToast />
           </SafeAreaView>

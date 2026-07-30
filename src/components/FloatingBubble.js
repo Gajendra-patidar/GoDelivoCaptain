@@ -322,14 +322,14 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 10,
     elevation: 12,
-    borderWidth: 2.5,
-    borderColor: '#fff',
+    borderWidth: 0.5,
+    borderColor: '#ffffff',
   },
 
   logo: {
-    width: BUBBLE_SIZE * 0.65,
-    height: BUBBLE_SIZE * 0.65,
-    borderRadius: BUBBLE_SIZE * 0.325,
+    width: BUBBLE_SIZE * 0.95,
+    height: BUBBLE_SIZE * 0.95,
+    borderRadius: BUBBLE_SIZE * 0.45,
   },
 
   closeIcon: {

@@ -22,6 +22,7 @@ import JoiningFeesScreen from '../screens/earnings/JoiningFeesScreen';
 import CommingSoonScreen from '../screens/CommingSoon/CommingSoonScreen';
 import DriverChatScreen from '../screens/chat/DriverChatScreen';
 import SubscriptionScreen from '../screens/subscription/SubscriptionScreen';
+import NetworkErrorScreen from '../screens/networkError/NetworkErrorScreen';
 import navigationRef from '../navigations/navigationRef';
 import { getThemeForScheme } from '../theme';
 
@@ -47,6 +48,7 @@ function RootStack() {
       <Stack.Screen name="CommingSoon" component={CommingSoonScreen} />
       <Stack.Screen name="DriverChat" component={DriverChatScreen} />
       <Stack.Screen name="Subscription" component={SubscriptionScreen} />
+      <Stack.Screen name="Network-error" component={NetworkErrorScreen} />
     </Stack.Navigator>
   );
 }

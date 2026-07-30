@@ -12,6 +12,7 @@ import {
   Platform,
   ScrollView,
   Linking,
+  Keyboard,
 } from 'react-native';
 import RNOtpVerify from 'react-native-otp-verify';
 import toast from '../../utils/toast';
@@ -247,10 +248,8 @@ const LoginScreen = ({ navigation }) => {
 
       setOtp(detectedOtp);
 
-      setTimeout(() => {
-        otpInputRef.current?.focus();
-      }, 100);
-
+      Keyboard.dismiss();
+      
       stopOtpAutoFill();
     },
     [stopOtpAutoFill],
@@ -396,10 +395,6 @@ const LoginScreen = ({ navigation }) => {
       if (response.data.success) {
         setShowOTP(true);
         startTimer();
-
-        setTimeout(() => {
-          otpInputRef.current?.focus();
-        }, 300);
 
         toast.success('OTP sent successfully to your mobile');
       } else {
@@ -556,10 +551,6 @@ const LoginScreen = ({ navigation }) => {
 
       if (response.data.success) {
         startTimer();
-
-        setTimeout(() => {
-          otpInputRef.current?.focus();
-        }, 200);
 
         toast.success('OTP resent successfully');
       } else {

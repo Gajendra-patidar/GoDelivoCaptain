@@ -4,6 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
 import { BASE_URL } from '../../services/api';
+import NetInfo from '@react-native-community/netinfo';
 
 const MIN_SPLASH_TIME_MS = 3000; // Enforces a minimum display time for UI stability
 
@@ -69,6 +70,18 @@ const fetchJoiningFeeStatus = async (token, applicationId) => {
 
 const SplashScreen = () => {
   const navigation = useNavigation();
+
+  useEffect(()=>{
+    checkInternet()
+  }, [])
+
+  const checkInternet = async () => {
+    const netInfo = await NetInfo.fetch();
+    
+    if (!netInfo.isConnected) {
+      navigation.replace('Network-error');
+    } 
+  };
 
   useEffect(() => {
     const checkTokenAndNavigate = async () => {
