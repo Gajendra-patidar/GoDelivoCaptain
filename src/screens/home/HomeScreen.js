@@ -153,10 +153,18 @@ const HomeScreen = ({ navigation }) => {
       try {
         if (isOnline) {
           await startService('online');
+          // Important: Also ensure LocationService (and Socket) is running
+          const status = LocationService.getConnectionStatus();
+          if (!status.isRunning) {
+            await LocationService.start();
+          } else if (!SocketService.isSocketConnected()) {
+            SocketService.connect();
+          }
           return;
         }
 
         await stopService();
+        await LocationService.stop();
       } catch (error) {
         console.log('Foreground status notification sync error:', error);
       }
@@ -235,10 +243,28 @@ const HomeScreen = ({ navigation }) => {
 
     const activeOrder = await getActiveOrder();
     if (activeOrder) {
-      SocketService.setActiveRide(activeOrder.rideId || activeOrder.id);
-      navigation.navigate('Map', { order: activeOrder });
-      console.log('comming order data', activeOrder);
-      return;
+      const rideId = activeOrder.rideId || activeOrder.id;
+      try {
+        const currentRide = await driverApi.getRideStatus(rideId);
+        if (currentRide && (currentRide.status === 'cancelled' || currentRide.status === 'completed')) {
+          await clearActiveOrder();
+          toast.success(`Ride was ${currentRide.status}.`);
+        } else {
+          SocketService.setActiveRide(rideId);
+          navigation.navigate('Map', { order: currentRide || activeOrder });
+          console.log('comming order data', activeOrder);
+          return;
+        }
+      } catch (error) {
+        if (error.response?.status === 404) {
+          await clearActiveOrder();
+        } else {
+          SocketService.setActiveRide(rideId);
+          navigation.navigate('Map', { order: activeOrder });
+          console.log('comming order data', activeOrder);
+          return;
+        }
+      }
     }
 
     await checkNearbyOrders();
@@ -368,33 +394,44 @@ const HomeScreen = ({ navigation }) => {
 
   // Initialize Socket.io event listeners
   const initializeSocketListeners = useCallback(() => {
-    // Listen for new ride requests via Socket.io
-    SocketService.on('new_ride', async rideData => {
-      if (isOnline && !orderComing) {
-        const activeOrder = await getActiveOrder();
-        if (!activeOrder) {
-          setNotificationData(rideData);
-          logComingOrder('socket-new-ride', rideData);
+    
+    const handleNewRequest = async rideData => {
+      try {
+        const payload = typeof rideData === 'string' ? JSON.parse(rideData) : rideData;
+        console.log('[HomeScreen] Got new request event!', payload);
 
-          setOrderComing(true);
-          playOrderSound();
+        if (isOnline && !orderComing) {
+          const activeOrder = await getActiveOrder();
+          if (!activeOrder) {
+            setNotificationData(payload);
+            logComingOrder('socket-new-request', payload);
+
+            setOrderComing(true);
+            playOrderSound();
+          }
         }
+      } catch (err) {
+        console.error('Error handling new request:', err);
       }
+    };
+
+    // Listen for new ride requests via Socket.io (Catching all possible event names)
+    SocketService.on('ride:new-request', handleNewRequest);
+    SocketService.on('ride:new_request', handleNewRequest);
+    SocketService.on('new_ride', handleNewRequest);
+
+    // Handle when another driver accepts the ride
+    SocketService.on('ride:taken', data => {
+      setNotificationData(currentData => {
+        // If the taken ride matches the one currently displayed, dismiss the popup
+        if (currentData && (currentData.rideId === data?.rideId || currentData.id === data?.rideId)) {
+          setOrderComing(false);
+          return null;
+        }
+        return currentData;
+      });
     });
 
-    // Support the new server event name for pending request socket flow
-    SocketService.on('ride:new_request', async rideData => {
-      if (isOnline && !orderComing) {
-        const activeOrder = await getActiveOrder();
-        if (!activeOrder) {
-          setNotificationData(rideData);
-          logComingOrder('socket-new-request', rideData);
-
-          setOrderComing(true);
-          playOrderSound();
-        }
-      }
-    });
     SocketService.on('ride_updated', data => {
       // Update active order if needed
     });
@@ -460,17 +497,30 @@ const HomeScreen = ({ navigation }) => {
       },
     );
 
+    // Setup polling for pending requests as fallback to sockets
+    if (isOnline && !orderComing && !pollRef.current) {
+      pollRef.current = setInterval(() => {
+        checkNearbyOrders();
+      }, 10000); // Poll every 10 seconds
+    } else if ((!isOnline || orderComing) && pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+
     return () => {
       NotificationService.removeListener('press', handleNotificationPress);
       NotificationService.removeListener('message', handleIncomingMessage);
       if (pollRef.current) {
         clearInterval(pollRef.current);
+        pollRef.current = null;
       }
       subscription.remove();
 
       // Cleanup Socket.io listeners
-      SocketService.off('new_ride');
+      SocketService.off('ride:new-request');
       SocketService.off('ride:new_request');
+      SocketService.off('new_ride');
+      SocketService.off('ride:taken');
       SocketService.off('ride_cancelled');
       SocketService.off('ride_updated');
       SocketService.off('customer_message');

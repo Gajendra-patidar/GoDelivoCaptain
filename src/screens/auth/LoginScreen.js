@@ -470,12 +470,8 @@ const LoginScreen = ({ navigation }) => {
 
           stopOtpAutoFill();
 
-          Alert.alert('Success', 'Login Successfully', [
-            {
-              text: 'OK',
-              onPress: () => navigateAfterLogin(response?.data?.data),
-            },
-          ]);
+          // Navigate directly instead of showing a popup
+          navigateAfterLogin(response?.data?.data);
         } else {
           toast.error(response.data.message || 'Invalid OTP');
           setOtp('');

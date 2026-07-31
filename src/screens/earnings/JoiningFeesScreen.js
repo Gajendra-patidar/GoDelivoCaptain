@@ -273,54 +273,39 @@ const JoiningFeesScreen = ({ navigation, route }) => {
   const loadSubscriptionFee = async () => {
     try {
       setFeeLoading(true);
-      const vehicleType =
+      const currentVehicleType =
         (await AsyncStorage.getItem('vehicleType')) ||
         formData?.vehicleType ||
         'Bike';
 
-      console.log('checking sun jcn ci wi', vehicleType);
-      setVehicleType(vehicleType);
+      console.log('checking sun jcn ci wi', currentVehicleType);
+      setVehicleType(currentVehicleType);
 
+      // Fetch dynamic fees from backend using old API
       const response = await axios.get(
-        `${BASE_URL}/subscription/fee?vehicleType=${vehicleType}`,
+        `${BASE_URL}/subscription/fee?vehicleType=${currentVehicleType}`,
       );
 
       console.log('Subscription fee response:', response?.data);
 
       if (response?.data?.success && response?.data?.data) {
-        setSubscriptionFee(
-          response.data.data.subscriptionFee ||
-            AsyncStorage.getItem('subscribtion_fees'),
-        );
-        AsyncStorage.setItem(
-          'subscribtion_fees',
-          String(response?.data?.data?.subscriptionFee),
-        );
+        const fee = response.data.data.subscriptionFee ?? 0;
+        setSubscriptionFee(fee);
+        await AsyncStorage.setItem('subscribtion_fees', String(fee));
+      } else {
+        // Fallback to 0 or locally saved if not success
+        const storedFee = await AsyncStorage.getItem('subscribtion_fees');
+        setSubscriptionFee(storedFee ? Number(storedFee) : 0);
       }
     } catch (error) {
-      console.log('Fee load error:', error?.response?.data || error?.message);
-      // Fallback to local calculation if API fails
-      const fallbackFee = getJoiningFeeLocal(formData?.vehicleType);
-      setSubscriptionFee(fallbackFee);
+      console.log('Fee load error:', error);
+      const storedFee = await AsyncStorage.getItem('subscribtion_fees');
+      setSubscriptionFee(storedFee ? Number(storedFee) : 0);
     } finally {
       setFeeLoading(false);
     }
   };
 
-  // Local fallback function
-  const getJoiningFeeLocal = vehicleType => {
-    switch (vehicleType) {
-      case 'Bike':
-      case 'Scooter':
-        return 499;
-      case 'Loader (3 Wheeler)':
-        return 699;
-      case 'Truck (4 Wheeler)':
-        return 999;
-      default:
-        return 0;
-    }
-  };
 
   const handlePayNow = async () => {
     try {
@@ -352,6 +337,8 @@ const JoiningFeesScreen = ({ navigation, route }) => {
         `${BASE_URL}/subscription/create-order`,
         {
           applicationId: appId,
+          amount: subscriptionFee,
+          vehicleType: vehicleType || formData?.vehicleType,
         },
         {
           headers: {
@@ -681,7 +668,7 @@ const JoiningFeesScreen = ({ navigation, route }) => {
           </TouchableOpacity>
         )}
 
-        <Text style={styles.headerTitle}>Partner Security Balence</Text>
+        <Text style={styles.headerTitle}>Partner Security Balance</Text>
 
         <View style={styles.backBtnPlaceholder} />
       </LinearGradient>
@@ -722,10 +709,7 @@ const JoiningFeesScreen = ({ navigation, route }) => {
 
         {subscriptionFee != 0 && (
           <View style={styles.benefitCard}>
-            <View style={styles.benefitRow}>
-              <Icon name="check-circle" size={20} color="#4CAF50" />
-              <Text style={styles.benefitText}>Fast verification process</Text>
-            </View>
+          
 
             <View style={styles.benefitRow}>
               <Icon name="check-circle" size={20} color="#4CAF50" />
@@ -734,12 +718,7 @@ const JoiningFeesScreen = ({ navigation, route }) => {
               </Text>
             </View>
 
-            <View style={styles.benefitRow}>
-              <Icon name="check-circle" size={20} color="#4CAF50" />
-              <Text style={styles.benefitText}>
-                Secure payment via Razorpay
-              </Text>
-            </View>
+           
 
             <View style={styles.benefitRow}>
               <Icon name="alarm" size={25} color="#4CAF50" />

@@ -80,7 +80,7 @@ const PremiumToast = () => {
     }
     Animated.parallel([
       Animated.timing(translateY, {
-        toValue: -120,
+        toValue: 50, // Move down when hiding
         duration: 260,
         useNativeDriver: true,
       }),
@@ -106,13 +106,13 @@ const PremiumToast = () => {
     setToastConfig(config);
 
     // Reset before animating
-    translateY.setValue(-120);
+    translateY.setValue(50); // Start below
     opacity.setValue(0);
     scaleAnim.setValue(0.92);
 
     Animated.parallel([
       Animated.spring(translateY, {
-        toValue: Platform.OS === 'android' ? 12 : 50,
+        toValue: 0,
         useNativeDriver: true,
         friction: 8,
         tension: 55,
@@ -179,28 +179,15 @@ const PremiumToast = () => {
           transform: [{ translateY }, { scale: scaleAnim }],
           opacity,
           backgroundColor: cfg.bg,
-          borderLeftColor: cfg.borderColor,
         },
       ]}
     >
-      <View style={[styles.iconContainer, { backgroundColor: cfg.borderColor + '22' }]}>
+      <View style={styles.iconContainer}>
         <Ionicons name={cfg.iconName} size={20} color={cfg.iconColor} />
       </View>
-      <View style={styles.textContainer}>
-        {title ? <Text style={[styles.title, { color: cfg.iconColor }]} numberOfLines={1}>{title}</Text> : null}
-        {message ? (
-          <Text style={styles.message} numberOfLines={2}>
-            {message}
-          </Text>
-        ) : null}
-      </View>
-      <TouchableOpacity
-        style={styles.closeBtn}
-        onPress={() => hideAnimation(() => setQueue([]))}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-      >
-        <Ionicons name="close" size={16} color="rgba(255,255,255,0.5)" />
-      </TouchableOpacity>
+      <Text style={styles.message} numberOfLines={2}>
+        {message || title}
+      </Text>
     </Animated.View>
   );
 };
@@ -208,49 +195,31 @@ const PremiumToast = () => {
 const styles = StyleSheet.create({
   toastContainer: {
     position: 'absolute',
-    top: 50,
-    left: width * 0.04,
-    width: width * 0.92,
+    bottom: Platform.OS === 'ios' ? 100 : 80,
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 14,
-    borderLeftWidth: 4,
+    paddingHorizontal: 16,
+    borderRadius: 30,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    elevation: 12,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 8,
     zIndex: 999999,
+    maxWidth: width * 0.85,
   },
   iconContainer: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    marginRight: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10,
-    flexShrink: 0,
-  },
-  textContainer: {
-    flex: 1,
-    paddingRight: 4,
-  },
-  title: {
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.2,
-    marginBottom: 1,
   },
   message: {
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.75)',
-    lineHeight: 17,
-  },
-  closeBtn: {
-    padding: 4,
-    flexShrink: 0,
+    fontSize: 13,
+    fontWeight: '500',
+    color: 'rgba(255,255,255,0.95)',
+    flexShrink: 1,
   },
 });
 

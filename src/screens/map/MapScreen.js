@@ -34,6 +34,7 @@ import {
   completeOrder,
   createMockNearbyOrder,
   setActiveOrder,
+  clearActiveOrder,
 } from '../../services/localDriverData';
 import { driverApi } from '../../services/driverApi';
 import SocketService from '../../services/socketService';
@@ -241,26 +242,27 @@ const MapScreen = ({ navigation, route }) => {
   const hasPermission = useSelector(
     state => state.permission?.locationGranted ?? false,
   );
-  const vehicleType = profile?.vehicleDetails?.type || 'scooter';
+  const vehicleType = profile?.vehicleDetails?.type || profile?.vehicleType || 'bike';
   // Add this with your other refs
   const cameraUpdateTimeout = useRef(null);
   const lastCameraUpdate = useRef(null);
 
   const driverMarkerImage = useMemo(() => {
-    const vType = vehicleType.toLowerCase();
-    if (vType.includes('bike') || vType.includes('motorcycle'))
+    const vType = String(vehicleType).toLowerCase();
+    if (vType.includes('bike') || vType.includes('motorcycle') || vType.includes('two wheeler') || vType.includes('two-wheeler'))
       return require('../../assets/bike.png');
-    if (vType.includes('scooter')) return require('../../assets/scooter.png');
+    if (vType.includes('scoot')) return require('../../assets/scooter.png');
     if (
       vType.includes('auto') ||
       vType.includes('rickshaw') ||
       vType.includes('riksha')
     )
       return require('../../assets/auto.png');
-    if (vType.includes('truck') && vType.includes('mini'))
+    if (vType.includes('truck'))
       return require('../../assets/truck.png');
-    if (vType.includes('truck')) return require('../../assets/truck.png');
-    return require('../../assets/topscooter.png');
+    
+    // Default fallback to bike instead of scooter for bike drivers
+    return require('../../assets/bike.png');
   }, [vehicleType]);
 
   // Parse and normalize the incoming order data
@@ -403,9 +405,33 @@ const MapScreen = ({ navigation, route }) => {
   const [is3DMode, setIs3DMode] = useState(false);
   const [arrowRotation, setArrowRotation] = useState(90);
   const [nextWaypoint, setNextWaypoint] = useState(null);
+  const [hasUnreadMessage, setHasUnreadMessage] = useState(false);
 
   // Ripple animation for location marker
   const rippleAnim = useRef(new Animated.Value(0)).current;
+  const blinkAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (hasUnreadMessage) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(blinkAnim, {
+            toValue: 1,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+          Animated.timing(blinkAnim, {
+            toValue: 0,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    } else {
+      blinkAnim.stopAnimation();
+      blinkAnim.setValue(0);
+    }
+  }, [hasUnreadMessage, blinkAnim]);
 
   useEffect(() => {
     Animated.loop(
@@ -457,13 +483,11 @@ const MapScreen = ({ navigation, route }) => {
 
   // Memoized destination
   const destination = useMemo(() => {
-    if (
-      tripStage === STAGES.GOING_TO_PICKUP ||
-      tripStage === STAGES.ARRIVED_PICKUP
-    ) {
+    if (tripStage === STAGES.GOING_TO_PICKUP) {
       return pickup;
     }
     if (
+      tripStage === STAGES.ARRIVED_PICKUP ||
       tripStage === STAGES.GOING_TO_DROP ||
       tripStage === STAGES.ARRIVED_DROP
     ) {
@@ -502,8 +526,51 @@ const MapScreen = ({ navigation, route }) => {
     if (order && (order.id || order.rideId)) {
       const rideId = order.rideId || order.id;
       SocketService.setActiveRide(rideId);
+      
+      const handleRideCancelled = async (data) => {
+        if (data?.rideId === rideId || data?.id === rideId) {
+          toast.info('Ride cancelled by admin/customer.');
+          await clearActiveOrder();
+          navigation.navigate('MyTabs', { screen: 'Home' });
+        }
+      };
+
+      const handleStatusChanged = async (data) => {
+        if ((data?.rideId === rideId || data?.id === rideId) && data?.status === 'cancelled') {
+          toast.info('Ride cancelled by admin/customer.');
+          await clearActiveOrder();
+          navigation.navigate('MyTabs', { screen: 'Home' });
+        }
+      };
+
+      const handleNewMessage = (msg) => {
+        // If message is not from driver, show indicator
+        const driverId = profile?._id || profile?.id;
+        if (msg.senderId != null && driverId != null && msg.senderId.toString() !== driverId.toString()) {
+          setHasUnreadMessage(true);
+        }
+      };
+
+      SocketService.on('ride:cancelled', handleRideCancelled);
+      SocketService.on('ride:status-changed', handleStatusChanged);
+      SocketService.on('ride_cancelled', handleRideCancelled); // legacy
+      SocketService.on('chat:new_message', handleNewMessage);
+      
+      // Join chat room so we receive messages while on map
+      SocketService.socket?.emit('chat:join', {
+        rideId,
+        userId: profile?._id || profile?.id,
+        userType: 'driver',
+      });
+
+      return () => {
+        SocketService.off('ride:cancelled', handleRideCancelled);
+        SocketService.off('ride:status-changed', handleStatusChanged);
+        SocketService.off('ride_cancelled', handleRideCancelled);
+        SocketService.off('chat:new_message', handleNewMessage);
+      };
     }
-  }, [order?.id, order?.rideId]);
+  }, [order?.id, order?.rideId, navigation, profile]);
 
   // Track pickup/drop proximity for action availability
   useEffect(() => {
@@ -1649,9 +1716,25 @@ const MapScreen = ({ navigation, route }) => {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.phoneCircle, { backgroundColor: '#0080ff' }]}
-                onPress={() => navigation.navigate('DriverChat', { rideId: order?.rideId || order?.id })}
+                onPress={() => {
+                  setHasUnreadMessage(false);
+                  navigation.navigate('DriverChat', { rideId: order?.rideId || order?.id });
+                }}
               >
                 <Ionicons name="chatbubble" size={22} color="#fff" />
+                {hasUnreadMessage && (
+                  <View style={{
+                    position: 'absolute',
+                    top: -2,
+                    right: -2,
+                    width: 14,
+                    height: 14,
+                    borderRadius: 7,
+                    backgroundColor: '#FF3B30',
+                    borderWidth: 2,
+                    borderColor: '#0080ff'
+                  }} />
+                )}
               </TouchableOpacity>
             </View>
           </View>

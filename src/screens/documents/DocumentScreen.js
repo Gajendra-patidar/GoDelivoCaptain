@@ -765,10 +765,12 @@ const DocumentScreen = ({ navigation, route }) => {
     try {
       const token = await getToken();
 
-      if (!token) {
-        Alert.alert('Error', 'Session expired. Please login again.');
-        navigation.navigate('Login');
-        return;
+      const headers = {
+        'Content-Type': 'multipart/form-data',
+      };
+      
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
       }
 
       const formData = new FormData();
@@ -845,10 +847,7 @@ const DocumentScreen = ({ navigation, route }) => {
       console.log('after register data');
 
       const response = await axios.post(`${BASE_URL}/register`, formData, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data',
-        },
+        headers,
       });
 
       const vehicleType =

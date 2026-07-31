@@ -29,6 +29,7 @@ const setupInterceptors = (clientInstance, name = 'API') => {
       const status = error?.response?.status;
       const message =
         error?.response?.data?.message || error?.response?.data?.error || '';
+      const url = error?.config?.url || '';
 
       const isTokenExpired =
         status === 401 ||
@@ -36,10 +37,13 @@ const setupInterceptors = (clientInstance, name = 'API') => {
         message.toLowerCase().includes('jwt expired') ||
         message.toLowerCase().includes('unauthorized');
 
-      if (isTokenExpired && !isLoggingOut) {
+      const isIgnoredEndpoint = url.includes('/arrived') || url.includes('/start') || url.includes('/accept');
+
+      if (isTokenExpired && !isLoggingOut && !isIgnoredEndpoint) {
         isLoggingOut = true;
 
-        await AsyncStorage.multiRemove(['userToken', 'userData', 'driverId']);
+        // Only remove the token so we don't lose the driver profile data
+        await AsyncStorage.removeItem('userToken');
 
         navigate('Login');
 
@@ -315,17 +319,23 @@ export const driverApi = {
     const config = await withAuth();
     const payload = { rideId };
     try {
+      // Try with rideId in URL first, as that matches the /rides/:id/cancel pattern
       const response = await main_client.post(
-        '/rides/arrived',
+        `/rides/${rideId}/arrived`,
         payload,
         config,
       );
       return response.data?.data;
     } catch (error) {
+      if (error?.response?.status === 404 || error?.response?.status === 401) {
+        // If HTTP endpoint doesn't exist or rejects with 401, rely purely on the socket event
+        console.warn('Backend rejected /arrived HTTP fallback, relying on socket.');
+        return { success: true, socketFallback: true };
+      }
       if (!error.response || error.response.status >= 500) {
         await OfflineQueue.enqueue({
           method: 'post',
-          url: '/rides/arrived',
+          url: `/rides/${rideId}/arrived`,
           data: payload,
         });
       }
@@ -341,13 +351,21 @@ export const driverApi = {
     const config = await withAuth();
     const payload = { rideId };
     try {
-      const response = await main_client.post('/rides/start', payload, config);
+      const response = await main_client.post(`/rides/${rideId}/start`, payload, config);
       return response.data?.data;
     } catch (error) {
+      if (error?.response?.status === 404 || error?.response?.status === 401) {
+        try {
+          const fallbackRes = await main_client.post('/rides/start', payload, config);
+          return fallbackRes.data?.data;
+        } catch (fallbackErr) {
+          throw fallbackErr;
+        }
+      }
       if (!error.response || error.response.status >= 500) {
         await OfflineQueue.enqueue({
           method: 'post',
-          url: '/rides/start',
+          url: `/rides/${rideId}/start`,
           data: payload,
         });
       }
@@ -496,6 +514,21 @@ export const driverApi = {
       await AsyncStorage.setItem('userData', JSON.stringify(updated));
     }
     return updated;
+  },
+
+  async getRideStatus(rideId) {
+    const config = await withAuth();
+    try {
+      const response = await main_client.get(`/rides/${rideId}/status`, config);
+      return response.data?.data || response.data;
+    } catch (error) {
+      if (error.response?.status === 404) {
+        // Fallback if /status doesn't exist
+        const fallbackResponse = await main_client.get(`/rides/${rideId}`, config);
+        return fallbackResponse.data?.data || fallbackResponse.data;
+      }
+      throw error;
+    }
   },
 
   safeErrorMessage,

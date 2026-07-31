@@ -121,7 +121,8 @@ class SocketService {
         //   timestamp: Date.now(),
         // });
 
-        // Join the general driver pool
+        // Join the general driver pool - emit both formats to ensure backend compatibility
+        this.socket.emit('driver:join', { driverId: this.driverId });
         this.socket.emit('driver:join', this.driverId);
 
         // Start heartbeat
