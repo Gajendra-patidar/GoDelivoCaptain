@@ -1,4 +1,4 @@
-import { StyleSheet, useColorScheme, AppState, Platform } from 'react-native';
+import { StyleSheet, useColorScheme } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import MainNavigation from './src/navigations/mainNavigation';
@@ -9,13 +9,14 @@ import { useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NotificationService from './src/services/NotificationService';
 import ErrorBoundary from './src/components/ErrorBoundary';
+import BubbleController from './src/components/BubbleController';
 import { OfflineQueue } from './src/services/offlineQueue';
 import SocketService from './src/services/socketService';
 import PremiumToast from './src/components/PremiumToast';
 import { getThemeForScheme } from './src/theme';
-import { startOverlayBubble } from './src/services/FloatingBubbleService';
+// NOTE: startOverlayBubble is now called from HomeScreen when driver goes online,
+//       NOT at app startup. Removing it from here keeps bubble lifecycle correct.
 import { navigationRef } from './src/navigations/navigationRef';
-import BubbleController from './src/components/BubbleController';
 
 function App() {
   const colorScheme = useColorScheme();
@@ -25,17 +26,20 @@ function App() {
     const initApp = async () => {
       try {
         const driverId = await AsyncStorage.getItem('driverId');
-        const token = await AsyncStorage.getItem('userToken');
+        const token    = await AsyncStorage.getItem('userToken');
 
-        // Initialize notifications
+        // Initialize push notifications
         if (driverId) {
           await NotificationService.initialize(driverId);
         }
 
-        // Initialize socket connection for real-time updates
+        // Re-connect socket if driver was previously logged in
         if (driverId && token) {
           console.log('🚀 Initializing socket connection...');
           await SocketService.connect();
+          // ⚠️  Do NOT start the overlay bubble here.
+          //     The bubble is started/stopped in HomeScreen.handleToggleOnline
+          //     so its visibility is tied to the driver's online/offline status.
         }
 
         // Start offline queue
@@ -51,9 +55,6 @@ function App() {
     return () => {
       OfflineQueue.stopListening();
       SocketService.cleanup();
-      // Bubble service keeps running after app closes (stopWithTask=false)
-      // Uncomment below to stop it on unmount instead:
-      // stopOverlayBubble();
     };
   }, []);
 

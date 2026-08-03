@@ -6,8 +6,13 @@
  * and to start / stop the system-level overlay bubble.
  *
  * Android-only — all calls are no-ops on iOS.
+ *
+ * Usage:
+ *   import { startOverlayBubble, stopOverlayBubble } from './FloatingBubbleService';
+ *   // Call startOverlayBubble() when driver goes online
+ *   // Call stopOverlayBubble()  when driver goes offline / logs out
  */
-import { NativeModules, Platform, Alert, Linking } from 'react-native';
+import { NativeModules, Platform, Alert } from 'react-native';
 
 const { FloatingBubble } = NativeModules;
 
@@ -27,7 +32,6 @@ export async function hasOverlayPermission() {
 
 /**
  * Opens the system settings page for the user to grant overlay permission.
- * Resolves false — caller should re-check after the user returns to the app.
  */
 export async function requestOverlayPermission() {
   if (!isAndroid || !FloatingBubble) return false;
@@ -39,11 +43,13 @@ export async function requestOverlayPermission() {
 }
 
 /**
- * Starts the floating bubble overlay service.
- * If permission is not yet granted it shows a premium alert and opens Settings.
- * Silent if FloatingBubble native module is unavailable (e.g. iOS build).
+ * Starts the native floating bubble overlay service.
  *
- * @returns {Promise<boolean>} true if the service started successfully.
+ * • If the native module is unavailable (iOS / module not linked) → silently returns false.
+ * • If permission is not granted → shows a permission dialog once, then returns false.
+ * • Otherwise starts the foreground service and returns true.
+ *
+ * @returns {Promise<boolean>}
  */
 export async function startOverlayBubble() {
   if (!isAndroid || !FloatingBubble) return false;
@@ -53,13 +59,15 @@ export async function startOverlayBubble() {
 
     if (!granted) {
       Alert.alert(
-        'Floating Bubble Permission',
+        'Bubble Permission Required',
         'To show the GoDelivo bubble while using other apps, please grant "Display over other apps" permission.',
         [
           { text: 'Not Now', style: 'cancel' },
           {
             text: 'Open Settings',
-            onPress: () => FloatingBubble.requestPermission(),
+            onPress: () => {
+              FloatingBubble.requestPermission().catch(() => {});
+            },
           },
         ],
         { cancelable: true },
@@ -68,29 +76,33 @@ export async function startOverlayBubble() {
     }
 
     const result = await FloatingBubble.startBubble();
-    return result;
+    return !!result;
   } catch (err) {
-    console.warn('[FloatingBubble] startOverlayBubble error:', err);
+    // Do not crash — bubble is a non-critical feature
+    console.warn('[FloatingBubble] startOverlayBubble error:', err?.message || err);
     return false;
   }
 }
 
 /**
- * Stops the floating bubble overlay service.
- * Call this on logout or when user disables the feature.
+ * Stops the native floating bubble overlay service.
+ * Call this when driver goes offline or logs out.
+ *
+ * @returns {Promise<boolean>}
  */
 export async function stopOverlayBubble() {
   if (!isAndroid || !FloatingBubble) return false;
   try {
-    return await FloatingBubble.stopBubble();
+    const result = await FloatingBubble.stopBubble();
+    return !!result;
   } catch (err) {
-    console.warn('[FloatingBubble] stopOverlayBubble error:', err);
+    console.warn('[FloatingBubble] stopOverlayBubble error:', err?.message || err);
     return false;
   }
 }
 
 /**
- * Checks permission status without prompting.
+ * Alias for hasOverlayPermission — checks permission without prompting.
  * @returns {Promise<boolean>}
  */
 export async function checkBubblePermission() {

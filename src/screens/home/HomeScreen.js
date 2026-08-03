@@ -64,6 +64,10 @@ import { cancelRideRequestNotification } from '../../services/rideRequestNotific
 import SocketService from '../../services/socketService';
 import { setLocationPermission } from '../../store/slices/permissionSlice';
 import { getLocationPermission } from '../../services/permissionService';
+import {
+  startOverlayBubble,
+  stopOverlayBubble,
+} from '../../services/FloatingBubbleService';
 
 const getTimeGreeting = () => {
   const hour = new Date().getHours();
@@ -755,6 +759,8 @@ const HomeScreen = ({ navigation }) => {
         AsyncStorage.setItem('driver_isOnline', 'true').catch(() => {});
         toast.success('You are now Online. Ready to receive orders!', 'Online');
         console.log('[ONLINE_STATUS] Optimistic local status set: online');
+        // ── Start native overlay bubble (visible outside app too) ──────────
+        startOverlayBubble().catch(() => {});
         // ──────────────────────────────────────────────────────────────────
 
         Promise.resolve()
@@ -842,6 +848,8 @@ const HomeScreen = ({ navigation }) => {
       AsyncStorage.setItem('driver_isOnline', 'false').catch(() => {});
       toast.success('You are now Offline.', 'Offline');
       console.log('[ONLINE_STATUS] Optimistic local status set: offline');
+      // ── Stop native overlay bubble ─────────────────────────────────────
+      stopOverlayBubble().catch(() => {});
       // ──────────────────────────────────────────────────────────────────
 
       // Background: sync with server — fire-and-forget, never rollback UI

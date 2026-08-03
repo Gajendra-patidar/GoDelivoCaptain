@@ -7,3 +7,6 @@ export function navigate(name, params) {
     navigationRef.navigate(name, params);
   }
 }
+
+// Default export for backward-compat (mainNavigation.js uses default import)
+export default navigationRef;

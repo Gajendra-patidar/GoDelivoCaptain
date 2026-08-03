@@ -294,7 +294,9 @@ class SocketService {
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        this.socket.off('tracking:joined', handler);
+        if (this.socket) {
+          this.socket.off('tracking:joined', handler);
+        }
         reject(new Error('Join tracking timeout'));
       }, 10000);
 

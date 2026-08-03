@@ -443,15 +443,22 @@ const LoginScreen = ({ navigation }) => {
         console.log('token checking res', response);
 
         if (response.data.success || response.data.status === 'success') {
-          const token = response.data?.data?.token || response.data?.token;
+          const token = response.data?.data?.token || response.data?.token || response.data?.data?.accessToken || response.data?.accessToken;
 
-          if (token) {
-            await AsyncStorage.setItem('userToken', token);
-            await AsyncStorage.setItem(
-              'userPhone',
-              response?.data?.data?.phone || mobile,
-            );
+          if (!token) {
+             console.error('No token found in response:', response.data);
+             toast.error('Failed to retrieve authentication token. Please try again.');
+             setLoading(false);
+             setIsVerifying(false);
+             verifyLockRef.current = false;
+             return;
           }
+
+          await AsyncStorage.setItem('userToken', token);
+          await AsyncStorage.setItem(
+            'userPhone',
+            response?.data?.data?.phone || mobile,
+          );
 
           const user = response?.data?.data;
 

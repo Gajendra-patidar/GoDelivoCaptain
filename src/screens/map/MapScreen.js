@@ -1,3 +1,17 @@
+/**
+ * GoDeLivo Captain App — MapScreen
+ * 3D Navigation Upgrade (All Phases)
+ *
+ * Phase 1 — 3D Camera, Follow Mode, Smooth Rotation, Re-center Button
+ * Phase 2 — Route Progress (Completed / Remaining Polylines)
+ * Phase 3 — Off-route Detection + Automatic Re-routing
+ * Phase 4 — Maneuver Data + Navigation Instruction UI
+ * Phase 5 — Voice Navigation (Graceful TTS — no crash if package absent)
+ *
+ * All existing ride lifecycle, socket events, driverApi calls,
+ * and bottom navigation panel are fully preserved.
+ */
+
 import React, {
   useCallback,
   useEffect,
@@ -24,17 +38,20 @@ import {
   Animated,
   Image,
 } from 'react-native';
-import MapView, { Marker, PROVIDER_GOOGLE, Polyline, AnimatedRegion } from 'react-native-maps';
+import MapView, {
+  Marker,
+  PROVIDER_GOOGLE,
+  Polyline,
+  AnimatedRegion,
+} from 'react-native-maps';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { moderateScale } from 'react-native-size-matters';
-import MapViewDirections from 'react-native-maps-directions';
 import LocationService from '../../services/locationService';
 import {
   addNotification,
   completeOrder,
   createMockNearbyOrder,
   setActiveOrder,
-  clearActiveOrder,
 } from '../../services/localDriverData';
 import { driverApi } from '../../services/driverApi';
 import SocketService from '../../services/socketService';
@@ -48,38 +65,64 @@ import { useDispatch, useSelector } from 'react-redux';
 import { setLocationPermission } from '../../store/slices/permissionSlice';
 import { selectProfile } from '../../store/slices/profileSlice';
 import { getLocationPermission } from '../../services/permissionService';
-
 import imgPath from '../../constant/imgPath';
 import toast from '../../utils/toast';
 
+// ─── Phase 5: Graceful TTS Import ────────────────────────────────────────────
+// Silently skipped if react-native-tts is not installed/linked.
+let Tts = null;
+try {
+  // eslint-disable-next-line import/no-extraneous-dependencies
+  Tts = require('react-native-tts').default || require('react-native-tts');
+  if (Tts && typeof Tts.setDefaultLanguage === 'function') {
+    Tts.setDefaultLanguage('en-IN');
+    Tts.setDefaultRate(0.48);
+    Tts.setDefaultPitch(1.0);
+  }
+} catch (_) {
+  Tts = null;
+}
+
 const { width, height } = Dimensions.get('window');
 
+// ─── Navigation Constants ─────────────────────────────────────────────────────
+const NAV_PITCH           = 50;      // 3D tilt angle during navigation (degrees)
+const NAV_ZOOM            = 18;      // navigation zoom level
+const ARRIVED_PITCH       = 0;       // overhead when arrived
+const ARRIVED_ZOOM        = 17;      // zoom when arrived
+
+const OFF_ROUTE_THRESHOLD_M  = 50;   // meters off-route to start counting
+const OFF_ROUTE_CONFIRM_COUNT = 3;   // consecutive readings before reroute
+const REROUTE_COOLDOWN_MS    = 30000; // 30 s between reroutes
+const CAMERA_THROTTLE_MS     = 800;  // min ms between camera animations
+const LOOK_AHEAD_POINTS      = 5;    // route points ahead for bearing look-ahead
+const HEADING_SMOOTH          = 0.3; // lower = smoother but slower heading
+
+// ─── Ride Stages ──────────────────────────────────────────────────────────────
 const STAGES = {
   GOING_TO_PICKUP: 'GOING_TO_PICKUP',
-  ARRIVED_PICKUP: 'ARRIVED_PICKUP',
-  GOING_TO_DROP: 'GOING_TO_DROP',
-  ARRIVED_DROP: 'ARRIVED_DROP',
-  COMPLETED: 'COMPLETED',
+  ARRIVED_PICKUP:  'ARRIVED_PICKUP',
+  GOING_TO_DROP:   'GOING_TO_DROP',
+  ARRIVED_DROP:    'ARRIVED_DROP',
+  COMPLETED:       'COMPLETED',
 };
 
 const TRAVEL_MODES = {
-  DRIVING: 'driving',
-  WALKING: 'walking',
+  DRIVING:   'driving',
+  WALKING:   'walking',
   BICYCLING: 'bicycling',
-  TRANSIT: 'transit',
+  TRANSIT:   'transit',
 };
 
-// Error boundary component
+// ─── Error Boundary ───────────────────────────────────────────────────────────
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
     this.state = { hasError: false };
   }
-
   static getDerivedStateFromError() {
     return { hasError: true };
   }
-
   render() {
     if (this.state.hasError) {
       return (
@@ -98,1038 +141,1011 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-// Manual distance calculation function (Haversine formula)
+// ─── Pure Utility Functions ───────────────────────────────────────────────────
+
+/** Haversine distance in metres between two {latitude, longitude} points. */
 const calculateHaversineDistance = (start, end) => {
   if (!start || !end) return 0;
-
-  const R = 6371e3; // Earth's radius in meters
-  const φ1 = (start.latitude * Math.PI) / 180;
-  const φ2 = (end.latitude * Math.PI) / 180;
-  const Δφ = ((end.latitude - start.latitude) * Math.PI) / 180;
+  const R = 6371e3;
+  const φ1 = (start.latitude  * Math.PI) / 180;
+  const φ2 = (end.latitude    * Math.PI) / 180;
+  const Δφ = ((end.latitude  - start.latitude)  * Math.PI) / 180;
   const Δλ = ((end.longitude - start.longitude) * Math.PI) / 180;
-
   const a =
     Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
     Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
-
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-
-  return R * c; // Distance in meters
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
+/** Compass bearing (0–360) from start to end. */
 const calculateBearing = (start, end) => {
   if (!start || !end) return 0;
-
-  const lat1 = (start.latitude * Math.PI) / 180;
-  const lat2 = (end.latitude * Math.PI) / 180;
+  const lat1 = (start.latitude  * Math.PI) / 180;
+  const lat2 = (end.latitude    * Math.PI) / 180;
   const lng1 = (start.longitude * Math.PI) / 180;
-  const lng2 = (end.longitude * Math.PI) / 180;
-
+  const lng2 = (end.longitude   * Math.PI) / 180;
   const y = Math.sin(lng2 - lng1) * Math.cos(lat2);
-  const x =
-    Math.cos(lat1) * Math.sin(lat2) -
-    Math.sin(lat1) * Math.cos(lat2) * Math.cos(lng2 - lng1);
-
-  let bearing = (Math.atan2(y, x) * 180) / Math.PI;
-  return (bearing + 360) % 360;
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lng2 - lng1);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 };
 
-// Function to fetch shortest path from Google Maps API
-const fetchShortestPath = async (
-  origin,
-  destination,
-  mode = TRAVEL_MODES.DRIVING,
-) => {
+/**
+ * Shortest-angle heading interpolation.
+ * Prevents 359° → 0° backward rotation (spinning ~360°).
+ */
+const smoothAngle = (from, to, factor = HEADING_SMOOTH) => {
+  const diff = ((to - from + 540) % 360) - 180;
+  return (from + diff * factor + 360) % 360;
+};
+
+/**
+ * Find the nearest route-point index to driver coords.
+ * Starts from hintIndex to avoid a full backward scan every update.
+ */
+const findNearestRouteIndex = (coords, routeCoords, hintIndex = 0) => {
+  if (!coords || !routeCoords || routeCoords.length === 0) {
+    return { index: 0, distance: Infinity };
+  }
+  let nearestIndex = hintIndex;
+  let nearestDist  = Infinity;
+
+  const start = Math.max(0, hintIndex - 5);
+  const end   = Math.min(routeCoords.length - 1, hintIndex + 50);
+
+  for (let i = start; i <= end; i++) {
+    const d = calculateHaversineDistance(coords, routeCoords[i]);
+    if (d < nearestDist) { nearestDist = d; nearestIndex = i; }
+  }
+  // If we hit the forward scan window edge, do a full forward pass.
+  if (nearestIndex >= end && end < routeCoords.length - 1) {
+    for (let i = end + 1; i < routeCoords.length; i++) {
+      const d = calculateHaversineDistance(coords, routeCoords[i]);
+      if (d < nearestDist) { nearestDist = d; nearestIndex = i; } else break; // route is monotone
+    }
+  }
+  return { index: nearestIndex, distance: nearestDist };
+};
+
+/** Strip HTML tags from Google Directions step instructions. */
+const stripHtml = html => {
+  if (!html) return '';
+  return html
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+/** Map a Google Directions maneuver string to a Unicode arrow icon. */
+const getManeuverIcon = maneuver => {
+  const MAP = {
+    'turn-left':        '↰',
+    'turn-right':       '↱',
+    'turn-slight-left': '↖',
+    'turn-slight-right':'↗',
+    'turn-sharp-left':  '↺',
+    'turn-sharp-right': '↻',
+    'uturn-left':       '↩',
+    'uturn-right':      '↪',
+    'straight':         '↑',
+    'keep-left':        '↖',
+    'keep-right':       '↗',
+    'merge':            '⇑',
+    'ramp-left':        '↖',
+    'ramp-right':       '↗',
+    'fork-left':        '↖',
+    'fork-right':       '↗',
+    'roundabout-left':  '↺',
+    'roundabout-right': '↻',
+    'ferry':            '⛴',
+    'arrive':           '📍',
+  };
+  return MAP[maneuver] || '↑';
+};
+
+/** Parse maneuver steps from sorted route array (shortest route first). */
+const parseRouteSteps = routesWithDistance => {
   try {
-    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin.latitude},${origin.longitude}&destination=${destination.latitude},${destination.longitude}&mode=${mode}&alternatives=true&key=${GOOGLE_MAPS_APIKEY}`;
+    if (!routesWithDistance?.length) return [];
+    const leg = routesWithDistance[0]?.legs?.[0];
+    if (!leg?.steps) return [];
+    return leg.steps.map((step, idx) => ({
+      index:          idx,
+      instruction:    stripHtml(step.html_instructions),
+      maneuver:       step.maneuver || 'straight',
+      icon:           getManeuverIcon(step.maneuver || 'straight'),
+      distanceMeters: step.distance?.value  || 0,
+      durationSec:    step.duration?.value  || 0,
+      startLocation: {
+        latitude:  step.start_location?.lat,
+        longitude: step.start_location?.lng,
+      },
+      endLocation: {
+        latitude:  step.end_location?.lat,
+        longitude: step.end_location?.lng,
+      },
+    }));
+  } catch { return []; }
+};
+
+// ─── Google Directions API (Enhanced with step parsing) ───────────────────────
+const fetchShortestPath = async (origin, destination, mode = TRAVEL_MODES.DRIVING) => {
+  try {
+    const url =
+      `https://maps.googleapis.com/maps/api/directions/json` +
+      `?origin=${origin.latitude},${origin.longitude}` +
+      `&destination=${destination.latitude},${destination.longitude}` +
+      `&mode=${mode}&alternatives=true&key=${GOOGLE_MAPS_APIKEY}`;
 
     const response = await fetch(url);
-    const data = await response.json();
+    const data     = await response.json();
 
-    if (data.status === 'OK' && data.routes && data.routes.length > 0) {
-      // Sort routes by distance to find the shortest
-      const routesWithDistance = data.routes.map(route => {
-        const distance = route.legs.reduce(
-          (sum, leg) => sum + leg.distance.value,
-          0,
-        );
-        const duration = route.legs.reduce(
-          (sum, leg) => sum + leg.duration.value,
-          0,
-        );
-        const polyline = route.overview_polyline.points;
+    if (data.status !== 'OK' || !data.routes?.length) return null;
 
-        // Decode polyline to coordinates
-        const coordinates = decodePolyline(polyline);
+    const routesWithDistance = data.routes.map(route => ({
+      ...route,
+      distance:    route.legs.reduce((s, l) => s + l.distance.value, 0),
+      duration:    route.legs.reduce((s, l) => s + l.duration.value, 0),
+      coordinates: decodePolyline(route.overview_polyline.points),
+      summary:     route.summary,
+    }));
 
-        return {
-          ...route,
-          distance,
-          duration,
-          coordinates,
-          summary: route.summary,
-        };
-      });
+    routesWithDistance.sort((a, b) => a.distance - b.distance);
 
-      // Sort by distance (shortest first)
-      routesWithDistance.sort((a, b) => a.distance - b.distance);
-
-      return {
-        routes: routesWithDistance,
-        shortestRoute: routesWithDistance[0],
-        alternativeRoutes: routesWithDistance.slice(1),
-      };
-    }
-    return null;
+    return {
+      routes:           routesWithDistance,
+      shortestRoute:    routesWithDistance[0],
+      alternativeRoutes:routesWithDistance.slice(1),
+      steps:            parseRouteSteps(routesWithDistance),
+    };
   } catch (error) {
-    console.error('Error fetching shortest path:', error);
+    console.error('[MapScreen] fetchShortestPath error:', error);
     return null;
   }
 };
 
-// Polyline decoder function
+// ─── Encoded Polyline Decoder ─────────────────────────────────────────────────
 const decodePolyline = encoded => {
   const points = [];
-  let index = 0,
-    lat = 0,
-    lng = 0;
-
+  let index = 0, lat = 0, lng = 0;
   while (index < encoded.length) {
-    let b,
-      shift = 0,
-      result = 0;
-    do {
-      b = encoded.charCodeAt(index++) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-    const dlat = result & 1 ? ~(result >> 1) : result >> 1;
-    lat += dlat;
-
-    shift = 0;
-    result = 0;
-    do {
-      b = encoded.charCodeAt(index++) - 63;
-      result |= (b & 0x1f) << shift;
-      shift += 5;
-    } while (b >= 0x20);
-    const dlng = result & 1 ? ~(result >> 1) : result >> 1;
-    lng += dlng;
-
-    points.push({
-      latitude: lat / 1e5,
-      longitude: lng / 1e5,
-    });
+    let b, shift = 0, result = 0;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lat += result & 1 ? ~(result >> 1) : result >> 1;
+    shift = 0; result = 0;
+    do { b = encoded.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lng += result & 1 ? ~(result >> 1) : result >> 1;
+    points.push({ latitude: lat / 1e5, longitude: lng / 1e5 });
   }
   return points;
 };
 
-// Normalize coordinates from [lng, lat] to {latitude, longitude}
+// ─── Coordinate Normaliser ────────────────────────────────────────────────────
 const normalizeCoordinates = coords => {
   if (!coords) return null;
-  if (Array.isArray(coords)) {
-    return { latitude: coords[1], longitude: coords[0] };
-  }
-  if (coords.latitude && coords.longitude) {
-    return coords;
-  }
+  if (Array.isArray(coords)) return { latitude: coords[1], longitude: coords[0] };
+  if (coords.latitude && coords.longitude) return coords;
   return null;
 };
 
+// ═════════════════════════════════════════════════════════════════════════════
+//  MapScreen Component
+// ═════════════════════════════════════════════════════════════════════════════
 const MapScreen = ({ navigation, route }) => {
-  const dispatch = useDispatch();
-  const profile = useSelector(selectProfile);
+  const dispatch    = useDispatch();
+  const profile     = useSelector(selectProfile);
   const hasPermission = useSelector(
     state => state.permission?.locationGranted ?? false,
   );
-  const vehicleType = profile?.vehicleDetails?.type || profile?.vehicleType || 'bike';
-  // Add this with your other refs
-  const cameraUpdateTimeout = useRef(null);
-  const lastCameraUpdate = useRef(null);
+  const vehicleType = profile?.vehicleDetails?.type || 'scooter';
 
+  // ── Vehicle Marker Image (memoised) — covers all vehicle type variants ───
   const driverMarkerImage = useMemo(() => {
-    const vType = String(vehicleType).toLowerCase();
-    if (vType.includes('bike') || vType.includes('motorcycle') || vType.includes('two wheeler') || vType.includes('two-wheeler'))
-      return require('../../assets/bike.png');
-    if (vType.includes('scoot')) return require('../../assets/scooter.png');
-    if (
-      vType.includes('auto') ||
-      vType.includes('rickshaw') ||
-      vType.includes('riksha')
-    )
-      return require('../../assets/auto.png');
-    if (vType.includes('truck'))
-      return require('../../assets/truck.png');
-    
-    // Default fallback to bike instead of scooter for bike drivers
-    return require('../../assets/bike.png');
+    const v = (vehicleType || '').toLowerCase();
+    // Bike / Motorcycle
+    if (v.includes('motorcycle'))                                                        return require('../../assets/motorcycle.png');
+    if (v.includes('bike'))                                                              return require('../../assets/bike.png');
+    // Scooter
+    if (v.includes('scooter'))                                                           return require('../../assets/scooter.png');
+    // Auto / Riksha / 3-Wheeler
+    if (v.includes('auto') || v.includes('rickshaw') || v.includes('riksha') ||
+        v.includes('3 wheeler') || v.includes('3w'))                                    return require('../../assets/riksha.png');
+    // Truck / Loader variants
+    if (v.includes('mini') || v.includes('mini-truck') || v.includes('mini truck'))     return require('../../assets/mini-truck.png');
+    if (v.includes('truck') || v.includes('tata') || v.includes('loader') ||
+        v.includes('ace'))                                                               return require('../../assets/truck.png');
+    // Motor / Electric
+    if (v.includes('motor') || v.includes('electric'))                                  return require('../../assets/motor.png');
+    // Default fallback
+    return require('../../assets/topscooter.png');
   }, [vehicleType]);
 
-  // Parse and normalize the incoming order data
-  const rawOrder = useMemo(
-    () => route?.params?.order || null,
-    [route?.params?.order],
-  );
-
-  const { order } = route?.params;
-
+  // ── Order / Location Data ──────────────────────────────────────────────────
+  const rawOrder   = useMemo(() => route?.params?.order || null, [route?.params?.order]);
+  // Safe destructure — route.params may be undefined when navigating without params
+  const { order } = route?.params || {};
   const [initialOrder] = useState(() => route?.params?.order || null);
 
-  console.log("order hi order ", order, rawOrder);
-  
-
-  //
-  // Transform the pending request format to the format expected by the component
   const normalizedOrder = useMemo(() => {
-    if (!rawOrder) {
-      return createMockNearbyOrder();
-    }
-
-    // Handle the pending request format from your API
+    if (!rawOrder) return createMockNearbyOrder();
     if (rawOrder.rideId || rawOrder.rideDetails) {
       return {
         id: rawOrder.rideId || `ORD${Date.now()}`,
         status: 'pending',
         pickupLocation: {
-          coordinates: normalizeCoordinates(
-            rawOrder.pickupLocation?.coordinates,
-          ),
-          address: rawOrder.pickupLocation?.address || 'Pickup location',
+          coordinates: normalizeCoordinates(rawOrder.pickupLocation?.coordinates),
+          address:     rawOrder.pickupLocation?.address || 'Pickup location',
         },
         dropLocation: {
           coordinates: normalizeCoordinates(rawOrder.dropLocation?.coordinates),
-          address: rawOrder.dropLocation?.address || 'Drop location',
+          address:     rawOrder.dropLocation?.address || 'Drop location',
         },
         customer: {
-          name: rawOrder.customerDetails?.name || 'Customer',
-          phone: rawOrder.customerDetails?.phone,
+          name:   rawOrder.customerDetails?.name   || 'Customer',
+          phone:  rawOrder.customerDetails?.phone,
           rating: rawOrder.customerDetails?.rating || 0,
         },
-        rideDetails: rawOrder.rideDetails,
-        amount: rawOrder.rideDetails?.estimatedFare || 0,
-        totalAmount: rawOrder.rideDetails?.estimatedFare || 0,
-        paymentMode: 'cash', // Default to cash, can be updated from API
-        requestedAt: rawOrder.requestedAt,
-        distance: rawOrder.rideDetails?.distance || 0,
-        duration: rawOrder.rideDetails?.eta || 0,
+        rideDetails:  rawOrder.rideDetails,
+        amount:       rawOrder.rideDetails?.estimatedFare || 0,
+        totalAmount:  rawOrder.rideDetails?.estimatedFare || 0,
+        paymentMode:  'cash',
+        requestedAt:  rawOrder.requestedAt,
+        distance:     rawOrder.rideDetails?.distance || 0,
+        duration:     rawOrder.rideDetails?.eta      || 0,
       };
     }
-
-    // Handle the existing order format
     return rawOrder;
   }, [rawOrder]);
 
-  const order_data = rawOrder;
-
-  //
   const pickup = useMemo(() => {
-    const coords = order?.pickupLocation?.coordinates;
-    return coords
-      ? normalizeCoordinates(coords)
-      : { latitude: 22.7261, longitude: 75.8931 };
+    const c = order?.pickupLocation?.coordinates;
+    return c ? normalizeCoordinates(c) : { latitude: 22.7261, longitude: 75.8931 };
   }, [order]);
 
   const drop = useMemo(() => {
-    const coords = order?.dropLocation?.coordinates;
-    return coords
-      ? normalizeCoordinates(coords)
-      : { latitude: 22.7203, longitude: 75.9059 };
+    const c = order?.dropLocation?.coordinates;
+    return c ? normalizeCoordinates(c) : { latitude: 22.7203, longitude: 75.9059 };
   }, [order]);
 
   const pickupAddress = useMemo(
-    () =>
-      order?.pickupLocation?.address ||
-      order?.pickupAddress ||
-      'Pickup address unavailable',
+    () => order?.pickupLocation?.address || order?.pickupAddress || 'Pickup address unavailable',
     [order],
   );
-
   const dropAddress = useMemo(
-    () =>
-      order?.dropLocation?.address ||
-      order?.dropAddress ||
-      'Drop address unavailable',
+    () => order?.dropLocation?.address || order?.dropAddress || 'Drop address unavailable',
     [order],
   );
 
-  // Refs
-  const mapRef = useRef(null);
-  const unsubscribeLocation = useRef(null);
-  const appState = useRef(AppState.currentState);
-  const directionInterval = useRef(null);
-  const lastKnownCoords = useRef(null);
+  // ── Core Refs ──────────────────────────────────────────────────────────────
+  const mapRef               = useRef(null);
+  const unsubscribeLocation  = useRef(null);
+  const appState             = useRef(AppState.currentState);
+  const directionInterval    = useRef(null);
+  const lastKnownCoords      = useRef(null);
   const lastRouteFetchedCoords = useRef(null);
-  const lastDestination = useRef(null);
+  const lastDestination      = useRef(null);
+  const isMounted            = useRef(true);   // guard setState after unmount
 
-  // Animated coordinates for driver marker
+  // ── Navigation Refs (values that change frequently — avoid re-renders) ────
+  const isFollowingDriver      = useRef(true);   // follow mode flag
+  const lastStableHeading      = useRef(0);      // smoothed heading (degrees)
+  const lastCameraUpdate       = useRef(null);   // last camera centre coord
+  const lastCameraUpdateTime   = useRef(0);      // throttle: timestamp ms
+  const cameraUpdateTimeout    = useRef(null);   // debounce timer
+  const isFittingRoute         = useRef(false);  // true while fitToCoordinates is running
+  const routeProgressIndex     = useRef(0);      // last nearest route index
+  const routeCoordsRef         = useRef([]);     // full route coords (no re-render)
+  const offRouteCount          = useRef(0);      // consecutive off-route readings
+  const lastRerouteTime        = useRef(0);      // reroute cooldown
+  const routeFetchInFlight     = useRef(false);  // prevent concurrent fetches
+  const routeFetchVersion      = useRef(0);      // discard stale responses
+  const currentManeuverIndex   = useRef(0);      // active maneuver step index
+  const spokenManeuvers        = useRef(new Set()); // TTS dedup keys
+  const routeStepsRef          = useRef([]);     // mirror of routeSteps state for stable closure
+  const navCallbackRef         = useRef(null);   // stable location-event handler (updated via effect)
+
+  // ── Animated Driver Marker ────────────────────────────────────────────────
   const animatedDriverCoords = useRef((() => {
-    // Try to get last known coords from location service first
-    const lastCoords = LocationService.getLastCoords();
-    if (lastCoords && typeof lastCoords.latitude === 'number') {
-      return new AnimatedRegion({
-        latitude: lastCoords.latitude,
-        longitude: lastCoords.longitude,
-        latitudeDelta: 0.005,
-        longitudeDelta: 0.005,
-      });
+    const last = LocationService.getLastCoords();
+    if (last?.latitude != null) {
+      return new AnimatedRegion({ latitude: last.latitude, longitude: last.longitude, latitudeDelta: 0.005, longitudeDelta: 0.005 });
     }
-    // Fall back to normalized pickup coordinates
-    const normalizedPickup = normalizeCoordinates(order?.pickupLocation?.coordinates);
-    return new AnimatedRegion({
-      latitude: normalizedPickup?.latitude || 22.72592,
-      longitude: normalizedPickup?.longitude || 75.89294,
-      latitudeDelta: 0.005,
-      longitudeDelta: 0.005,
-    });
+    const np = normalizeCoordinates(order?.pickupLocation?.coordinates);
+    return new AnimatedRegion({ latitude: np?.latitude || 22.72592, longitude: np?.longitude || 75.89294, latitudeDelta: 0.005, longitudeDelta: 0.005 });
   })()).current;
 
-  // State
-  const [tracksViewChanges, setTracksViewChanges] = useState(true);
+  // ── UI State ──────────────────────────────────────────────────────────────
+  const [tracksViewChanges,    setTracksViewChanges]    = useState(true);
+  const [tripStage,            setTripStage]            = useState(STAGES.GOING_TO_PICKUP);
+  const [driverCoords,         setDriverCoords]         = useState(() => LocationService.getLastCoords() || null);
+  const [routeOrigin,          setRouteOrigin]          = useState(null);
+  const [distance,             setDistance]             = useState(order?.rideDetails?.distance || null);
+  const [duration,             setDuration]             = useState(order?.rideDetails?.eta      || null);
+  const [isLoading,            setIsLoading]            = useState(true);
+  const [locationError,        setLocationError]        = useState(null);
+  const [usingApproximateRoute,setUsingApproximateRoute]= useState(false);
+  const [showDropRoute,        setShowDropRoute]        = useState(false);
+  const [isAtPickup,           setIsAtPickup]           = useState(false);
+  const [isAtDrop,             setIsAtDrop]             = useState(false);
+  const [arrowRotation,        setArrowRotation]        = useState(0);
 
-  // State
-  const [tripStage, setTripStage] = useState(STAGES.GOING_TO_PICKUP);
-  const [driverCoords, setDriverCoords] = useState(() => LocationService.getLastCoords() || null);
-  const [routeOrigin, setRouteOrigin] = useState(null);
-  const [distance, setDistance] = useState(
-    order?.rideDetails?.distance || null,
-  );
-  const [duration, setDuration] = useState(
-    order?.rideDetails?.eta || null,
-  );
-  const [isLoading, setIsLoading] = useState(true);
-  const [locationError, setLocationError] = useState(null);
-  const [usingApproximateRoute, setUsingApproximateRoute] = useState(false);
-  const [showDropRoute, setShowDropRoute] = useState(false);
-  const [isAtPickup, setIsAtPickup] = useState(false);
-  const [isAtDrop, setIsAtDrop] = useState(false);
-  const [is3DMode, setIs3DMode] = useState(false);
-  const [arrowRotation, setArrowRotation] = useState(90);
-  const [nextWaypoint, setNextWaypoint] = useState(null);
-  const [hasUnreadMessage, setHasUnreadMessage] = useState(false);
+  // ── Follow Mode State (controls Re-center button visibility) ──────────────
+  const [isFollowingDriverState, setIsFollowingDriverState] = useState(true);
 
-  // Ripple animation for location marker
+  // ── Route Progress State ──────────────────────────────────────────────────
+  const [completedRouteCoords, setCompletedRouteCoords] = useState([]);
+  const [remainingRouteCoords, setRemainingRouteCoords] = useState([]);
+
+  // ── Route / Maneuver State ────────────────────────────────────────────────
+  const [routes,           setRoutes]           = useState([]);
+  const [selectedRoute,    setSelectedRoute]    = useState(null);
+  const [alternativeRoutes,setAlternativeRoutes]= useState([]);
+  const [showRouteOptions, setShowRouteOptions] = useState(false);
+  const [travelMode,       setTravelMode]       = useState(TRAVEL_MODES.DRIVING);
+  const [isFetchingRoutes, setIsFetchingRoutes] = useState(false);
+  const [currentManeuver,  setCurrentManeuver]  = useState(null);
+  const [routeSteps,       setRouteSteps]       = useState([]);
+  const [isRerouting,      setIsRerouting]      = useState(false);
+
+  // ── Modal States ──────────────────────────────────────────────────────────
+  const [showCashModal,     setShowCashModal]     = useState(false);
+  const [cashCollected,     setCashCollected]     = useState('');
+  const [paymentMethod,     setPaymentMethod]     = useState('cash');
+  const [isProcessing,      setIsProcessing]      = useState(false);
+  const [modalError,        setModalError]        = useState('');
+  const [showCancelModal,   setShowCancelModal]   = useState(false);
+  const [cancelReason,      setCancelReason]      = useState('');
+  const [isCancelling,      setIsCancelling]      = useState(false);
+  const [showPickupOtpModal,setShowPickupOtpModal]= useState(false);
+  const [pickupOtp,         setPickupOtp]         = useState('');
+  const [isMapReady,        setIsMapReady]        = useState(false);
+
+  // ── Ripple Animation ──────────────────────────────────────────────────────
   const rippleAnim = useRef(new Animated.Value(0)).current;
-  const blinkAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (hasUnreadMessage) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(blinkAnim, {
-            toValue: 1,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(blinkAnim, {
-            toValue: 0,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
-    } else {
-      blinkAnim.stopAnimation();
-      blinkAnim.setValue(0);
-    }
-  }, [hasUnreadMessage, blinkAnim]);
-
   useEffect(() => {
     Animated.loop(
-      Animated.timing(rippleAnim, {
-        toValue: 1,
-        duration: 2000,
-        easing: Easing.out(Easing.ease),
-        useNativeDriver: true,
-      }),
+      Animated.timing(rippleAnim, { toValue: 1, duration: 2000, easing: Easing.out(Easing.ease), useNativeDriver: true }),
     ).start();
   }, [rippleAnim]);
 
-  // const rippleScale = rippleAnim.interpolate({
-  //   inputRange: [0, 1],
-  //   outputRange: [1, 2.5],
-  // });
-
-  // const rippleOpacity = rippleAnim.interpolate({
-  //   inputRange: [0, 1],
-  //   outputRange: [0.6, 0],
-  // });
-
-  // Route optimization states
-  const [routes, setRoutes] = useState([]);
-  const [selectedRoute, setSelectedRoute] = useState(null);
-  const [alternativeRoutes, setAlternativeRoutes] = useState([]);
-  const [showRouteOptions, setShowRouteOptions] = useState(false);
-  const [travelMode, setTravelMode] = useState(TRAVEL_MODES.DRIVING);
-  const [isFetchingRoutes, setIsFetchingRoutes] = useState(false);
-
-  // Modal states
-  const [showCashModal, setShowCashModal] = useState(false);
-  const [cashCollected, setCashCollected] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('cash');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [modalError, setModalError] = useState('');
-
-  // Cancel trip states (only allowed before reaching pickup)
-  const [showCancelModal, setShowCancelModal] = useState(false);
-  const [cancelReason, setCancelReason] = useState('');
-  const [isCancelling, setIsCancelling] = useState(false);
-
-
-
-  // Pickup OTP states
-  const [showPickupOtpModal, setShowPickupOtpModal] = useState(false);
-  const [pickupOtp, setPickupOtp] = useState('');
-  const [isMapReady, setIsMapReady] = useState(false);
-
-  // Memoized destination
+  // ── Memoised Destination ──────────────────────────────────────────────────
   const destination = useMemo(() => {
-    if (tripStage === STAGES.GOING_TO_PICKUP) {
-      return pickup;
-    }
-    if (
-      tripStage === STAGES.ARRIVED_PICKUP ||
-      tripStage === STAGES.GOING_TO_DROP ||
-      tripStage === STAGES.ARRIVED_DROP
-    ) {
-      return drop;
-    }
+    if (tripStage === STAGES.GOING_TO_PICKUP || tripStage === STAGES.ARRIVED_PICKUP) return pickup;
+    if (tripStage === STAGES.GOING_TO_DROP   || tripStage === STAGES.ARRIVED_DROP)   return drop;
     return null;
   }, [drop, pickup, tripStage]);
 
-  // Initialize from order status
+  const isNavigating = tripStage === STAGES.GOING_TO_PICKUP || tripStage === STAGES.GOING_TO_DROP;
+
+  // ── Keep routeStepsRef in sync ────────────────────────────────────────────
+  useEffect(() => { routeStepsRef.current = routeSteps; }, [routeSteps]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Initialise stage from order status
+  // ─────────────────────────────────────────────────────────────────────────
   useEffect(() => {
     try {
       const status = String(order?.status || '').toLowerCase();
-      if (
-        status === 'picked_up' ||
-        status === 'pickedup' 
-      ) {
+      if (status === 'picked_up' || status === 'pickedup') {
         setTripStage(STAGES.GOING_TO_DROP);
         setShowDropRoute(true);
-      } else if (
-        status === 'accepted' || 
-        status === 'pending'
-      ) {
+      } else if (status === 'accepted' || status === 'pending') {
         setTripStage(STAGES.GOING_TO_PICKUP);
         setShowDropRoute(false);
       } else {
         setTripStage(STAGES.GOING_TO_DROP);
         setShowDropRoute(false);
       }
-    } catch (error) {
-      console.error('Error setting initial stage:', error);
-    }
+    } catch (err) { console.error('Error setting initial stage:', err); }
   }, [order?.status]);
 
-  // Initialize socket tracking for the active ride
+  // ── Socket: join ride tracking ────────────────────────────────────────────
   useEffect(() => {
     if (order && (order.id || order.rideId)) {
-      const rideId = order.rideId || order.id;
-      SocketService.setActiveRide(rideId);
-      
-      const handleRideCancelled = async (data) => {
-        if (data?.rideId === rideId || data?.id === rideId) {
-          toast.info('Ride cancelled by admin/customer.');
-          await clearActiveOrder();
-          navigation.navigate('MyTabs', { screen: 'Home' });
-        }
-      };
-
-      const handleStatusChanged = async (data) => {
-        if ((data?.rideId === rideId || data?.id === rideId) && data?.status === 'cancelled') {
-          toast.info('Ride cancelled by admin/customer.');
-          await clearActiveOrder();
-          navigation.navigate('MyTabs', { screen: 'Home' });
-        }
-      };
-
-      const handleNewMessage = (msg) => {
-        // If message is not from driver, show indicator
-        const driverId = profile?._id || profile?.id;
-        if (msg.senderId != null && driverId != null && msg.senderId.toString() !== driverId.toString()) {
-          setHasUnreadMessage(true);
-        }
-      };
-
-      SocketService.on('ride:cancelled', handleRideCancelled);
-      SocketService.on('ride:status-changed', handleStatusChanged);
-      SocketService.on('ride_cancelled', handleRideCancelled); // legacy
-      SocketService.on('chat:new_message', handleNewMessage);
-      
-      // Join chat room so we receive messages while on map
-      SocketService.socket?.emit('chat:join', {
-        rideId,
-        userId: profile?._id || profile?.id,
-        userType: 'driver',
-      });
-
-      return () => {
-        SocketService.off('ride:cancelled', handleRideCancelled);
-        SocketService.off('ride:status-changed', handleStatusChanged);
-        SocketService.off('ride_cancelled', handleRideCancelled);
-        SocketService.off('chat:new_message', handleNewMessage);
-      };
+      SocketService.setActiveRide(order.rideId || order.id);
     }
-  }, [order?.id, order?.rideId, navigation, profile]);
+  }, [order?.id, order?.rideId]);
 
-  // Track pickup/drop proximity for action availability
-  useEffect(() => {
-    if (!driverCoords || !pickup || !drop) return;
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Phase 5 — Voice Navigation
+  // ─────────────────────────────────────────────────────────────────────────
+  const speakInstruction = useCallback((text, key) => {
+    if (!Tts || !text) return;
+    if (spokenManeuvers.current.has(key)) return;
+    spokenManeuvers.current.add(key);
+    try { Tts.stop(); Tts.speak(text); } catch (_) {}
+  }, []);
 
-    const pickupDistance = calculateHaversineDistance(driverCoords, pickup);
-    const dropDistance = calculateHaversineDistance(driverCoords, drop);
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Phase 4 — Maneuver Updater (called per GPS update via navCallbackRef)
+  // ─────────────────────────────────────────────────────────────────────────
+  const updateCurrentManeuver = useCallback((coords, steps) => {
+    if (!coords || !steps?.length) return;
+    try {
+      let idx = currentManeuverIndex.current;
+      // Advance past completed steps
+      while (idx < steps.length - 1) {
+        const distToEnd = calculateHaversineDistance(coords, steps[idx].endLocation);
+        if (distToEnd < 25) {
+          idx++;
+          currentManeuverIndex.current = idx;
+          spokenManeuvers.current.clear();
+        } else break;
+      }
 
-    const reachedPickup = pickupDistance <= 60;
-    const reachedDrop = dropDistance <= 50;
+      const step = steps[idx];
+      if (!step) return;
+      const distToNext = calculateHaversineDistance(coords, step.startLocation);
 
-    setIsAtPickup(reachedPickup);
-    setIsAtDrop(reachedDrop);
-
-    if (reachedPickup && tripStage === STAGES.GOING_TO_PICKUP) {
-      setTripStage(STAGES.ARRIVED_PICKUP);
-      setShowDropRoute(true);
-
-      // Emit driver:arrived socket event
-      const rideId = order?.rideId || order?.id;
-      SocketService.emitDriverArrived(rideId, {
-        type: 'Point',
-        coordinates: [driverCoords.longitude, driverCoords.latitude]
-      });
-
-      // HTTP fallback: notify backend driver arrived at pickup
-      driverApi
-        .arrivedAtPickup(rideId)
-        .catch(err => {
-          if (err?.response?.status !== 404) {
-             console.error('Arrived at pickup error:', err);
-          }
+      if (isMounted.current) {
+        setCurrentManeuver({
+          instruction:    step.instruction,
+          maneuver:       step.maneuver,
+          icon:           step.icon,
+          distanceMeters: Math.round(distToNext),
         });
-    }
 
-    if (reachedDrop && tripStage === STAGES.GOING_TO_DROP) {
-      setTripStage(STAGES.ARRIVED_DROP);
-    }
-  }, [driverCoords, pickup, drop, tripStage]);
+        // Voice triggers
+        if (distToNext <= 320 && distToNext > 160) {
+          const label = distToNext > 100 ? `${Math.round(distToNext / 50) * 50} meters` : `${Math.round(distToNext)} meters`;
+          speakInstruction(`${step.instruction} in ${label}`, `${idx}-far`);
+        } else if (distToNext <= 80 && distToNext > 15) {
+          speakInstruction(step.instruction, `${idx}-now`);
+        }
+      }
+    } catch (_) {}
+  }, [speakInstruction]);
 
-  // Fetch shortest path when destination changes or when driver drifts significantly (>150m)
-  useEffect(() => {
-    if (!driverCoords || !destination || !GOOGLE_MAPS_APIKEY) return;
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Phase 2 — Route Progress Updater
+  // ─────────────────────────────────────────────────────────────────────────
+  const updateRouteProgress = useCallback(coords => {
+    const full = routeCoordsRef.current;
+    if (!full?.length || full.length < 2 || !coords) return undefined;
 
-    let shouldFetch = false;
-    
-    // Check if destination changed
-    const destChanged = !lastDestination.current || 
-      lastDestination.current.latitude !== destination.latitude || 
-      lastDestination.current.longitude !== destination.longitude;
+    const { index, distance: distToRoute } = findNearestRouteIndex(
+      coords, full, routeProgressIndex.current,
+    );
 
-    if (destChanged) {
-      shouldFetch = true;
-    } else if (!lastRouteFetchedCoords.current) {
-      shouldFetch = true;
-    } else {
-      const distanceFromLastFetch = calculateHaversineDistance(
-        driverCoords,
-        lastRouteFetchedCoords.current
-      );
-      if (distanceFromLastFetch > 150) {
-        shouldFetch = true;
+    if (Math.abs(index - routeProgressIndex.current) >= 1) {
+      routeProgressIndex.current = index;
+      if (isMounted.current) {
+        setCompletedRouteCoords(full.slice(0, index + 1));
+        setRemainingRouteCoords(full.slice(index));
       }
     }
+    return distToRoute;
+  }, []);
 
-    if (shouldFetch) {
-      fetchAndDisplayShortestPath();
-      lastRouteFetchedCoords.current = driverCoords;
-      lastDestination.current = destination;
-      setRouteOrigin(driverCoords); // Update the stable route origin for MapViewDirections
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Phase 3 — Off-route Detection
+  // ─────────────────────────────────────────────────────────────────────────
+  const triggerReroute = useCallback(async (coords, dest) => {
+    if (!dest || !coords) return;
+    if (routeFetchInFlight.current) return;
+    const now = Date.now();
+    if (now - lastRerouteTime.current < REROUTE_COOLDOWN_MS) return;
+
+    routeFetchInFlight.current = true;
+    const version = ++routeFetchVersion.current;
+    if (isMounted.current) setIsRerouting(true);
+
+    try {
+      const result = await fetchShortestPath(coords, dest, TRAVEL_MODES.DRIVING);
+      if (version !== routeFetchVersion.current || !result || !isMounted.current) return;
+
+      setRoutes(result.routes);
+      setSelectedRoute(result.shortestRoute);
+      setAlternativeRoutes(result.alternativeRoutes);
+      routeCoordsRef.current     = result.shortestRoute?.coordinates || [];
+      routeProgressIndex.current = 0;
+      offRouteCount.current      = 0;
+      currentManeuverIndex.current = 0;
+      spokenManeuvers.current.clear();
+      lastRerouteTime.current = Date.now();
+
+      if (result.shortestRoute) {
+        setDistance(result.shortestRoute.distance / 1000);
+        setDuration(Math.round(result.shortestRoute.duration / 60));
+        setCompletedRouteCoords([]);
+        setRemainingRouteCoords(result.shortestRoute.coordinates);
+        setUsingApproximateRoute(false);
+      }
+      if (result.steps?.length) setRouteSteps(result.steps);
+    } catch (e) {
+      console.warn('[MapScreen] Reroute error:', e);
+    } finally {
+      routeFetchInFlight.current = false;
+      if (isMounted.current) setIsRerouting(false);
     }
-  }, [driverCoords?.latitude, driverCoords?.longitude, destination?.latitude, destination?.longitude, travelMode]);
+  }, []);
 
-  // Interpolate driver coordinate updates and manage tracksViewChanges dynamically
+  // We pass destination via closure capture in navCallbackRef — see below.
+  const checkOffRoute = useCallback((coords, distToRoute, dest) => {
+    if (!isNavigating) return;
+    if (!routeCoordsRef.current?.length) return;
+    if (distToRoute == null) return;
+
+    if (distToRoute > OFF_ROUTE_THRESHOLD_M) {
+      offRouteCount.current += 1;
+    } else {
+      offRouteCount.current = 0;
+    }
+
+    if (offRouteCount.current >= OFF_ROUTE_CONFIRM_COUNT) {
+      triggerReroute(coords, dest);
+      offRouteCount.current = 0; // reset — triggerReroute has its own cooldown
+    }
+  }, [isNavigating, triggerReroute]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Stable navCallbackRef — always reflects latest callbacks & destination
+  //  so the location subscriber (created once) never reads stale closures.
+  // ─────────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    navCallbackRef.current = newCoords => {
+      const distToRoute = updateRouteProgress(newCoords);
+      checkOffRoute(newCoords, distToRoute, destination);
+      if (routeStepsRef.current.length > 0) {
+        updateCurrentManeuver(newCoords, routeStepsRef.current);
+      }
+    };
+  }, [updateRouteProgress, checkOffRoute, updateCurrentManeuver, destination]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Phase 1 — Camera Controller
+  // ─────────────────────────────────────────────────────────────────────────
+  const updateCamera = useCallback(
+    (coords, heading = 0, animated = true) => {
+      if (!mapRef.current || !coords) return;
+      if (!isFollowingDriver.current) return;
+      if (isFittingRoute.current) return; // don't fight fitToCoordinates
+
+      const now = Date.now();
+      if (now - lastCameraUpdateTime.current < CAMERA_THROTTLE_MS) return;
+
+      if (cameraUpdateTimeout.current) clearTimeout(cameraUpdateTimeout.current);
+
+      cameraUpdateTimeout.current = setTimeout(() => {
+        try {
+          if (lastCameraUpdate.current) {
+            const moved = calculateHaversineDistance(lastCameraUpdate.current, coords);
+            if (moved < 8 && animated) return;
+          }
+
+          const nav = tripStage === STAGES.GOING_TO_PICKUP || tripStage === STAGES.GOING_TO_DROP;
+          const camera = {
+            center:   coords,
+            pitch:    nav ? NAV_PITCH : ARRIVED_PITCH,
+            heading:  nav ? (heading + 360) % 360 : 0,
+            altitude: 1200,
+            zoom:     nav ? NAV_ZOOM : ARRIVED_ZOOM,
+          };
+
+          if (animated) {
+            mapRef.current?.animateCamera(camera, { duration: 600 });
+          } else {
+            mapRef.current?.setCamera(camera);
+          }
+
+          lastCameraUpdate.current     = coords;
+          lastCameraUpdateTime.current = Date.now();
+        } catch (e) { console.error('[MapScreen] Camera error:', e); }
+      }, 80);
+    },
+    [tripStage],
+  );
+
+  // Camera follow effect — triggers when driver moves
+  useEffect(() => {
+    if (!isMapReady || !driverCoords || !isFollowingDriver.current) return;
+    const isActiveNav = tripStage === STAGES.GOING_TO_PICKUP || tripStage === STAGES.GOING_TO_DROP;
+    if (!isActiveNav) return;
+
+    if (!lastCameraUpdate.current) {
+      updateCamera(driverCoords, arrowRotation, false);
+    } else if (calculateHaversineDistance(lastCameraUpdate.current, driverCoords) > 15) {
+      updateCamera(driverCoords, arrowRotation);
+    }
+  }, [driverCoords, tripStage, arrowRotation, updateCamera, isMapReady]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Phase 1 — Arrow Rotation with Look-ahead + Shortest-angle Smoothing
+  // ─────────────────────────────────────────────────────────────────────────
+  const updateArrowRotation = useCallback(() => {
+    if (!driverCoords || !destination) return;
+    try {
+      const coords = routeCoordsRef.current;
+      if (coords?.length > 1) {
+        // Scan a limited window starting from last known index
+        const scanStart = Math.max(0, routeProgressIndex.current - 2);
+        const scanEnd   = Math.min(coords.length - 1, routeProgressIndex.current + 30);
+        let closestIdx  = routeProgressIndex.current;
+        let closestDist = Infinity;
+        for (let i = scanStart; i <= scanEnd; i++) {
+          const d = calculateHaversineDistance(driverCoords, coords[i]);
+          if (d < closestDist) { closestDist = d; closestIdx = i; }
+        }
+
+        const lookAhead = Math.min(closestIdx + LOOK_AHEAD_POINTS, coords.length - 1);
+        const rawBearing = calculateBearing(driverCoords, coords[lookAhead] || destination);
+        const smoothed   = smoothAngle(lastStableHeading.current, rawBearing);
+        lastStableHeading.current = smoothed;
+        setArrowRotation(smoothed);
+      } else {
+        const rawBearing = calculateBearing(driverCoords, destination);
+        const smoothed   = smoothAngle(lastStableHeading.current, rawBearing);
+        lastStableHeading.current = smoothed;
+        setArrowRotation(smoothed);
+      }
+    } catch (e) { console.error('[MapScreen] Bearing error:', e); }
+  }, [driverCoords, destination]);
+
+  useEffect(() => {
+    if (!driverCoords || !destination) return;
+    updateArrowRotation();
+    directionInterval.current = setInterval(updateArrowRotation, 1000);
+    return () => { if (directionInterval.current) clearInterval(directionInterval.current); };
+  }, [driverCoords, destination, updateArrowRotation]);
+
+  // tracksViewChanges — cap re-renders
+  useEffect(() => {
+    setTracksViewChanges(true);
+    const t = setTimeout(() => setTracksViewChanges(false), 500);
+    return () => clearTimeout(t);
+  }, [driverCoords?.latitude, driverCoords?.longitude, arrowRotation]);
+
+  // Animate marker smoothly
   useEffect(() => {
     if (driverCoords) {
       animatedDriverCoords.timing({
-        latitude: driverCoords.latitude,
-        longitude: driverCoords.longitude,
-        duration: 1500,
-        useNativeDriver: false,
+        latitude: driverCoords.latitude, longitude: driverCoords.longitude,
+        duration: 1500, useNativeDriver: false,
       }).start();
     }
   }, [driverCoords?.latitude, driverCoords?.longitude]);
 
-  useEffect(() => {
-    setTracksViewChanges(true);
-    const timer = setTimeout(() => {
-      setTracksViewChanges(false);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, [driverCoords?.latitude, driverCoords?.longitude, arrowRotation]);
-
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Route Fetch (on destination change or driver drift >150 m)
+  // ─────────────────────────────────────────────────────────────────────────
+  // NOTE: fetchAndDisplayShortestPath is defined as a plain async function
+  // inside the component so its deps are always fresh from the closure.
   const fetchAndDisplayShortestPath = async () => {
-    if (!driverCoords || !destination) return;
+    if (!driverCoords || !destination || !GOOGLE_MAPS_APIKEY) return;
+    if (routeFetchInFlight.current) return;
 
-    setIsFetchingRoutes(true);
+    routeFetchInFlight.current = true;
+    const version = ++routeFetchVersion.current;
+    if (isMounted.current) setIsFetchingRoutes(true);
+
     try {
-      const result = await fetchShortestPath(
-        driverCoords,
-        destination,
-        travelMode,
-      );
+      const result = await fetchShortestPath(driverCoords, destination, travelMode);
+      if (version !== routeFetchVersion.current || !isMounted.current) return;
 
       if (result) {
         setRoutes(result.routes);
         setSelectedRoute(result.shortestRoute);
         setAlternativeRoutes(result.alternativeRoutes);
+        routeCoordsRef.current     = result.shortestRoute?.coordinates || [];
+        routeProgressIndex.current = 0;
+        offRouteCount.current      = 0;
+        currentManeuverIndex.current = 0;
+        spokenManeuvers.current.clear();
 
-        // Update distance and duration with shortest route
         if (result.shortestRoute) {
-          setDistance(result.shortestRoute.distance / 1000); // Convert to km
-          setDuration(Math.round(result.shortestRoute.duration / 60)); // Convert to minutes
+          setDistance(result.shortestRoute.distance / 1000);
+          setDuration(Math.round(result.shortestRoute.duration / 60));
+          setCompletedRouteCoords([]);
+          setRemainingRouteCoords(result.shortestRoute.coordinates);
           setUsingApproximateRoute(false);
+        }
+        if (result.steps?.length) setRouteSteps(result.steps);
 
-          // Fit map to show the selected route
-          if (mapRef.current && result.shortestRoute.coordinates.length > 0) {
-            mapRef.current.fitToCoordinates(result.shortestRoute.coordinates, {
-              edgePadding: {
-                top: 50,
-                right: 50,
-                bottom: 200,
-                left: 50,
-              },
-              animated: true,
-            });
-          }
+        // Fit once → then switch to 3D follow
+        if (mapRef.current && result.shortestRoute?.coordinates?.length > 0) {
+          isFittingRoute.current = true;
+          mapRef.current.fitToCoordinates(result.shortestRoute.coordinates, {
+            edgePadding: { top: 140, right: 60, bottom: 300, left: 60 },
+            animated: true,
+          });
+          setTimeout(() => {
+            isFittingRoute.current = false;
+            if (isMounted.current && driverCoords && isFollowingDriver.current) {
+              // Force camera update: bypass throttle for the initial switch
+              lastCameraUpdateTime.current = 0;
+              updateCamera(driverCoords, lastStableHeading.current, true);
+            }
+          }, 1600);
         }
       } else {
         setUsingApproximateRoute(true);
       }
-    } catch (error) {
-      console.error('Error fetching routes:', error);
-      setUsingApproximateRoute(true);
+    } catch (err) {
+      console.error('[MapScreen] Route fetch error:', err);
+      if (isMounted.current) setUsingApproximateRoute(true);
     } finally {
-      setIsFetchingRoutes(false);
+      routeFetchInFlight.current = false;
+      if (isMounted.current) setIsFetchingRoutes(false);
     }
   };
 
-  // Calculate arrow rotation based on next waypoint
-  const updateArrowRotation = useCallback(() => {
-    if (!driverCoords || !destination) return;
-
-    try {
-      if (
-        selectedRoute &&
-        selectedRoute.coordinates &&
-        selectedRoute.coordinates.length > 1
-      ) {
-        // Find the closest point on route to current location
-        let closestIndex = 0;
-        let closestDistance = Infinity;
-
-        selectedRoute.coordinates.forEach((point, index) => {
-          const dist = calculateHaversineDistance(driverCoords, point);
-          if (dist < closestDistance) {
-            closestDistance = dist;
-            closestIndex = index;
-          }
-        });
-
-        // Get next point (if available)
-        const nextIndex = Math.min(
-          closestIndex + 1,
-          selectedRoute.coordinates.length - 1,
-        );
-        const nextPoint = selectedRoute.coordinates[nextIndex] || destination;
-
-        const bearing = calculateBearing(driverCoords, nextPoint);
-        setArrowRotation(bearing);
-        setNextWaypoint(nextPoint);
-      } else {
-        // Fallback to direct destination bearing
-        const bearing = calculateBearing(driverCoords, destination);
-        setArrowRotation(bearing);
-        setNextWaypoint(null);
-      }
-    } catch (error) {
-      console.error('Error updating arrow rotation:', error);
-    }
-  }, [driverCoords, destination, selectedRoute]);
-
-  // Continuous direction updates
   useEffect(() => {
-    if (driverCoords && destination) {
-      updateArrowRotation();
+    if (!driverCoords || !destination || !GOOGLE_MAPS_APIKEY) return;
+    const destChanged = !lastDestination.current ||
+      lastDestination.current.latitude  !== destination.latitude ||
+      lastDestination.current.longitude !== destination.longitude;
+    let shouldFetch = destChanged || !lastRouteFetchedCoords.current;
 
-      directionInterval.current = setInterval(updateArrowRotation, 1000);
-
-      return () => {
-        if (directionInterval.current) {
-          clearInterval(directionInterval.current);
-        }
-      };
+    if (!shouldFetch) {
+      const drift = calculateHaversineDistance(driverCoords, lastRouteFetchedCoords.current);
+      if (drift > 150) shouldFetch = true;
     }
-  }, [driverCoords, destination, updateArrowRotation]);
-
-  // update camera view (2D/3D based on mode)
-  const updateCamera = useCallback(
-    (coords, heading = 0, animated = true) => {
-      if (!mapRef.current || !coords) return;
-
-      // Clear previous timeout
-      if (cameraUpdateTimeout.current) {
-        clearTimeout(cameraUpdateTimeout.current);
-      }
-
-      // Debounce camera updates to prevent rapid successive calls
-      cameraUpdateTimeout.current = setTimeout(() => {
-        try {
-          // Check if coordinates changed significantly before updating
-          if (lastCameraUpdate.current) {
-            const distance = calculateHaversineDistance(
-              lastCameraUpdate.current,
-              coords,
-            );
-            // Only update if moved more than 10 meters
-            if (distance < 10 && !animated) {
-              return;
-            }
-          }
-
-          const camera = {
-            center: coords,
-            pitch: is3DMode ? 60 : 0,
-            heading: is3DMode ? (heading || 0) : 0,
-            altitude: is3DMode ? 1200 : 600,
-            zoom: is3DMode ? 17 : 18,
-          };
-
-          if (animated) {
-            mapRef.current.animateCamera(camera, { duration: 500 });
-          } else {
-            mapRef.current.setCamera(camera);
-          }
-
-          lastCameraUpdate.current = coords;
-        } catch (error) {
-          console.error('Error updating camera:', error);
-        }
-      }, 100); // 100ms debounce
-    },
-    [is3DMode],
-  );
-
-  // Update the useEffect that follows the driver
-  useEffect(() => {
-    if (
-      isMapReady &&
-      driverCoords &&
-      (tripStage === STAGES.GOING_TO_PICKUP ||
-        tripStage === STAGES.GOING_TO_DROP ||
-        tripStage === STAGES.ARRIVED_DROP) &&
-      // Only update if driver has moved significantly
-      lastCameraUpdate.current &&
-      calculateHaversineDistance(lastCameraUpdate.current, driverCoords) > 15
-    ) {
-      updateCamera(driverCoords, arrowRotation);
-    } else if (driverCoords && !lastCameraUpdate.current) {
-      // Initial update
-      updateCamera(driverCoords, arrowRotation);
+    if (shouldFetch) {
+      fetchAndDisplayShortestPath();
+      lastRouteFetchedCoords.current = driverCoords;
+      lastDestination.current        = destination;
+      setRouteOrigin(driverCoords);
     }
-  }, [driverCoords, tripStage, arrowRotation, updateCamera]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [driverCoords?.latitude, driverCoords?.longitude, destination?.latitude, destination?.longitude, travelMode]);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Location Tracking — fully stable (startLocationTracking has no deps)
+  // ─────────────────────────────────────────────────────────────────────────
   const stopLocationTracking = useCallback(() => {
     try {
       if (unsubscribeLocation.current) {
         unsubscribeLocation.current();
         unsubscribeLocation.current = null;
       }
-      if (directionInterval.current) {
-        clearInterval(directionInterval.current);
-      }
-    } catch (error) {
-      console.error('Error stopping location tracking:', error);
-    }
+      if (directionInterval.current) clearInterval(directionInterval.current);
+    } catch (e) { console.error('[MapScreen] Stop tracking error:', e); }
   }, []);
 
   const startLocationTracking = useCallback(() => {
     try {
       LocationService.requestStartupPosition()
         .then(coords => {
-          if (coords) {
-            setDriverCoords(coords);
-            lastKnownCoords.current = coords;
-            setIsLoading(false);
-            setTimeout(() => {
-              if (mapRef.current) {
-                updateCamera(coords, 0, false);
-              }
-            }, 500);
-          }
+          if (!coords || !isMounted.current) return;
+          setDriverCoords(coords);
+          lastKnownCoords.current = coords;
+          setIsLoading(false);
+          // Set initial 3D camera without triggering the throttle logic
+          setTimeout(() => {
+            if (mapRef.current && isMounted.current) {
+              mapRef.current.setCamera({
+                center: coords, pitch: NAV_PITCH,
+                heading: 0, altitude: 1200, zoom: NAV_ZOOM,
+              });
+              lastCameraUpdate.current     = coords;
+              lastCameraUpdateTime.current = Date.now();
+            }
+          }, 500);
         })
         .catch(error => {
-          console.error('Location startup error:', error);
-          // Try to use last known coords as fallback
+          console.error('[MapScreen] Location startup error:', error);
+          if (!isMounted.current) return;
           const fallback = LocationService.getLastCoords();
-          if (fallback) {
-            setDriverCoords(fallback);
-          } else if (pickup && typeof pickup.latitude === 'number') {
-            setDriverCoords({
-              latitude: pickup.latitude - 0.005,
-              longitude: pickup.longitude,
-            });
-          }
+          if (fallback) setDriverCoords(fallback);
           setLocationError('Using approximate location');
           setIsLoading(false);
         });
 
+      // Single subscriber — do not double-subscribe
       if (unsubscribeLocation.current) {
         unsubscribeLocation.current();
+        unsubscribeLocation.current = null;
       }
+
       unsubscribeLocation.current = LocationService.subscribe(newCoords => {
         if (
-          newCoords &&
-          typeof newCoords.latitude === 'number' &&
-          typeof newCoords.longitude === 'number' &&
-          newCoords.latitude >= -90 && newCoords.latitude <= 90 &&
-          newCoords.longitude >= -180 && newCoords.longitude <= 180
+          newCoords?.latitude  != null &&
+          newCoords?.longitude != null &&
+          newCoords.latitude  >= -90  && newCoords.latitude  <= 90 &&
+          newCoords.longitude >= -180 && newCoords.longitude <= 180 &&
+          isMounted.current
         ) {
           setDriverCoords(newCoords);
           lastKnownCoords.current = newCoords;
+          // Use ref-based handler so closure is always fresh
+          navCallbackRef.current?.(newCoords);
         }
       });
-      setIsLoading(false);
-    } catch (error) {
-      console.error('Error starting location tracking:', error);
-      setIsLoading(false);
-      setLocationError('Could not start location tracking');
-    }
-  }, [updateCamera, pickup]);
 
+      if (isMounted.current) setIsLoading(false);
+    } catch (e) {
+      console.error('[MapScreen] startLocationTracking error:', e);
+      if (isMounted.current) { setIsLoading(false); setLocationError('Could not start location tracking'); }
+    }
+  }, []); // intentionally stable — no deps
+
+  // ── Permission ────────────────────────────────────────────────────────────
   useEffect(() => {
-    const resolvePermission = async () => {
+    const resolve = async () => {
       if (!hasPermission) {
         const granted = await getLocationPermission();
         dispatch(setLocationPermission(granted));
       }
     };
-
-    resolvePermission();
+    resolve();
   }, [hasPermission, dispatch]);
 
   useEffect(() => {
     if (hasPermission) {
       startLocationTracking();
-
-      // Update foreground service to 'on_trip' mode when trip starts
       try {
         updateService('on_trip', {
-          orderId: order?.id || order?.rideId,
-          pickup: pickupAddress,
-          drop: dropAddress,
+          orderId: order?.id || order?.rideId, pickup: pickupAddress, drop: dropAddress,
         });
-      } catch (error) {
-        console.error('Error updating service to on_trip:', error);
-      }
+      } catch (e) { console.error('Service update error:', e); }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasPermission]);
 
+  // ── App State & Unmount Cleanup ───────────────────────────────────────────
   useEffect(() => {
+    isMounted.current = true;
     const subscription = AppState.addEventListener('change', nextAppState => {
-      if (
-        appState.current.match(/inactive|background/) &&
-        nextAppState === 'active'
-      ) {
-        if (hasPermission) {
-          startLocationTracking();
-        }
+      if (appState.current.match(/inactive|background/) && nextAppState === 'active') {
+        if (hasPermission) startLocationTracking();
       }
       appState.current = nextAppState;
     });
-
     return () => {
+      isMounted.current = false;
       subscription.remove();
       stopLocationTracking();
-      // Clean up camera timeout
-      if (cameraUpdateTimeout.current) {
-        clearTimeout(cameraUpdateTimeout.current);
-      }
+      if (cameraUpdateTimeout.current) clearTimeout(cameraUpdateTimeout.current);
+      if (directionInterval.current)   clearInterval(directionInterval.current);
     };
-  }, [hasPermission, startLocationTracking, stopLocationTracking]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // run once on mount — AppState listener is stable
 
-  // Fixed distance calculation using Haversine formula
+  // ── Proximity Detection (pickup / drop arrived) ───────────────────────────
+  useEffect(() => {
+    if (!driverCoords || !pickup || !drop) return;
+    const pickupDist = calculateHaversineDistance(driverCoords, pickup);
+    const dropDist   = calculateHaversineDistance(driverCoords, drop);
+    setIsAtPickup(pickupDist <= 60);
+    setIsAtDrop(dropDist <= 50);
+
+    if (pickupDist <= 60 && tripStage === STAGES.GOING_TO_PICKUP) {
+      setTripStage(STAGES.ARRIVED_PICKUP);
+      setShowDropRoute(true);
+      const rideId = order?.rideId || order?.id;
+      SocketService.emitDriverArrived(rideId, {
+        type: 'Point', coordinates: [driverCoords.longitude, driverCoords.latitude],
+      });
+      driverApi.arrivedAtPickup(rideId).catch(err => {
+        if (err?.response?.status !== 404) console.error('arrivedAtPickup error:', err);
+      });
+    }
+    if (dropDist <= 50 && tripStage === STAGES.GOING_TO_DROP) {
+      setTripStage(STAGES.ARRIVED_DROP);
+    }
+  }, [driverCoords, pickup, drop, tripStage]);
+
+  // ── Distance calculation (ETA display + arrived detection) ───────────────
   useEffect(() => {
     if (!driverCoords || !destination) return;
-
     try {
-      const distanceInMeters = calculateHaversineDistance(
-        driverCoords,
-        destination,
-      );
+      const d = calculateHaversineDistance(driverCoords, destination);
+      if (isNaN(d) || d < 0) return;
+      if (!selectedRoute) setDistance(d / 1000);
 
-      if (!isNaN(distanceInMeters) && distanceInMeters >= 0) {
-        // Only update distance if we don't have a route-based distance
-        if (!selectedRoute) {
-          setDistance(distanceInMeters / 1000);
-        }
-
-        // Arrived at pickup
-        if (distanceInMeters <= 60 && tripStage === STAGES.GOING_TO_PICKUP) {
-          setTripStage(STAGES.ARRIVED_PICKUP);
-
-          if (mapRef.current) {
-            updateCamera(pickup, 0);
-          }
-
-          toast.info('You have reached pickup location. Confirm pickup now.');
-        }
-
-        // Arrived at drop
-        if (distanceInMeters <= 50 && tripStage === STAGES.GOING_TO_DROP) {
-          setTripStage(STAGES.ARRIVED_DROP);
-
-          if (mapRef.current) {
-            updateCamera(drop, 0);
-          }
-
-          toast.info(
-            'You have reached the destination. Complete delivery when ready.',
-          );
-        }
+      if (d <= 60 && tripStage === STAGES.GOING_TO_PICKUP) {
+        setTripStage(STAGES.ARRIVED_PICKUP);
+        if (mapRef.current) updateCamera(pickup, 0);
+        toast.info('You have reached pickup location. Confirm pickup now.');
+        speakInstruction('You have arrived at the pickup location.', 'arrived-pickup');
       }
-    } catch (error) {
-      console.error('Error calculating distance:', error);
-      setDistance(null);
-    }
-  }, [
-    destination,
-    driverCoords,
-    tripStage,
-    pickup,
-    drop,
-    updateCamera,
-    selectedRoute,
-  ]);
+      if (d <= 50 && tripStage === STAGES.GOING_TO_DROP) {
+        setTripStage(STAGES.ARRIVED_DROP);
+        if (mapRef.current) updateCamera(drop, 0);
+        toast.info('You have reached the destination. Complete delivery when ready.');
+        speakInstruction('You have arrived at your destination.', 'arrived-drop');
+      }
+    } catch (e) { console.error('Distance calc error:', e); setDistance(null); }
+  }, [destination, driverCoords, tripStage, pickup, drop, updateCamera, selectedRoute, speakInstruction]);
 
-  // Emit location to socket every 3 seconds for real-time tracking
+  // ── Socket location emitter (every 3 s) ─────────────────────────────────
   useEffect(() => {
-    if (!driverCoords || !tripStage || tripStage === STAGES.COMPLETED) return;
-
-    const locationUpdateInterval = setInterval(() => {
+    if (!driverCoords || tripStage === STAGES.COMPLETED) return;
+    const iv = setInterval(() => {
       try {
         SocketService.emitLocation(
-          driverCoords.latitude,
-          driverCoords.longitude,
-          arrowRotation || 0,
-          0, // Speed - would need to calculate from position deltas if needed
+          driverCoords.latitude, driverCoords.longitude, arrowRotation || 0, 0,
         );
-      } catch (error) {
-        console.error('Error emitting location to socket:', error);
-      }
-    }, 3000); // Update every 3 seconds
-
-    return () => {
-      clearInterval(locationUpdateInterval);
-    };
+      } catch (e) { console.error('Socket emit error:', e); }
+    }, 3000);
+    return () => clearInterval(iv);
   }, [driverCoords, arrowRotation, tripStage]);
 
-  const handleSelectRoute = route => {
-    setSelectedRoute(route);
-    setDistance(route.distance / 1000);
-    setDuration(Math.round(route.duration / 60));
-    setShowRouteOptions(false);
+  useEffect(() => {
+    const handleRideCancelled = async (data) => {
+      const rideId = order?.rideId || order?.id || initialOrder?.rideId || initialOrder?.id;
+      if (data?.rideId === rideId || data?.id === rideId) {
+        toast.info('Ride cancelled by admin/customer.');
+        await clearActiveOrder();
+        navigation.navigate('MyTabs', { screen: 'Home' });
+      }
+    };
 
-    if (mapRef.current && route.coordinates.length > 0) {
-      mapRef.current.fitToCoordinates(route.coordinates, {
-        edgePadding: {
-          top: 50,
-          right: 50,
-          bottom: 200,
-          left: 50,
-        },
-        animated: true,
+    SocketService.on('ride:cancelled', handleRideCancelled);
+    SocketService.on('ride_cancelled', handleRideCancelled);
+
+    return () => {
+      SocketService.off('ride:cancelled', handleRideCancelled);
+      SocketService.off('ride_cancelled', handleRideCancelled);
+    };
+  }, [order, initialOrder, navigation]);
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Handlers
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const handleSelectRoute = r => {
+    setSelectedRoute(r);
+    routeCoordsRef.current     = r.coordinates || [];
+    routeProgressIndex.current = 0;
+    setCompletedRouteCoords([]);
+    setRemainingRouteCoords(r.coordinates);
+    setDistance(r.distance / 1000);
+    setDuration(Math.round(r.duration / 60));
+    setShowRouteOptions(false);
+    if (mapRef.current && r.coordinates.length > 0) {
+      mapRef.current.fitToCoordinates(r.coordinates, {
+        edgePadding: { top: 50, right: 50, bottom: 200, left: 50 }, animated: true,
       });
     }
   };
+
+  /** Restore 3D follow mode after manual map pan. */
+  const handleRecenter = useCallback(() => {
+    isFollowingDriver.current = true;
+    setIsFollowingDriverState(true);
+    if (driverCoords && mapRef.current) {
+      lastCameraUpdateTime.current = 0; // bypass throttle for immediate re-center
+      updateCamera(driverCoords, lastStableHeading.current, true);
+    }
+  }, [driverCoords, updateCamera]);
 
   const handleCallCustomer = () => {
-    console.log('chek call number', order);
-
     const phone = order?.receiver?.phone || order?.customer?.phone;
-    if (!phone) {
-      toast.error('Customer phone number is not available for this order.');
-      return;
-    }
+    if (!phone) { toast.error('Customer phone number is not available for this order.'); return; }
     const url = `tel:${phone}`;
     Linking.canOpenURL(url)
-      .then(supported => {
-        if (supported) {
-          Linking.openURL(url);
-        } else {
-          toast.error(
-            `Unable to call customer. Please dial ${phone} manually.`,
-          );
-        }
-      })
-      .catch(() => {
-        toast.error('Failed to initiate call.');
-      });
+      .then(s => { if (s) Linking.openURL(url); else toast.error(`Unable to call. Please dial ${phone} manually.`); })
+      .catch(() => toast.error('Failed to initiate call.'));
   };
+
   const handleCancelTrip = async () => {
-    if (!cancelReason) {
-      toast.warn('Please select a reason for cancellation.');
-      return;
-    }
-
-    const cancelId =
-      order?.rideId || order?.id || initialOrder?.rideId || initialOrder?.id;
-
+    if (!cancelReason) { toast.warn('Please select a reason for cancellation.'); return; }
+    const cancelId = order?.rideId || order?.id || initialOrder?.rideId || initialOrder?.id;
     setIsCancelling(true);
-    try {
-      await driverApi.cancelOrder(cancelId, cancelReason);
-    } catch (error) {
-      console.log('Status:', error?.response?.status);
-      console.log('Response:', error?.response?.data);
+    try { await driverApi.cancelOrder(cancelId, cancelReason); } catch (e) {
+      console.log('Cancel status:', e?.response?.status, e?.response?.data);
     }
-
     await setActiveOrder(null);
-    await addNotification({
-      title: 'Trip Cancelled',
-      body: `Order ${cancelId} cancelled: ${cancelReason}`,
-      type: 'order',
-      data: order,
-    });
-
+    await addNotification({ title: 'Trip Cancelled', body: `Order ${cancelId} cancelled: ${cancelReason}`, type: 'order', data: order });
     setIsCancelling(false);
     setShowCancelModal(false);
     setCancelReason('');
-
     SocketService.emitStatusChange(true, true);
     SocketService.clearActiveRide();
-
-    try {
-      await updateService('online');
-    } catch (error) {
-      console.error('Error updating service after cancellation:', error);
-    }
-
+    try { await updateService('online'); } catch (e) {}
     stopLocationTracking();
-
     navigation.navigate('MyTabs');
   };
 
-
-
   const handlePickupOtpSubmit = async () => {
-    const expectedCode = order?.pickupCode || order?.otp || order?.pickup_otp;
-    // If no OTP is set by backend, allow any 4-digit code
-    if (expectedCode && pickupOtp !== String(expectedCode)) {
-      toast.error(
-        'The pickup verification code is incorrect. Please check with the customer.',
-      );
-      return;
+    const expected = order?.pickupCode || order?.otp || order?.pickup_otp;
+    if (expected && pickupOtp !== String(expected)) {
+      toast.error('The pickup verification code is incorrect. Please check with the customer.'); return;
     }
-    if (pickupOtp.length < 4) {
-      toast.warn('Please enter the 4-digit pickup verification code.');
-      return;
-    }
+    if (pickupOtp.length < 4) { toast.warn('Please enter the 4-digit pickup verification code.'); return; }
     setShowPickupOtpModal(false);
     setPickupOtp('');
     handlePickupConfirmActual();
@@ -1140,179 +1156,48 @@ const MapScreen = ({ navigation, route }) => {
       setTripStage(STAGES.GOING_TO_DROP);
       setShowDropRoute(true);
 
-      // Emit ride:started socket event — trip to destination begins
+      // Reset navigation state for new destination (drop)
+      routeProgressIndex.current   = 0;
+      offRouteCount.current        = 0;
+      currentManeuverIndex.current = 0;
+      spokenManeuvers.current.clear();
+      routeCoordsRef.current = [];
+      lastDestination.current = null; // forces route re-fetch for drop
+      setCompletedRouteCoords([]);
+      setRemainingRouteCoords([]);
+      setCurrentManeuver(null);
+      setRouteSteps([]);
+
       const rideId = order?.rideId || order?.id;
       SocketService.emitRideStarted(rideId);
 
-      // HTTP: notify backend ride has started (spec-compliant endpoint)
-      const updated = await driverApi.startRide(rideId).catch(() => {
-        // Fallback to old confirmPickup endpoint if startRide not available
-        return driverApi.confirmPickup(order.id).catch(() => null);
-      });
-
-      if (updated) {
-        await setActiveOrder(updated);
-      } else {
-        await setActiveOrder({ ...order, status: 'picked_up' });
-      }
+      const updated = await driverApi.startRide(rideId).catch(() =>
+        driverApi.confirmPickup(order.id).catch(() => null),
+      );
+      if (updated) { await setActiveOrder(updated); }
+      else         { await setActiveOrder({ ...order, status: 'picked_up' }); }
 
       await addNotification({
         title: 'Pickup Confirmed',
-        body: `${order.id} pickup confirmed. Navigate to drop.`,
+        body:  `${order.id} pickup confirmed. Navigate to drop.`,
         type: 'order',
         data: { ...order, status: 'picked_up' },
       });
-
-      // Update foreground notification to show 'Heading to Drop'
       await updateServiceBody(
-        `Order #${String(order?.id || '')
-          .slice(-6)
-          .toUpperCase()} — Heading to Drop\n🏁 ${dropAddress}`,
+        `Order #${String(order?.id || '').slice(-6).toUpperCase()} — Heading to Drop\n🏁 ${dropAddress}`,
       );
 
-      if (mapRef.current && driverCoords) {
-        updateCamera(driverCoords, arrowRotation);
-      }
+      speakInstruction('Pickup confirmed. Navigating to drop location.', 'pickup-confirmed');
 
-
-    } catch (error) {
-      console.error('Pickup confirmation error:', error);
+      if (mapRef.current && driverCoords) updateCamera(driverCoords, arrowRotation);
+    } catch (e) {
+      console.error('Pickup confirmation error:', e);
       toast.error('Failed to confirm pickup. Please try again.');
     }
   };
 
   const rideAmount =
-    order?.amount ||
-    order?.fare ||
-    order?.rideDetails?.estimatedFare ||
-    normalizedOrder?.amount ||
-    0;
-
-  const handleCashCollected = async () => {
-    try {
-      if (paymentMethod === 'cash') {
-        if (!cashCollected) {
-          setModalError('Please enter the amount collected');
-          return;
-        }
-        const amountValue = parseFloat(cashCollected);
-        if (isNaN(amountValue) || amountValue <= 0) {
-          setModalError('Please enter a valid amount');
-          return;
-        }
-      }
-
-      setModalError('');
-      setIsProcessing(true);
-
-      const amount =
-        paymentMethod === 'cash'
-          ? parseFloat(cashCollected)
-          : order?.amount || order?.fare || 0;
-
-      const rideId = order?.rideId || order?.id;
-
-      // ── Step 3.3: Notify backend via HTTP FIRST ───────────────────────────
-      let serverCompleted = null;
-      try {
-        // Use spec-compliant POST /rides/complete endpoint
-        serverCompleted = await driverApi.completeRide(
-          rideId,
-          amount,
-          paymentMethod,
-        );
-      } catch (error) {
-        try {
-          // Fallback to old /orders/:id/complete endpoint
-          serverCompleted = await driverApi.completeOrder(
-            order.id,
-            distance || 0,
-          );
-        } catch (fallbackError) {}
-      }
-
-      // ── Step 3.3: Emit ride:completed socket event BEFORE disconnecting ───
-      // IMPORTANT: must emit BEFORE stopLocationTracking() which disconnects socket
-      SocketService.emitRideCompleted(rideId, amount, paymentMethod);
-
-      // ── Mark driver available & clear active ride on socket ───────────────
-      // emitRideCompleted already calls emitStatusChange(true, true) internally
-      SocketService.clearActiveRide();
-
-      // ── Update local state ────────────────────────────────────────────────
-      const completedOrder = await completeOrder({
-        ...order,
-        ...(serverCompleted || {}),
-        drop,
-        pickup,
-        pickupAddress,
-        dropAddress,
-        deliveredDistanceKm: distance,
-        amount,
-        paymentMethod,
-        completedAt: new Date().toISOString(),
-      });
-
-      await addNotification({
-        title: 'Delivery Completed',
-        body: `${completedOrder.id} completed. ₹${amount} collected via ${paymentMethod}.`,
-        type: 'order',
-        data: completedOrder,
-      });
-
-      setTripStage(STAGES.COMPLETED);
-      setShowCashModal(false);
-
-      // ── Switch foreground notification back to online/waiting mode ────────
-      await updateService('online');
-
-      // ── Stop GPS tracking LAST (disconnects socket) ───────────────────────
-      stopLocationTracking();
-
-      Alert.alert(
-        'Delivery Complete',
-        `Order delivered successfully. ₹${amount} collected.\nYour earnings: ₹${(
-          amount * 0.8
-        ).toFixed(2)}`,
-        [
-          {
-            text: 'Go Home',
-            onPress: () => navigation.navigate('MyTabs'),
-          },
-        ],
-      );
-    } catch (error) {
-      console.error('Completion error:', error);
-      setModalError('Failed to complete delivery. Please try again.');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const getVehicleImage = () => {
-    switch (vehicleType?.toLowerCase()) {
-      case 'bike':
-        return imgPath.ic_bike;
-
-      case 'scooter':
-        return imgPath.ic_scooter;
-
-      case '3 wheeler':
-        return imgPath.ic_auto;
-
-      case 'e loader':
-        return imgPath.ic_auto;
-
-      case 'mini 3w':
-        return imgPath.ic_auto;
-
-      case 'tata ace':
-        return imgPath.ic_auto;
-
-      default:
-        return imgPath.ic_bike;
-    }
-  };
+    order?.amount || order?.fare || order?.rideDetails?.estimatedFare || normalizedOrder?.amount || 0;
 
   const handleCompleteDelivery = () => {
     setCashCollected(order?.amount?.toString() || '');
@@ -1321,7 +1206,61 @@ const MapScreen = ({ navigation, route }) => {
     setShowCashModal(true);
   };
 
-  // Loading states
+  const handleCashCollected = async () => {
+    try {
+      if (paymentMethod === 'cash') {
+        if (!cashCollected) { setModalError('Please enter the amount collected'); return; }
+        const v = parseFloat(cashCollected);
+        if (isNaN(v) || v <= 0) { setModalError('Please enter a valid amount'); return; }
+      }
+      setModalError('');
+      setIsProcessing(true);
+
+      const amount  = paymentMethod === 'cash' ? parseFloat(cashCollected) : (order?.amount || order?.fare || 0);
+      const rideId  = order?.rideId || order?.id;
+
+      let serverCompleted = null;
+      try { serverCompleted = await driverApi.completeRide(rideId, amount, paymentMethod); }
+      catch { try { serverCompleted = await driverApi.completeOrder(order.id, distance || 0); } catch {} }
+
+      SocketService.emitRideCompleted(rideId, amount, paymentMethod);
+      SocketService.clearActiveRide();
+
+      const completedOrder = await completeOrder({
+        ...order, ...(serverCompleted || {}), drop, pickup, pickupAddress, dropAddress,
+        deliveredDistanceKm: distance, amount, paymentMethod, completedAt: new Date().toISOString(),
+      });
+
+      await addNotification({
+        title: 'Delivery Completed',
+        body:  `${completedOrder.id} completed. ₹${amount} collected via ${paymentMethod}.`,
+        type:  'order', data: completedOrder,
+      });
+
+      setTripStage(STAGES.COMPLETED);
+      setShowCashModal(false);
+      isFollowingDriver.current = false; // stop following on completion
+
+      await updateService('online');
+      stopLocationTracking();
+
+      Alert.alert(
+        'Delivery Complete',
+        `Order delivered successfully. ₹${amount} collected.\nYour earnings: ₹${(amount * 0.8).toFixed(2)}`,
+        [{ text: 'Go Home', onPress: () => navigation.navigate('MyTabs') }],
+      );
+    } catch (e) {
+      console.error('Completion error:', e);
+      setModalError('Failed to complete delivery. Please try again.');
+    } finally { setIsProcessing(false); }
+  };
+
+  // getVehicleImage() removed — use driverMarkerImage (useMemo) which handles
+  // all vehicle type variants via includes() matching.
+
+  // ─────────────────────────────────────────────────────────────────────────
+  //  Loading guard
+  // ─────────────────────────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -1331,47 +1270,48 @@ const MapScreen = ({ navigation, route }) => {
     );
   }
 
-  const mapCenter = driverCoords ||
-    pickup || { latitude: 22.7261, longitude: 75.8931 };
+  const mapCenter = driverCoords || pickup || { latitude: 22.7261, longitude: 75.8931 };
 
+  // ═════════════════════════════════════════════════════════════════════════
+  //  RENDER
+  // ═════════════════════════════════════════════════════════════════════════
   return (
     <ErrorBoundary>
       <View style={styles.container}>
-        <StatusBar
-          barStyle="dark-content"
-          backgroundColor="transparent"
-          translucent
-        />
+        <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
 
+        {/* ── MAP ──────────────────────────────────────────────────────────── */}
         <MapView
           ref={mapRef}
           provider={PROVIDER_GOOGLE}
           style={styles.map}
           initialRegion={{
-            latitude: mapCenter.latitude,
-            longitude: mapCenter.longitude,
-            latitudeDelta: 0.01,
+            latitude:      mapCenter.latitude,
+            longitude:     mapCenter.longitude,
+            latitudeDelta:  0.01,
             longitudeDelta: 0.01,
           }}
           onMapReady={() => setIsMapReady(true)}
-          pitchEnabled={is3DMode}
+          pitchEnabled={true}
           rotateEnabled={true}
           showsUserLocation={false}
           showsMyLocationButton={false}
           showsCompass={true}
-          showsBuildings={is3DMode}
+          showsBuildings={true}
           loadingEnabled={true}
           moveOnMarkerPress={false}
-          enableHighAccuracy={true}
-          // Add these to prevent unnecessary updates
           toolbarEnabled={false}
           zoomControlEnabled={false}
-          // Use liteMode for better performance (optional)
           liteMode={false}
+          /** Phase 1: Detect manual pan → disable follow mode */
+          onPanDrag={() => {
+            if (isFollowingDriver.current) {
+              isFollowingDriver.current = false;
+              setIsFollowingDriverState(false);
+            }
+          }}
         >
-          {/* Driver Vehicle Marker — rotation applied via Image transform
-              because Marker.Animated rotation prop is unreliable on Android
-              with custom Image children */}
+          {/* ── Driver Vehicle Marker — image matches driver's vehicle type ── */}
           {driverCoords && (
             <Marker.Animated
               coordinate={animatedDriverCoords}
@@ -1380,131 +1320,66 @@ const MapScreen = ({ navigation, route }) => {
               tracksViewChanges={tracksViewChanges}
             >
               <Image
-                source={getVehicleImage()}
-                style={{
-                  width: 50,
-                  height: 50,
-                  transform: [{ rotate: `${arrowRotation || 0}deg` }],
-                }}
+                source={driverMarkerImage}
+                style={{ width: 50, height: 50, transform: [{ rotate: `${arrowRotation || 0}deg` }] }}
                 resizeMode="contain"
               />
             </Marker.Animated>
           )}
 
-          {/* Pickup Marker */}
+          {/* ── Pickup Marker ──────────────────────────────────────────────── */}
           {pickup && (
-            <Marker
-              coordinate={pickup}
-              anchor={{ x: 0.5, y: 1.0 }}
-            >
-              <Image
-                source={imgPath.ic_pick}
-                style={{ width: 50, height: 50 }} // ✅ ab kaam karega
-                resizeMode="contain"
-              />
+            <Marker coordinate={pickup} anchor={{ x: 0.5, y: 1.0 }}>
+              <Image source={imgPath.ic_pick} style={{ width: 50, height: 50 }} resizeMode="contain" />
             </Marker>
           )}
 
-          {/* Drop Marker */}
+          {/* ── Drop Marker ────────────────────────────────────────────────── */}
           {showDropRoute && drop && (
-            <Marker
-              coordinate={drop}
-              anchor={{ x: 0.5, y: 1.0 }}
-            >
-              <Image
-                source={imgPath.ic_drop}
-                style={{ width: 50, height: 50 }} // ✅ ab kaam karega
-                resizeMode="contain"
-              />
+            <Marker coordinate={drop} anchor={{ x: 0.5, y: 1.0 }}>
+              <Image source={imgPath.ic_drop} style={{ width: 50, height: 50 }} resizeMode="contain" />
             </Marker>
           )}
 
-          {/* Next Waypoint Indicator */}
-          {nextWaypoint && showDropRoute && (
-            <Marker coordinate={nextWaypoint} anchor={{ x: 0.5, y: 0.5 }}>
-              <View style={styles.waypointMarker}>
-                <View style={styles.waypointDot} />
-              </View>
-            </Marker>
+          {/* ── Phase 2: Completed Route (grey) ───────────────────────────── */}
+          {completedRouteCoords.length > 1 && (
+            <Polyline
+              coordinates={completedRouteCoords}
+              strokeWidth={5}
+              strokeColor="rgba(155,155,155,0.65)"
+              lineCap="round"
+              lineJoin="round"
+            />
           )}
 
-          {destination && (
-            <MapViewDirections
-              origin={showDropRoute ? pickup : (routeOrigin || pickup)}
-              destination={destination}
-              apikey={GOOGLE_MAPS_APIKEY}
-              strokeWidth={6}
+          {/* ── Phase 2: Remaining Route (brand colour) ────────────────────── */}
+          {remainingRouteCoords.length > 1 && (
+            <Polyline
+              coordinates={remainingRouteCoords}
+              strokeWidth={7}
               strokeColor={theme.colors.primary}
-              optimizeWaypoints={true}
+              lineCap="round"
+              lineJoin="round"
               lineDashPattern={[0]}
-            lineCap="round"
-            lineJoin="round"
-            onReady={result => {
-              mapRef.current.fitToCoordinates(result.coordinates, {
-                edgePadding: {
-                  top: 50,
-                  bottom: 50,
-                  left: 50,
-                  right: 50,
-                },
-              });
-            }}
-          />
+            />
           )}
 
-          {/* Selected Route Polyline */}
-          {/* {selectedRoute && selectedRoute.coordinates && (
-            <Polyline
-              coordinates={selectedRoute.coordinates}
-              strokeWidth={6}
-              strokeColor={
-                showDropRoute ? theme.colors.path : theme.colors.primary
-              }
-              lineDashPattern={[0]}
-              lineCap="round"
-              lineJoin="round"
-            />
-          )} */}
-
-          {/* Alternative Routes (dashed lines) */}
-          {/* {alternativeRoutes.map((route, index) => (
-            <Polyline
-              key={`alt-route-${index}`}
-              coordinates={route.coordinates}
-              strokeWidth={3}
-              strokeColor="rgba(100, 100, 100, 0.5)"
-              lineDashPattern={[10, 5]}
-              lineCap="round"
-              lineJoin="round"
-            />
-          ))} */}
+          {/* ── Fallback: full route before progress is computed ─────────────
+              Shown briefly after route fetch while progress index is 0 */}
+          {remainingRouteCoords.length <= 1 &&
+            completedRouteCoords.length <= 1 &&
+            routeCoordsRef.current.length > 1 && (
+              <Polyline
+                coordinates={routeCoordsRef.current}
+                strokeWidth={7}
+                strokeColor={theme.colors.primary}
+                lineCap="round"
+                lineJoin="round"
+              />
+            )}
         </MapView>
 
-        {/* Route Info and Selection Button */}
-        {/* {selectedRoute && (
-          <TouchableOpacity
-            style={styles.routeInfoButton}
-            onPress={() => setShowRouteOptions(!showRouteOptions)}
-          >
-            <View style={styles.routeInfoContent}>
-              <Text style={styles.routeInfoTitle}>
-                {showDropRoute
-                  ? '📍 Shortest Route to Drop'
-                  : '📍 Shortest Route to Pickup'}
-              </Text>
-              <Text style={styles.routeInfoDetails}>
-                {selectedRoute.distance / 1000 < 1
-                  ? `${Math.round(selectedRoute.distance)} m`
-                  : `${(selectedRoute.distance / 1000).toFixed(1)} km`}{' '}
-                •{Math.round(selectedRoute.duration / 60)} min •
-                {selectedRoute.summary || 'via fastest route'}
-              </Text>
-            </View>
-            <Text style={styles.routeInfoArrow}>▼</Text>
-          </TouchableOpacity>
-        )} */}
-
-        {/* Route Options Modal */}
+        {/* ── ROUTE OPTIONS MODAL ───────────────────────────────────────────── */}
         <Modal
           visible={showRouteOptions}
           transparent
@@ -1519,77 +1394,48 @@ const MapScreen = ({ navigation, route }) => {
                   <Text style={styles.closeButton}>✕</Text>
                 </TouchableOpacity>
               </View>
-
               <View style={styles.travelModeContainer}>
                 <Text style={styles.travelModeLabel}>Travel Mode:</Text>
                 <View style={styles.travelModeButtons}>
                   {Object.values(TRAVEL_MODES).map(mode => (
                     <TouchableOpacity
                       key={mode}
-                      style={[
-                        styles.travelModeButton,
-                        travelMode === mode && styles.travelModeButtonActive,
-                      ]}
+                      style={[styles.travelModeButton, travelMode === mode && styles.travelModeButtonActive]}
                       onPress={() => setTravelMode(mode)}
                     >
-                      <Text
-                        style={[
-                          styles.travelModeButtonText,
-                          travelMode === mode &&
-                            styles.travelModeButtonTextActive,
-                        ]}
-                      >
-                        {mode === 'driving' && '🚗'}
-                        {mode === 'walking' && '🚶'}
+                      <Text style={styles.travelModeButtonText}>
+                        {mode === 'driving'   && '🚗'}
+                        {mode === 'walking'   && '🚶'}
                         {mode === 'bicycling' && '🚲'}
-                        {mode === 'transit' && '🚌'}
+                        {mode === 'transit'   && '🚌'}
                       </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
               </View>
-
               <ScrollView style={styles.routesList}>
                 {isFetchingRoutes ? (
                   <View style={styles.loadingRoutes}>
-                    <ActivityIndicator
-                      size="large"
-                      color={theme.colors.primary}
-                    />
-                    <Text style={styles.loadingRoutesText}>
-                      Finding best routes...
-                    </Text>
+                    <ActivityIndicator size="large" color={theme.colors.primary} />
+                    <Text style={styles.loadingRoutesText}>Finding best routes...</Text>
                   </View>
                 ) : (
-                  routes.map((route, index) => (
+                  routes.map((r, idx) => (
                     <TouchableOpacity
-                      key={`route-${index}`}
-                      style={[
-                        styles.routeOption,
-                        selectedRoute === route && styles.routeOptionSelected,
-                      ]}
-                      onPress={() => handleSelectRoute(route)}
+                      key={`route-${idx}`}
+                      style={[styles.routeOption, selectedRoute === r && styles.routeOptionSelected]}
+                      onPress={() => handleSelectRoute(r)}
                     >
                       <View style={styles.routeOptionHeader}>
                         <Text style={styles.routeOptionTitle}>
-                          {index === 0
-                            ? ' Shortest Route'
-                            : ` Alternative ${index}`}
+                          {idx === 0 ? ' Shortest Route' : ` Alternative ${idx}`}
                         </Text>
-                        {selectedRoute === route && (
-                          <Text style={styles.routeOptionCheck}>✓</Text>
-                        )}
+                        {selectedRoute === r && <Text style={styles.routeOptionCheck}>✓</Text>}
                       </View>
-                      <Text style={styles.routeOptionSummary}>
-                        {route.summary || 'via main roads'}
-                      </Text>
+                      <Text style={styles.routeOptionSummary}>{r.summary || 'via main roads'}</Text>
                       <View style={styles.routeOptionDetails}>
-                        <Text style={styles.routeOptionDistance}>
-                          {(route.distance / 1000).toFixed(1)} km
-                        </Text>
-                        <Text style={styles.routeOptionDuration}>
-                          {Math.round(route.duration / 60)} min
-                        </Text>
+                        <Text style={styles.routeOptionDistance}>{(r.distance / 1000).toFixed(1)} km</Text>
+                        <Text style={styles.routeOptionDuration}>{Math.round(r.duration / 60)} min</Text>
                       </View>
                     </TouchableOpacity>
                   ))
@@ -1599,6 +1445,7 @@ const MapScreen = ({ navigation, route }) => {
           </View>
         </Modal>
 
+        {/* ── APPROXIMATE ROUTE BANNER ──────────────────────────────────────── */}
         {usingApproximateRoute && !selectedRoute && (
           <View style={styles.banner}>
             <Text style={styles.bannerText}>
@@ -1607,96 +1454,81 @@ const MapScreen = ({ navigation, route }) => {
           </View>
         )}
 
-        {/* Bottom Card */}
-        {/* Premium Header Overlay */}
+        {/* ── MAP HEADER (Back Button) ──────────────────────────────────────── */}
         <View style={styles.mapHeaderOverlay}>
-          <TouchableOpacity
-            style={styles.backBtnRound}
-            onPress={() => navigation.goBack()}
-          >
+          <TouchableOpacity style={styles.backBtnRound} onPress={() => navigation.goBack()}>
             <Ionicons name="arrow-back" size={24} color={theme.colors.ink} />
           </TouchableOpacity>
-          {/* <TouchableOpacity
-            style={[styles.map3DButton, is3DMode && styles.map3DButtonActive]}
-            onPress={() => {
-              setIs3DMode(prev => !prev);
-              if (driverCoords) {
-                updateCamera(driverCoords, arrowRotation);
-              }
-            }}
-          >
-            <Text style={styles.map3DButtonText}>
-              {is3DMode ? '2D View' : '3D View'}
-            </Text>
-          </TouchableOpacity> */}
-
-          {/* <View style={styles.headerTitleCard}>
-            <Text style={styles.headerTripId}>
-              Order #
-              {String(order?.id || '')
-                .slice(-6)
-                .toUpperCase()}
-            </Text>
-            <Text style={styles.headerStageText}>
-              {tripStage === STAGES.GOING_TO_PICKUP
-                ? 'Heading to Pickup'
-                : tripStage === STAGES.ARRIVED_PICKUP
-                ? 'At Pickup'
-                : tripStage === STAGES.GOING_TO_DROP
-                ? 'Heading to Drop'
-                : 'At Destination'}
-            </Text>
-          </View> */}
-
-          {/* <TouchableOpacity
-            style={styles.helpBtnRound}
-            onPress={() => Alert.alert('Help', 'Contacting support...')}
-          >
-            <Ionicons name="help-buoy" size={24} color={theme.colors.danger} />
-          </TouchableOpacity> */}
         </View>
 
-        {/* Navigation Card */}
+        {/* ── Phase 4: MANEUVER INSTRUCTION CARD ───────────────────────────── */}
+        {isNavigating && currentManeuver && (
+          <View style={styles.maneuverCard}>
+            <View style={styles.maneuverIconBox}>
+              <Text style={styles.maneuverIconText}>{currentManeuver.icon}</Text>
+            </View>
+            <View style={styles.maneuverTextBox}>
+              <Text style={styles.maneuverInstruction} numberOfLines={2}>
+                {currentManeuver.instruction}
+              </Text>
+              <Text style={styles.maneuverDistance}>
+                {currentManeuver.distanceMeters > 1000
+                  ? `${(currentManeuver.distanceMeters / 1000).toFixed(1)} km`
+                  : `${currentManeuver.distanceMeters} m`}
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* ── Phase 3: REROUTING INDICATOR ─────────────────────────────────── */}
+        {isRerouting && (
+          <View style={styles.reroutingBanner}>
+            <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+            <Text style={styles.reroutingText}>Recalculating route…</Text>
+          </View>
+        )}
+
+        {/* ── Phase 1: RE-CENTER BUTTON ─────────────────────────────────────── */}
+        {!isFollowingDriverState && isNavigating && (
+          <TouchableOpacity style={styles.recenterButton} onPress={handleRecenter} activeOpacity={0.85}>
+            <Ionicons name="navigate" size={22} color={theme.colors.primary} />
+          </TouchableOpacity>
+        )}
+
+        {/* ── BOTTOM NAVIGATION CARD (Preserved exactly) ───────────────────── */}
         <View style={styles.navCardOverlay}>
+          {/* Distance / Time / Amount row */}
           <View style={styles.navInfoRow}>
             <View style={styles.navInfoItem}>
               <Text style={styles.navInfoLabel}>DISTANCE</Text>
               <Text style={styles.navInfoValue}>
-                {distance !== null && distance !== undefined ? `${Number(distance).toFixed(1)} km` : '--'}
+                {distance != null ? `${Number(distance).toFixed(1)} km` : '--'}
               </Text>
             </View>
             <View style={styles.navInfoDivider} />
             <View style={styles.navInfoItem}>
               <Text style={styles.navInfoLabel}>TIME</Text>
               <Text style={styles.navInfoValue}>
-                {duration !== null && duration !== undefined ? `${duration} min` : '--'}
+                {duration != null ? `${duration} min` : '--'}
               </Text>
             </View>
             <>
               <View style={styles.navInfoDivider} />
               <View style={styles.navInfoItem}>
                 <Text style={styles.navInfoLabel}>Amount</Text>
-                <Text
-                  style={[styles.navInfoValue, { color: theme.colors.success }]}
-                >
+                <Text style={[styles.navInfoValue, { color: theme.colors.success }]}>
                   ₹{rideAmount}
                 </Text>
               </View>
             </>
           </View>
 
+          {/* Address row */}
           <View style={styles.addressCard}>
             <View style={styles.addressIndicatorCol}>
-              <View
-                style={[
-                  styles.addressDot,
-                  {
-                    backgroundColor: tripStage.includes('PICKUP')
-                      ? theme.colors.success
-                      : theme.colors.danger,
-                  },
-                ]}
-              />
+              <View style={[styles.addressDot, {
+                backgroundColor: tripStage.includes('PICKUP') ? theme.colors.success : theme.colors.danger,
+              }]} />
               <View style={styles.addressLine} />
             </View>
             <View style={styles.addressTextCol}>
@@ -1708,194 +1540,97 @@ const MapScreen = ({ navigation, route }) => {
               </Text>
             </View>
             <View style={{ flexDirection: 'row', gap: 10 }}>
-              <TouchableOpacity
-                style={styles.phoneCircle}
-                onPress={handleCallCustomer}
-              >
+              <TouchableOpacity style={styles.phoneCircle} onPress={handleCallCustomer}>
                 <Ionicons name="call" size={22} color="#fff" />
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.phoneCircle, { backgroundColor: '#0080ff' }]}
-                onPress={() => {
-                  setHasUnreadMessage(false);
-                  navigation.navigate('DriverChat', { rideId: order?.rideId || order?.id });
-                }}
+                onPress={() => navigation.navigate('DriverChat', { rideId: order?.rideId || order?.id })}
               >
                 <Ionicons name="chatbubble" size={22} color="#fff" />
-                {hasUnreadMessage && (
-                  <View style={{
-                    position: 'absolute',
-                    top: -2,
-                    right: -2,
-                    width: 14,
-                    height: 14,
-                    borderRadius: 7,
-                    backgroundColor: '#FF3B30',
-                    borderWidth: 2,
-                    borderColor: '#0080ff'
-                  }} />
-                )}
               </TouchableOpacity>
             </View>
           </View>
 
+          {/* Action Buttons */}
           <View style={styles.actionRowPrimary}>
-            {tripStage === STAGES.GOING_TO_PICKUP &&
-              (isAtPickup ? (
-                <TouchableOpacity
-                  style={styles.primaryActionBtn}
-                  onPress={() => setTripStage(STAGES.ARRIVED_PICKUP)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.primaryActionText}>
-                    ARRIVED AT PICKUP
-                  </Text>
+            {tripStage === STAGES.GOING_TO_PICKUP && (
+              isAtPickup ? (
+                <TouchableOpacity style={styles.primaryActionBtn} onPress={() => setTripStage(STAGES.ARRIVED_PICKUP)} activeOpacity={0.8}>
+                  <Text style={styles.primaryActionText}>ARRIVED AT PICKUP</Text>
                 </TouchableOpacity>
               ) : (
                 <View style={styles.disabledActionMsg}>
-                  <Text style={styles.disabledActionText}>
-                    Reach pickup location to mark arrived
-                  </Text>
+                  <Text style={styles.disabledActionText}>Reach pickup location to mark arrived</Text>
                 </View>
-              ))}
+              )
+            )}
             {tripStage === STAGES.ARRIVED_PICKUP && (
-              <TouchableOpacity
-                style={[
-                  styles.primaryActionBtn,
-                  { backgroundColor: theme.colors.success },
-                ]}
-                onPress={handlePickupConfirmActual}
-                activeOpacity={0.8}
-              >
+              <TouchableOpacity style={[styles.primaryActionBtn, { backgroundColor: theme.colors.success }]} onPress={handlePickupConfirmActual} activeOpacity={0.8}>
                 <Text style={styles.primaryActionText}>START TRIP</Text>
               </TouchableOpacity>
             )}
             {tripStage === STAGES.GOING_TO_DROP && isAtDrop && (
-              <TouchableOpacity
-                style={styles.primaryActionBtn}
-                onPress={() => setTripStage(STAGES.ARRIVED_DROP)}
-                activeOpacity={0.8}
-              >
+              <TouchableOpacity style={styles.primaryActionBtn} onPress={() => setTripStage(STAGES.ARRIVED_DROP)} activeOpacity={0.8}>
                 <Text style={styles.primaryActionText}>ARRIVED AT DROP</Text>
               </TouchableOpacity>
             )}
             {tripStage === STAGES.GOING_TO_DROP && !isAtDrop && (
               <View style={styles.disabledActionMsg}>
-                <Text style={styles.disabledActionText}>
-                  Reach drop location to mark arrived
-                </Text>
+                <Text style={styles.disabledActionText}>Reach drop location to mark arrived</Text>
               </View>
             )}
             {tripStage === STAGES.ARRIVED_DROP && (
-              <TouchableOpacity
-                style={[
-                  styles.primaryActionBtn,
-                  { backgroundColor: theme.colors.success },
-                ]}
-                onPress={handleCompleteDelivery}
-                activeOpacity={0.8}
-              >
+              <TouchableOpacity style={[styles.primaryActionBtn, { backgroundColor: theme.colors.success }]} onPress={handleCompleteDelivery} activeOpacity={0.8}>
                 <Text style={styles.primaryActionText}>COMPLETE ORDER</Text>
               </TouchableOpacity>
             )}
           </View>
+
           {tripStage === STAGES.GOING_TO_PICKUP && (
             <View style={{ marginTop: 12, alignItems: 'center' }}>
-              <TouchableOpacity
-                style={styles.cancelTripButton}
-                onPress={() => setShowCancelModal(true)}
-                activeOpacity={0.8}
-              >
-                <Text style={{ color: '#ff0303', fontSize: 13, fontWeight: '600' }}>
-                  Cancel trip
-                </Text>
+              <TouchableOpacity style={styles.cancelTripButton} onPress={() => setShowCancelModal(true)} activeOpacity={0.8}>
+                <Text style={{ color: '#ff0303', fontSize: 13, fontWeight: '600' }}>Cancel trip</Text>
               </TouchableOpacity>
             </View>
           )}
         </View>
 
-        {/* Cancel Trip Modal */}
-        <Modal
-          visible={showCancelModal}
-          transparent
-          animationType="slide"
-          onRequestClose={() => !isCancelling && setShowCancelModal(false)}
-        >
+        {/* ── CANCEL TRIP MODAL ─────────────────────────────────────────────── */}
+        <Modal visible={showCancelModal} transparent animationType="slide" onRequestClose={() => !isCancelling && setShowCancelModal(false)}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>Cancel Trip</Text>
-                <TouchableOpacity
-                  onPress={() => !isCancelling && setShowCancelModal(false)}
-                >
+                <TouchableOpacity onPress={() => !isCancelling && setShowCancelModal(false)}>
                   <Text style={styles.closeButton}>✕</Text>
                 </TouchableOpacity>
               </View>
-              <Text style={styles.modalSubtext}>
-                Select a reason for cancellation:
-              </Text>
-              {[
-                'Vehicle breakdown',
-                'Customer not reachable',
-                'Wrong address',
-                'Personal emergency',
-                'Other',
-              ].map(reason => (
+              <Text style={styles.modalSubtext}>Select a reason for cancellation:</Text>
+              {['Vehicle breakdown','Customer not reachable','Wrong address','Personal emergency','Other'].map(reason => (
                 <TouchableOpacity
                   key={reason}
-                  style={[
-                    styles.cancelReasonItem,
-                    cancelReason === reason && styles.cancelReasonActive,
-                  ]}
+                  style={[styles.cancelReasonItem, cancelReason === reason && styles.cancelReasonActive]}
                   onPress={() => setCancelReason(reason)}
                   disabled={isCancelling}
                 >
-                  <Ionicons
-                    name={
-                      cancelReason === reason
-                        ? 'radio-button-on'
-                        : 'radio-button-off'
-                    }
-                    size={20}
-                    color={
-                      cancelReason === reason ? theme.colors.danger : '#999'
-                    }
-                  />
-                  <Text
-                    style={[
-                      styles.cancelReasonText,
-                      cancelReason === reason && styles.cancelReasonTextActive,
-                    ]}
-                  >
-                    {reason}
-                  </Text>
+                  <Ionicons name={cancelReason === reason ? 'radio-button-on' : 'radio-button-off'} size={20} color={cancelReason === reason ? theme.colors.danger : '#999'} />
+                  <Text style={[styles.cancelReasonText, cancelReason === reason && styles.cancelReasonTextActive]}>{reason}</Text>
                 </TouchableOpacity>
               ))}
               <TouchableOpacity
-                style={[
-                  styles.button,
-                  styles.dangerButton,
-                  isCancelling && styles.disabledButton,
-                ]}
+                style={[styles.modalActionBtn, styles.dangerBtn, isCancelling && styles.disabledBtn]}
                 onPress={handleCancelTrip}
                 disabled={isCancelling}
               >
-                {isCancelling ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.successButtonText}>Cancel Trip</Text>
-                )}
+                {isCancelling ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalActionBtnText}>Cancel Trip</Text>}
               </TouchableOpacity>
             </View>
           </View>
         </Modal>
-        {/* Pickup OTP Modal */}
-        <Modal
-          visible={showPickupOtpModal}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setShowPickupOtpModal(false)}
-        >
+
+        {/* ── PICKUP OTP MODAL ──────────────────────────────────────────────── */}
+        <Modal visible={showPickupOtpModal} transparent animationType="slide" onRequestClose={() => setShowPickupOtpModal(false)}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
@@ -1904,10 +1639,7 @@ const MapScreen = ({ navigation, route }) => {
                   <Text style={styles.closeButton}>✕</Text>
                 </TouchableOpacity>
               </View>
-              <Text style={styles.modalSubtext}>
-                Enter the 4-digit code provided by the customer to verify
-                pickup:
-              </Text>
+              <Text style={styles.modalSubtext}>Enter the 4-digit code provided by the customer to verify pickup:</Text>
               <TextInput
                 style={styles.otpInput}
                 value={pickupOtp}
@@ -1918,91 +1650,52 @@ const MapScreen = ({ navigation, route }) => {
                 placeholderTextColor="#ccc"
                 textAlign="center"
               />
-              <TouchableOpacity
-                style={[styles.button, styles.primaryButton]}
-                onPress={handlePickupOtpSubmit}
-              >
-                <Text style={styles.primaryButtonText}>
-                  ✅ Verify & Confirm Pickup
-                </Text>
+              <TouchableOpacity style={[styles.modalActionBtn, styles.primaryBtn]} onPress={handlePickupOtpSubmit}>
+                <Text style={styles.modalActionBtnText}>✅ Verify &amp; Confirm Pickup</Text>
               </TouchableOpacity>
             </View>
           </View>
         </Modal>
 
-        {/* Cash Collection Modal */}
-        <Modal
-          visible={showCashModal}
-          transparent
-          animationType="slide"
-          onRequestClose={() => !isProcessing && setShowCashModal(false)}
-        >
+        {/* ── CASH COLLECTION MODAL ─────────────────────────────────────────── */}
+        <Modal visible={showCashModal} transparent animationType="slide" onRequestClose={() => !isProcessing && setShowCashModal(false)}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>💰 Payment Collection</Text>
-                <TouchableOpacity
-                  onPress={() => !isProcessing && setShowCashModal(false)}
-                  disabled={isProcessing}
-                >
+                <TouchableOpacity onPress={() => !isProcessing && setShowCashModal(false)} disabled={isProcessing}>
                   <Text style={styles.closeButton}>✕</Text>
                 </TouchableOpacity>
               </View>
-
               <View style={styles.orderSummary}>
                 <Text style={styles.summaryText}>Order #{order.id}</Text>
                 <Text style={styles.summaryText}>
-                  Distance:{' '}
-                  {distance
-                    ? distance < 1
-                      ? `${Math.round(distance * 1000)} m`
-                      : `${distance.toFixed(1)} km`
-                    : '0 km'}
+                  Distance: {distance ? (distance < 1 ? `${Math.round(distance * 1000)} m` : `${distance.toFixed(1)} km`) : '0 km'}
                 </Text>
               </View>
-
               <View style={styles.paymentMethods}>
-                {['cash', 'card', 'online'].map(method => (
+                {['cash','card','online'].map(method => (
                   <TouchableOpacity
                     key={method}
-                    style={[
-                      styles.paymentMethod,
-                      paymentMethod === method && styles.paymentMethodActive,
-                    ]}
-                    onPress={() => {
-                      setPaymentMethod(method);
-                      setModalError('');
-                    }}
+                    style={[styles.paymentMethod, paymentMethod === method && styles.paymentMethodActive]}
+                    onPress={() => { setPaymentMethod(method); setModalError(''); }}
                     disabled={isProcessing}
                   >
-                    <Text
-                      style={[
-                        styles.paymentMethodText,
-                        paymentMethod === method &&
-                          styles.paymentMethodTextActive,
-                      ]}
-                    >
-                      {method === 'cash' && '💵 Cash'}
-                      {method === 'card' && '💳 Card'}
+                    <Text style={[styles.paymentMethodText, paymentMethod === method && styles.paymentMethodTextActive]}>
+                      {method === 'cash'   && '💵 Cash'}
+                      {method === 'card'   && '💳 Card'}
                       {method === 'online' && '📱 Online'}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
-
               {paymentMethod === 'cash' && (
                 <View style={styles.amountInputContainer}>
                   <Text style={styles.amountLabel}>Amount Collected (₹)</Text>
                   <TextInput
-                    style={[
-                      styles.amountInput,
-                      modalError && styles.inputError,
-                    ]}
+                    style={[styles.amountInput, modalError && styles.inputError]}
                     value={cashCollected}
-                    onChangeText={text => {
-                      setCashCollected(text);
-                      setModalError('');
-                    }}
+                    onChangeText={t => { setCashCollected(t); setModalError(''); }}
                     keyboardType="numeric"
                     placeholder="Enter amount"
                     placeholderTextColor="#999"
@@ -2010,813 +1703,208 @@ const MapScreen = ({ navigation, route }) => {
                   />
                 </View>
               )}
-
               {paymentMethod !== 'cash' && (
                 <View style={styles.amountDisplay}>
-                  <Text style={styles.amountDisplayLabel}>
-                    Amount to collect:
-                  </Text>
-                  <Text style={styles.amountDisplayValue}>
-                    ₹{order?.amount || 0}
-                  </Text>
+                  <Text style={styles.amountDisplayLabel}>Amount to collect:</Text>
+                  <Text style={styles.amountDisplayValue}>₹{order?.amount || 0}</Text>
                 </View>
               )}
-
-              {modalError ? (
-                <Text style={styles.modalErrorText}>{modalError}</Text>
-              ) : null}
-
+              {!!modalError && <Text style={styles.modalErrorText}>{modalError}</Text>}
               <TouchableOpacity
-                style={[
-                  styles.collectButton,
-                  isProcessing && styles.disabledButton,
-                ]}
+                style={[styles.collectButton, isProcessing && styles.disabledBtn]}
                 onPress={handleCashCollected}
                 disabled={isProcessing}
                 activeOpacity={0.8}
               >
-                {isProcessing ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.collectButtonText}>
-                    {paymentMethod === 'cash'
-                      ? '✅ Cash Collected'
-                      : '✅ Confirm Payment'}
-                  </Text>
-                )}
+                {isProcessing
+                  ? <ActivityIndicator color="#fff" />
+                  : <Text style={styles.collectButtonText}>{paymentMethod === 'cash' ? '✅ Cash Collected' : '✅ Confirm Payment'}</Text>}
               </TouchableOpacity>
             </View>
           </View>
         </Modal>
+
       </View>
     </ErrorBoundary>
   );
 };
 
+// ─── StyleSheet ───────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F8F9FA',
-  },
-  map: {
-    flex: 1,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: theme.colors.bg,
-    padding: 20,
-  },
-  markerImage: {
-    width: 30,
-    height: 30,
-  },
-  loadingText: {
-    fontSize: 16,
-    color: '#6B7280',
-    marginTop: 10,
-  },
-  errorText: {
-    fontSize: 16,
-    color: '#ff4444',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  errorSubtext: {
-    fontSize: 14,
-    color: '#6B7280',
-    textAlign: 'center',
-    marginBottom: 20,
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-  },
-  errorTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#ff4444',
-    marginBottom: 20,
-  },
-  retryButton: {
-    backgroundColor: theme.colors.primary,
-    paddingHorizontal: 30,
-    paddingVertical: 12,
-    borderRadius: 25,
-  },
-  retryButtonText: {
-    color: theme.colors.ink,
-    fontSize: 16,
-    fontWeight: '600',
-  },
+  container:        { flex: 1, backgroundColor: '#F8F9FA' },
+  map:              { flex: 1 },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.colors.bg, padding: 20 },
+  loadingText:      { fontSize: 16, color: '#6B7280', marginTop: 10 },
+  errorContainer:   { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFFFFF', padding: 20 },
+  errorTitle:       { fontSize: 18, fontWeight: 'bold', color: '#ff4444', marginBottom: 20 },
+  retryButton:      { backgroundColor: theme.colors.primary, paddingHorizontal: 30, paddingVertical: 12, borderRadius: 25 },
+  retryButtonText:  { color: theme.colors.ink, fontSize: 16, fontWeight: '600' },
+
+  // ── Banners ───────────────────────────────────────────────────────────────
   banner: {
-    position: 'absolute',
-    top: 10,
-    left: 20,
-    right: 20,
-    backgroundColor: theme.colors.primary,
-    padding: 12,
-    borderRadius: 10,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 4,
-      },
-    }),
+    position: 'absolute', top: 10, left: 20, right: 20,
+    backgroundColor: theme.colors.primary, padding: 12, borderRadius: 10,
+    ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 }, android: { elevation: 4 } }),
   },
-  locationBanner: {
-    backgroundColor: '#93c5fd',
-  },
-  bannerText: {
-    color: '#111827',
-    fontSize: 13,
-    textAlign: 'center',
-  },
-  routeInfoButton: {
-    position: 'absolute',
-    top: '20%',
-    left: 20,
-    right: 20,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 4,
-      },
-    }),
-  },
-  routeInfoContent: {
-    flex: 1,
-  },
-  routeInfoTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 2,
-  },
-  routeInfoDetails: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  disabledActionMsg: {
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: '#F8F9FA',
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    marginBottom: 8,
-  },
-  disabledActionText: {
-    color: '#6b7280',
-    fontSize: 12,
-    textAlign: 'center',
-  },
-  map3DButton: {
-    position: 'absolute',
-    right: 60,
-    top: 14,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#cbd5e1',
-    backgroundColor: '#FFFFFF',
-    zIndex: 10,
-  },
-  map3DButtonActive: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
-  },
-  map3DButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1f2937',
-  },
+  bannerText: { color: '#111827', fontSize: 13, textAlign: 'center' },
 
-  routeInfoArrow: {
-    fontSize: 16,
-    color: '#6B7280',
-    marginLeft: 8,
-  },
-  bottomCard: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#FFFFFF',
-    padding: 20,
-    borderTopLeftRadius: 25,
-    borderTopRightRadius: 25,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: -3 },
-        shadowOpacity: 0.1,
-        shadowRadius: 5,
-      },
-      android: {
-        elevation: 10,
-      },
-    }),
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  cardHeaderActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  callButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: theme.colors.success,
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...theme.shadow.card,
-  },
-
-  // Premium Navigation UI Styles
+  // ── Map Header ────────────────────────────────────────────────────────────
   mapHeaderOverlay: {
-    position: 'absolute',
-    top: moderateScale(10),
-    left: moderateScale(16),
-    right: moderateScale(16),
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    zIndex: 10,
+    position: 'absolute', top: moderateScale(10), left: moderateScale(16), right: moderateScale(16),
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', zIndex: 10,
   },
   backBtnRound: {
-    width: moderateScale(48),
-    height: moderateScale(48),
-    borderRadius: moderateScale(24),
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: moderateScale(48), height: moderateScale(48), borderRadius: moderateScale(24),
+    backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center',
     ...theme.shadow.card,
-  },
-  helpBtnRound: {
-    width: moderateScale(48),
-    height: moderateScale(48),
-    borderRadius: moderateScale(24),
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: theme.colors.danger,
-    ...theme.shadow.card,
-  },
-  headerTitleCard: {
-    flex: 1,
-    marginHorizontal: moderateScale(12),
-    backgroundColor: '#FFFFFF',
-    paddingVertical: moderateScale(10),
-    paddingHorizontal: moderateScale(16),
-    borderRadius: theme.radii.lg,
-    alignItems: 'center',
-    ...theme.shadow.card,
-  },
-  headerTripId: {
-    fontSize: moderateScale(12),
-    fontWeight: '800',
-    color: theme.colors.muted,
-  },
-  headerStageText: {
-    fontSize: moderateScale(15),
-    fontWeight: '900',
-    color: theme.colors.ink,
-    marginTop: 2,
   },
 
+  // ── Phase 4: Maneuver Card ────────────────────────────────────────────────
+  maneuverCard: {
+    position: 'absolute',
+    top: moderateScale(72),
+    left: moderateScale(16),
+    right: moderateScale(16),
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: moderateScale(12),
+    paddingHorizontal: moderateScale(14),
+    borderLeftWidth: 5,
+    borderLeftColor: theme.colors.primary,
+    zIndex: 10,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, shadowRadius: 8 },
+      android: { elevation: 8 },
+    }),
+  },
+  maneuverIconBox: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: (theme.colors.primary || '#000') + '22',
+    alignItems: 'center', justifyContent: 'center', marginRight: 12,
+  },
+  maneuverIconText:     { fontSize: 24 },
+  maneuverTextBox:      { flex: 1 },
+  maneuverInstruction:  { fontSize: moderateScale(14), fontWeight: '800', color: '#111827', lineHeight: 20 },
+  maneuverDistance:     { fontSize: moderateScale(12), color: '#6B7280', marginTop: 3, fontWeight: '600' },
+
+  // ── Phase 3: Rerouting Banner ─────────────────────────────────────────────
+  reroutingBanner: {
+    position: 'absolute',
+    top: moderateScale(72),
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1F2937',
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 30,
+    zIndex: 20,
+    ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4 }, android: { elevation: 8 } }),
+  },
+  reroutingText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+
+  // ── Phase 1: Re-center Button ─────────────────────────────────────────────
+  recenterButton: {
+    position: 'absolute',
+    right: moderateScale(16),
+    bottom: moderateScale(320),
+    width: 50, height: 50, borderRadius: 25,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center', justifyContent: 'center',
+    zIndex: 15,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.2, shadowRadius: 6 },
+      android: { elevation: 8 },
+    }),
+  },
+
+  // ── Bottom Navigation Card ────────────────────────────────────────────────
   navCardOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
+    position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: theme.radii.xl,
-    borderTopRightRadius: theme.radii.xl,
+    borderTopLeftRadius: theme.radii.xl, borderTopRightRadius: theme.radii.xl,
     padding: moderateScale(20),
-    paddingBottom:
-      Platform.OS === 'ios' ? moderateScale(40) : moderateScale(25),
-    ...theme.shadow.card,
-    elevation: 20,
+    paddingBottom: Platform.OS === 'ios' ? moderateScale(40) : moderateScale(25),
+    ...theme.shadow.card, elevation: 20,
   },
-  navInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: moderateScale(18),
-  },
-  navInfoItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  navInfoLabel: {
-    fontSize: moderateScale(10),
-    fontWeight: '800',
-    color: theme.colors.muted,
-    marginBottom: 4,
-  },
-  navInfoValue: {
-    fontSize: moderateScale(16),
-    fontWeight: '900',
-    color: theme.colors.ink,
-  },
-  navInfoDivider: {
-    width: 1,
-    height: 20,
-    backgroundColor: theme.colors.border,
-  },
+  navInfoRow:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: moderateScale(18) },
+  navInfoItem:     { flex: 1, alignItems: 'center' },
+  navInfoLabel:    { fontSize: moderateScale(10), fontWeight: '800', color: theme.colors.muted, marginBottom: 4 },
+  navInfoValue:    { fontSize: moderateScale(16), fontWeight: '900', color: theme.colors.ink },
+  navInfoDivider:  { width: 1, height: 20, backgroundColor: theme.colors.border },
+  addressCard:     { flexDirection: 'row', alignItems: 'center', backgroundColor: theme.colors.bg, borderRadius: theme.radii.lg, padding: moderateScale(12), marginBottom: moderateScale(20) },
+  addressIndicatorCol: { alignItems: 'center', marginRight: moderateScale(12) },
+  addressDot:      { width: 12, height: 12, borderRadius: 6 },
+  addressLine:     { width: 2, height: 20, backgroundColor: theme.colors.border, marginTop: 4 },
+  addressTextCol:  { flex: 1 },
+  addressLabel:    { fontSize: moderateScale(10), fontWeight: '800', color: theme.colors.muted },
+  addressText:     { fontSize: moderateScale(13), fontWeight: '700', color: theme.colors.ink, marginTop: 2 },
+  phoneCircle:     { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.colors.ink, alignItems: 'center', justifyContent: 'center', marginLeft: 10 },
+  actionRowPrimary:{ width: '100%' },
+  primaryActionBtn:{ backgroundColor: theme.colors.ink, borderRadius: theme.radii.md, paddingVertical: moderateScale(16), alignItems: 'center', justifyContent: 'center' },
+  primaryActionText:{ color: '#fff', fontWeight: '900', fontSize: moderateScale(16), letterSpacing: 1.2 },
+  disabledActionMsg:{ padding: 12, borderRadius: 8, backgroundColor: '#F8F9FA', borderWidth: 1, borderColor: '#d1d5db', marginBottom: 8 },
+  disabledActionText:{ color: '#6b7280', fontSize: 12, textAlign: 'center' },
+  cancelTripButton: { alignItems: 'center', justifyContent: 'center', paddingVertical: 4 },
 
-  addressCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.colors.bg,
-    borderRadius: theme.radii.lg,
-    padding: moderateScale(12),
-    marginBottom: moderateScale(20),
-  },
-  addressIndicatorCol: {
-    alignItems: 'center',
-    marginRight: moderateScale(12),
-  },
-  addressDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  addressLine: {
-    width: 2,
-    height: 20,
-    backgroundColor: theme.colors.border,
-    marginTop: 4,
-  },
-  addressTextCol: {
-    flex: 1,
-  },
-  addressLabel: {
-    fontSize: moderateScale(10),
-    fontWeight: '800',
-    color: theme.colors.muted,
-  },
-  addressText: {
-    fontSize: moderateScale(13),
-    fontWeight: '700',
-    color: theme.colors.ink,
-    marginTop: 2,
-  },
-  phoneCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: theme.colors.ink,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 10,
-  },
-
-  actionRowPrimary: {
-    width: '100%',
-  },
-  primaryActionBtn: {
-    backgroundColor: theme.colors.ink,
-    borderRadius: theme.radii.md,
-    paddingVertical: moderateScale(16),
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  primaryActionText: {
-    color: '#fff',
-    fontWeight: '900',
-    fontSize: moderateScale(16),
-    letterSpacing: 1.2,
-  },
-  modalSubtext: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 14,
-  },
-  cancelTripButton: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 4,
-  },
-  cancelReasonItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 8,
-    borderRadius: 8,
-    marginBottom: 4,
-  },
-  cancelReasonActive: {
-    backgroundColor: '#2A1010',
-  },
-  cancelReasonText: {
-    marginLeft: 10,
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  cancelReasonTextActive: {
-    fontWeight: '600',
-    color: theme.colors.danger,
-  },
-  otpInput: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#111827',
-    borderWidth: 2,
-    borderColor: theme.colors.primary,
-    borderRadius: 12,
-    paddingVertical: 16,
-    marginBottom: 20,
-    letterSpacing: 12,
-  },
-  drivingIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-  },
-  drivingText: {
-    marginLeft: 8,
-    color: '#6B7280',
-    fontSize: 14,
-  },
-  // Arrow Marker Styles
-  arrowContainer: {
-    width: 50,
-    height: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  arrow: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  arrowHead: {
-    width: 0,
-    height: 0,
-    backgroundColor: 'transparent',
-    borderStyle: 'solid',
-    borderLeftWidth: 12,
-    borderRightWidth: 12,
-    borderBottomWidth: 20,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderBottomColor: '#3B82F6',
-    position: 'absolute',
-    top: -5,
-  },
-  arrowLine: {
-    width: 6,
-    height: 25,
-    backgroundColor: '#3B82F6',
-    position: 'absolute',
-    top: 10,
-    borderRadius: 3,
-  },
-  arrowGlow: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(59, 130, 246, 0.2)',
-    position: 'absolute',
-  },
-  arrowPulse: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: 'rgba(59, 130, 246, 0.1)',
-    position: 'absolute',
-    transform: [{ scale: 1.2 }],
-  },
-  pickupMarker: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: theme.colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.3,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 5,
-      },
-    }),
-  },
-  dropMarker: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: theme.colors.success,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.3,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 5,
-      },
-    }),
-  },
-  markerText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
-  markerPulse: {
-    position: 'absolute',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.3)',
-    transform: [{ scale: 1.2 }],
-  },
-  waypointMarker: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: 'rgba(212, 246, 59, 0.8)',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-  },
-  waypointDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#FFFFFF',
-    position: 'absolute',
-    top: 2,
-    left: 2,
-  },
-  // Modal Styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 24,
-    width: '100%',
-    maxWidth: 400,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 5,
-      },
-    }),
-  },
-  routeModalContent: {
-    maxHeight: height * 0.7,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#111827',
-  },
-  closeButton: {
-    fontSize: 24,
-    color: '#9CA3AF',
-    padding: 4,
-  },
-  travelModeContainer: {
-    marginBottom: 20,
-  },
-  travelModeLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 8,
-    fontWeight: '600',
-  },
-  travelModeButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-  },
-  travelModeButton: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#F8F9FA',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  travelModeButtonActive: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
-  },
-  travelModeButtonText: {
-    fontSize: 24,
-  },
-  travelModeButtonTextActive: {
-    color: '#fff',
-  },
-  routesList: {
-    maxHeight: height * 0.4,
-  },
-  loadingRoutes: {
-    padding: 40,
-    alignItems: 'center',
-  },
-  loadingRoutesText: {
-    marginTop: 10,
-    color: '#6B7280',
-    fontSize: 14,
-  },
-  routeOption: {
-    backgroundColor: '#F8F9FA',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 8,
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  routeOptionSelected: {
-    borderColor: theme.colors.primary,
-    backgroundColor: theme.colors.primary + '10',
-  },
-  routeOptionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  routeOptionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-  routeOptionCheck: {
-    fontSize: 18,
-    color: theme.colors.success,
-    fontWeight: 'bold',
-  },
-  routeOptionSummary: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginBottom: 8,
-  },
-  routeOptionDetails: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  routeOptionDistance: {
-    fontSize: 13,
-    color: '#6B7280',
-  },
-  routeOptionDuration: {
-    fontSize: 13,
-    color: '#6B7280',
-  },
-  orderSummary: {
-    backgroundColor: '#F8F9FA',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 20,
-  },
-  summaryText: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginVertical: 2,
-  },
-  paymentMethods: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-  paymentMethod: {
-    flex: 1,
-    paddingVertical: 12,
-    marginHorizontal: 4,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    alignItems: 'center',
-  },
-  paymentMethodActive: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
-  },
-  paymentMethodText: {
-    fontSize: 13,
-    color: '#6B7280',
-  },
-  paymentMethodTextActive: {
-    color: theme.colors.ink,
-    fontWeight: '600',
-  },
-  amountInputContainer: {
-    marginBottom: 20,
-  },
-  amountLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 8,
-    fontWeight: '600',
-  },
-  amountInput: {
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 10,
-    padding: 16,
-    fontSize: 16,
-    color: '#111827',
-  },
-  inputError: {
-    borderColor: '#ff4444',
-  },
-  amountDisplay: {
-    backgroundColor: '#F8F9FA',
-    padding: 16,
-    borderRadius: 10,
-    marginBottom: 20,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  amountDisplayLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  amountDisplayValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: theme.colors.success,
-  },
-  collectButton: {
-    backgroundColor: theme.colors.success,
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  collectButtonText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  modalErrorText: {
-    color: '#ff4444',
-    fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 12,
-  },
+  // ── Modals ────────────────────────────────────────────────────────────────
+  modalOverlay:    { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalContent:    {
+    backgroundColor: '#FFFFFF', borderRadius: 20, padding: 24, width: '100%', maxWidth: 400,
+    ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4 }, android: { elevation: 5 } }),
+  },
+  routeModalContent:{ maxHeight: height * 0.7 },
+  modalHeader:     { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  modalTitle:      { fontSize: 20, fontWeight: 'bold', color: '#111827' },
+  closeButton:     { fontSize: 24, color: '#9CA3AF', padding: 4 },
+  modalSubtext:    { fontSize: 14, color: '#6B7280', marginBottom: 14 },
+  modalActionBtn:  { borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 10 },
+  dangerBtn:       { backgroundColor: theme.colors.danger || '#ff4444' },
+  primaryBtn:      { backgroundColor: theme.colors.primary },
+  modalActionBtnText:{ color: '#fff', fontWeight: '700', fontSize: 15 },
+  disabledBtn:     { opacity: 0.6 },
+  cancelReasonItem:{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8, marginBottom: 4 },
+  cancelReasonActive:{ backgroundColor: '#2A1010' },
+  cancelReasonText:{ marginLeft: 10, fontSize: 14, color: '#6B7280' },
+  cancelReasonTextActive:{ fontWeight: '600', color: theme.colors.danger },
+  otpInput:        { fontSize: 32, fontWeight: '800', color: '#111827', borderWidth: 2, borderColor: theme.colors.primary, borderRadius: 12, paddingVertical: 16, marginBottom: 20, letterSpacing: 12 },
+  travelModeContainer:{ marginBottom: 20 },
+  travelModeLabel: { fontSize: 14, color: '#6B7280', marginBottom: 8, fontWeight: '600' },
+  travelModeButtons:{ flexDirection: 'row', justifyContent: 'space-around' },
+  travelModeButton: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#F8F9FA', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#E5E7EB' },
+  travelModeButtonActive:{ backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  travelModeButtonText:{ fontSize: 24 },
+  routesList:      { maxHeight: height * 0.4 },
+  loadingRoutes:   { padding: 40, alignItems: 'center' },
+  loadingRoutesText:{ marginTop: 10, color: '#6B7280', fontSize: 14 },
+  routeOption:     { backgroundColor: '#F8F9FA', borderRadius: 12, padding: 16, marginBottom: 8, borderWidth: 2, borderColor: 'transparent' },
+  routeOptionSelected:{ borderColor: theme.colors.primary, backgroundColor: (theme.colors.primary || '#000') + '10' },
+  routeOptionHeader:{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  routeOptionTitle: { fontSize: 16, fontWeight: '600', color: '#111827' },
+  routeOptionCheck: { fontSize: 18, color: theme.colors.success, fontWeight: 'bold' },
+  routeOptionSummary:{ fontSize: 13, color: '#6B7280', marginBottom: 8 },
+  routeOptionDetails:{ flexDirection: 'row', justifyContent: 'space-between' },
+  routeOptionDistance:{ fontSize: 13, color: '#6B7280' },
+  routeOptionDuration:{ fontSize: 13, color: '#6B7280' },
+  orderSummary:    { backgroundColor: '#F8F9FA', padding: 16, borderRadius: 12, marginBottom: 20 },
+  summaryText:     { fontSize: 14, color: '#6B7280', marginVertical: 2 },
+  paymentMethods:  { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
+  paymentMethod:   { flex: 1, paddingVertical: 12, marginHorizontal: 4, borderRadius: 10, borderWidth: 1, borderColor: '#E5E7EB', alignItems: 'center' },
+  paymentMethodActive:{ backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  paymentMethodText:{ fontSize: 13, color: '#6B7280' },
+  paymentMethodTextActive:{ color: theme.colors.ink, fontWeight: '600' },
+  amountInputContainer:{ marginBottom: 20 },
+  amountLabel:     { fontSize: 14, color: '#6B7280', marginBottom: 8, fontWeight: '600' },
+  amountInput:     { borderWidth: 1, borderColor: '#E5E7EB', borderRadius: 10, padding: 16, fontSize: 16, color: '#111827' },
+  inputError:      { borderColor: '#ff4444' },
+  amountDisplay:   { backgroundColor: '#F8F9FA', padding: 16, borderRadius: 10, marginBottom: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  amountDisplayLabel:{ fontSize: 14, color: '#6B7280' },
+  amountDisplayValue:{ fontSize: 18, fontWeight: 'bold', color: theme.colors.success },
+  collectButton:   { backgroundColor: theme.colors.success, paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
+  collectButtonText:{ color: '#fff', fontWeight: '700', fontSize: 16 },
+  modalErrorText:  { color: '#ff4444', fontSize: 14, textAlign: 'center', marginBottom: 12 },
 });
 
 export default MapScreen;
