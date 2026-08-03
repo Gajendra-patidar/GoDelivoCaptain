@@ -17,7 +17,6 @@ import { startOverlayBubble } from './src/services/FloatingBubbleService';
 import { navigationRef } from './src/navigations/navigationRef';
 import BubbleController from './src/components/BubbleController';
 
-
 function App() {
   const colorScheme = useColorScheme();
   const appTheme = getThemeForScheme(colorScheme);

@@ -1,205 +1,125 @@
-import { StyleSheet, View, Image, StatusBar } from 'react-native';
-import React, { useEffect } from 'react';
-import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import axios from 'axios';
-import { BASE_URL } from '../../services/api';
-import NetInfo from '@react-native-community/netinfo';
+import React, { useEffect, useRef } from 'react';
+import {
+  StyleSheet,
+  View,
+  Animated,
+  Easing,
+  Image,
+  StatusBar,
+  Dimensions,
+} from 'react-native';
+import { colors } from '../../theme/theme';
 
-const MIN_SPLASH_TIME_MS = 3000; // Enforces a minimum display time for UI stability
+const { height } = Dimensions.get('window');
 
-const getApplicationId = user => {
-  return (
-    user?.applicationId ||
-    user?._id ||
-    user?.id ||
-    user?.application?._id ||
-    user?.application?.id ||
-    user?.subscriptionPayment?.applicationId ||
-    user?.joiningFeePayment?.applicationId ||
-    null
-  );
-};
+const LOGO_WIDTH = 240;
+const LOGO_HEIGHT = 120;
 
-const isVerified = user => {
-  const status =
-    user?.verificationStatus || user?.applicationStatus || user?.status || '';
+const SplashScreen = ({ navigation }) => {
+  const scaleAnim = useRef(new Animated.Value(0.3)).current;
 
-  return String(status).trim().toLowerCase() === 'verified';
-};
+  // 👇 Screen ke top se start hoga
+  const translateYPin = useRef(new Animated.Value(-height)).current;
 
-const isJoiningFeePaid = user => {
-  if (
-    user?.joiningFeePaid === true ||
-    user?.isJoiningFeePaid === true ||
-    user?.subscriptionPaid === true ||
-    user?.isSubscriptionPaid === true
-  ) {
-    return true;
-  }
-
-  const paymentStatus =
-    user?.subscriptionPayment?.status ||
-    user?.joiningFeePayment?.status ||
-    user?.paymentStatus ||
-    user?.subscriptionPaymentStatus ||
-    user?.joiningFeePaymentStatus ||
-    '';
-
-  return ['completed', 'paid', 'success', 'captured'].includes(
-    String(paymentStatus).trim().toLowerCase(),
-  );
-};
-
-const fetchJoiningFeeStatus = async (token, applicationId) => {
-  if (!token || !applicationId) return null;
-
-  const response = await axios.get(
-    `${BASE_URL}/subscription/status/${applicationId}`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-    },
-  );
-
-  console.log("final status fetch in splash", response?.data, applicationId);
-  return response?.data?.data || null;
-};
-
-const SplashScreen = () => {
-  const navigation = useNavigation();
-
-  useEffect(()=>{
-    checkInternet()
-  }, [])
-
-  const checkInternet = async () => {
-    const netInfo = await NetInfo.fetch();
-    
-    if (!netInfo.isConnected) {
-      navigation.replace('Network-error');
-    } 
-  };
+  const scaleAnimPin = useRef(new Animated.Value(0)).current;
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    const checkTokenAndNavigate = async () => {
-      const startTime = Date.now();
-      try {
-        const token = await AsyncStorage.getItem('userToken');
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(scaleAnim, {
+          toValue: 1.2,
+          duration: 2000,
+          easing: Easing.bezier(0.25, 0.1, 0.25, 1),
+          useNativeDriver: true,
+        }),
 
-        if (!token) {
-          routeTo('Login', startTime);
-          return;
-        }
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 1800,
+          useNativeDriver: true,
+        }),
 
-        const storedUserRaw = await AsyncStorage.getItem('userData');
-        const user = storedUserRaw ? JSON.parse(storedUserRaw) : null;
-        const phone = (await AsyncStorage.getItem('userPhone')) || user?.phone;
-        
-        let latestUser = user;
+        Animated.parallel([
+          // 👇 Smooth falling animation
+          Animated.timing(translateYPin, {
+            toValue: 0,
+            duration: 1800,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }),
 
-        // Perform status checks in parallel if we have a phone number
-        if (phone) {
-          try {
-            const statusResponse = await axios.get(`${BASE_URL}/status/${phone}`, {
-              headers: { Authorization: `Bearer ${token}` }
-            });
-            const statusUser = statusResponse?.data?.data || statusResponse?.data;
-            if (statusUser) {
-              latestUser = {
-                ...(user || {}),
-                ...statusUser,
-              };
-              // Persist latest values back to async storage
-              await AsyncStorage.setItem('userData', JSON.stringify(latestUser));
-            }
-          } catch (error) {
-            console.log('Error fetching status in splash:', error?.message);
-          }
-        }
+          Animated.spring(scaleAnimPin, {
+            toValue: 1,
+            friction: 5,
+            tension: 60,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]),
 
-        const applicationId = getApplicationId(latestUser);
+      Animated.delay(900),
 
-        if (applicationId) {
-          try {
-            const paymentData = await fetchJoiningFeeStatus(token, applicationId);
+      Animated.timing(scaleAnimPin, {
+        toValue: 40,
+        duration: 1800,
+        easing: Easing.out(Easing.exp),
+        useNativeDriver: true,
+      }),
+    ]).start();
 
-            if (!isJoiningFeePaid(paymentData) && !isJoiningFeePaid(latestUser)) {
-              routeTo('JoinFees', startTime, {
-                formData: {
-                  ...(latestUser || {}),
-                  backendData: latestUser,
-                  vehicleType: latestUser?.vehicleType || user?.vehicleType,
-                },
-                applicationId,
-              });
-              return;
-            }
+    const timer = setTimeout(async () => {
+      const token = await AsyncStorage.getItem('customerToken');
+      const onboardingDone = await AsyncStorage.getItem('onboardingCompleted');
 
-            latestUser = {
-              ...(latestUser || {}),
-              ...(paymentData || {}),
-            };
-            await AsyncStorage.setItem('userData', JSON.stringify(latestUser));
-          } catch (error) {
-            console.log('Joining fee status check failed:', error?.response?.data || error?.message);
-
-            if (!isJoiningFeePaid(latestUser)) {
-              routeTo('JoinFees', startTime, {
-                formData: {
-                  ...(latestUser || {}),
-                  backendData: latestUser,
-                  vehicleType: latestUser?.vehicleType || user?.vehicleType,
-                },
-                applicationId,
-              });
-              return;
-            }
-          }
-        }
-
-        if (latestUser && isVerified(latestUser)) {
-          routeTo('MyTabs', startTime);
-          return;
-        }
-
-        routeTo('Docs', startTime, {
-          phone: latestUser?.phone || user?.phone,
-          data: latestUser,
-        });
-
-      } catch (error) {
-        console.error('Splash navigation check failed:', error);
-        routeTo('Login', startTime);
+      if (token) {
+        navigation.replace('MyTabs');
+      } else {
+        navigation.replace('Login');
       }
-    };
+    }, 4000);
 
-    const routeTo = (screenName, startTime, params = null) => {
-      const timeElapsed = Date.now() - startTime;
-      const remainingDelay = Math.max(0, MIN_SPLASH_TIME_MS - timeElapsed);
-
-      setTimeout(() => {
-        if (params) {
-          navigation.replace(screenName, params);
-        } else {
-          navigation.replace(screenName);
-        }
-      }, remainingDelay);
-    };
-
-    checkTokenAndNavigate();
-  }, [navigation]);
+    return () => clearTimeout(timer);
+  }, []);
 
   return (
     <View style={styles.container}>
-      <StatusBar backgroundColor="#fccf1e" barStyle="dark-content" />
-      <Image
-        source={require('../../assets/logo.png')}
-        style={styles.logo}
-        resizeMode="contain"
-      />
+      <StatusBar barStyle="dark-content" backgroundColor={colors.primary} />
+
+      <Animated.View
+        style={[
+          styles.logoWrapper,
+          {
+            transform: [{ scale: scaleAnim }],
+            opacity: fadeAnim,
+          },
+        ]}
+      >
+        <Image
+          source={require('../../assets/splash_logo.png')}
+          style={styles.logo}
+          resizeMode="contain"
+        />
+
+        <Animated.View
+          style={[
+            styles.pinWrapper,
+            {
+              transform: [
+                { translateY: translateYPin },
+                { scale: scaleAnimPin },
+              ],
+            },
+          ]}
+        >
+          <Image
+            source={require('../../assets/pin_splash.png')}
+            style={styles.logoLocation}
+            resizeMode="contain"
+          />
+        </Animated.View>
+      </Animated.View>
     </View>
   );
 };
@@ -209,12 +129,35 @@ export default SplashScreen;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fccf1e',
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: colors.primary,
   },
+
+  logoWrapper: {
+    width: LOGO_WIDTH,
+    height: LOGO_HEIGHT,
+    position: 'relative',
+  },
+
   logo: {
-    width: 200,
-    height: 200,
+    width: LOGO_WIDTH,
+    height: LOGO_HEIGHT,
+  },
+
+  pinWrapper: {
+    position: 'absolute',
+    left: LOGO_WIDTH * 0.65,
+    top: LOGO_HEIGHT * 0.31,
+
+    width: 18,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  logoLocation: {
+    width: 18,
+    height: 16,
   },
 });

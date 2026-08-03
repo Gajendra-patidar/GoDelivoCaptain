@@ -723,7 +723,7 @@ const JoiningFeesScreen = ({ navigation, route }) => {
             <View style={styles.benefitRow}>
               <Icon name="alarm" size={25} color="#4CAF50" />
               <Text style={[styles.benefitText, { marginRight: 10 }]}>
-                After paying joining fees, document verification might takes up
+                After paying Partner Security Balance, document verification might takes up
                 to 5 Days
               </Text>
             </View>

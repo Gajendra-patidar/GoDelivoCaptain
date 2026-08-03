@@ -7,11 +7,14 @@ import {
   StatusBar,
   Share,
 } from 'react-native';
-import React from 'react';
+import React, { useState } from 'react';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { useTranslation } from 'react-i18next';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Modal } from 'react-native';
 
 const MoreScreen = ({ navigation }) => {
+  const [langModalVisible, setLangModalVisible] = useState(false);
   const menuOptions = [
     {
       id: 1,
@@ -66,9 +69,22 @@ const MoreScreen = ({ navigation }) => {
     //   color: '#E91E63',
     //   route: 'Incentives',
     // },
+    {
+      id: 7,
+      title: 'change language',
+      icon: 'language-outline',
+      color: '#00BCD4',
+      action: 'ChangeLanguage',
+    },
   ];
 
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+
+  const changeLanguage = async (lng) => {
+    i18n.changeLanguage(lng);
+    await AsyncStorage.setItem('user-language', lng);
+    setLangModalVisible(false);
+  };
 
   const handleNavigate = async route => {
     if (route === 'ShareApp') {
@@ -80,6 +96,10 @@ const MoreScreen = ({ navigation }) => {
       } catch (error) {
         console.error('Error sharing:', error);
       }
+      return;
+    }
+    if (route === 'ChangeLanguage') {
+      setLangModalVisible(true);
       return;
     }
     if (route) {
@@ -109,7 +129,7 @@ const MoreScreen = ({ navigation }) => {
             <TouchableOpacity
               key={item.id}
               style={styles.menuItem}
-              onPress={() => handleNavigate(item.route)}
+              onPress={() => handleNavigate(item.route || item.action)}
             >
               <View style={styles.menuLeft}>
                 <View
@@ -135,6 +155,39 @@ const MoreScreen = ({ navigation }) => {
           ))}
         </View>
       </ScrollView>
+
+      <Modal
+        visible={langModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setLangModalVisible(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPress={() => setLangModalVisible(false)}
+        >
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>{t('select language')}</Text>
+            
+            <TouchableOpacity 
+              style={styles.langOption} 
+              onPress={() => changeLanguage('en')}
+            >
+              <Text style={[styles.langText, i18n.language === 'en' && styles.langTextSelected]}>English</Text>
+              {i18n.language === 'en' && <Ionicons name="checkmark-circle" size={24} color="#fccf1e" />}
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={styles.langOption} 
+              onPress={() => changeLanguage('hi')}
+            >
+              <Text style={[styles.langText, i18n.language === 'hi' && styles.langTextSelected]}>हिंदी (Hindi)</Text>
+              {i18n.language === 'hi' && <Ionicons name="checkmark-circle" size={24} color="#fccf1e" />}
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 };
@@ -221,5 +274,40 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#6B7280',
     fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    width: '80%',
+    borderRadius: 12,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  langOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  langText: {
+    fontSize: 16,
+    color: '#333',
+  },
+  langTextSelected: {
+    fontWeight: 'bold',
+    color: '#000',
   },
 });

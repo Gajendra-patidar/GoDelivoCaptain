@@ -13,6 +13,7 @@ import {
   ScrollView,
   Linking,
   Keyboard,
+  Modal,
 } from 'react-native';
 import RNOtpVerify from 'react-native-otp-verify';
 import toast from '../../utils/toast';
@@ -23,6 +24,7 @@ import { addNotification } from '../../services/localDriverData';
 import { useDispatch } from 'react-redux';
 import { getProfile } from '../../store/slices/profileSlice';
 import { Toast } from 'toastify-react-native';
+import { changeLanguage } from '../../utils/changeLanguage';
 
 const OTP_LENGTH = 6;
 
@@ -121,6 +123,8 @@ const LoginScreen = ({ navigation }) => {
   const [isChecked, setIsChecked] = useState(false);
   const [isChecked_TDS, setIsChecked_TDS] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [showLanguagePopup, setShowLanguagePopup] = useState(false);
+  const [verifiedUser, setVerifiedUser] = useState(null);
 
   const otpInputRef = useRef(null);
   const timerRef = useRef(null);
@@ -470,8 +474,15 @@ const LoginScreen = ({ navigation }) => {
 
           stopOtpAutoFill();
 
-          // Navigate directly instead of showing a popup
-          navigateAfterLogin(response?.data?.data);
+          // Check if language is already set
+          const storedLang = await AsyncStorage.getItem('user-language');
+          if (!storedLang) {
+            setVerifiedUser(response?.data?.data);
+            setShowLanguagePopup(true);
+          } else {
+            // Navigate directly instead of showing a popup
+            navigateAfterLogin(response?.data?.data);
+          }
         } else {
           toast.error(response.data.message || 'Invalid OTP');
           setOtp('');
@@ -770,6 +781,30 @@ const LoginScreen = ({ navigation }) => {
     </>
   );
 
+  const handleSelectLanguage = (lang) => {
+    changeLanguage(lang);
+    setShowLanguagePopup(false);
+    navigateAfterLogin(verifiedUser);
+  };
+
+  const renderLanguageModal = () => (
+    <Modal visible={showLanguagePopup} transparent animationType="fade">
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Select Language / भाषा चुनें</Text>
+          
+          <TouchableOpacity style={styles.langButton} onPress={() => handleSelectLanguage('en')}>
+            <Text style={styles.langButtonText}>English</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity style={styles.langButton} onPress={() => handleSelectLanguage('hi')}>
+            <Text style={styles.langButtonText}>हिंदी (Hindi)</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -783,6 +818,7 @@ const LoginScreen = ({ navigation }) => {
         showsVerticalScrollIndicator={false}
       >
         {showOTP ? renderOTPScreen() : renderMobileScreen()}
+        {renderLanguageModal()}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -1005,5 +1041,38 @@ const styles = StyleSheet.create({
     color: '#fccf1e',
     fontWeight: '700',
     textDecorationLine: 'underline',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    width: '80%',
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 20,
+    alignItems: 'center',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  langButton: {
+    width: '100%',
+    padding: 15,
+    backgroundColor: '#fccf1e',
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 15,
+  },
+  langButtonText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#000',
   },
 });

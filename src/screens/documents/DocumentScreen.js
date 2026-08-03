@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   View,
   Text,
@@ -61,6 +62,7 @@ const getVehicleIcon = type => {
 };
 
 const DocumentScreen = ({ navigation, route }) => {
+  const { t } = useTranslation();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -967,7 +969,7 @@ const DocumentScreen = ({ navigation, route }) => {
             onPress={() => pickImage(key, false)}
           >
             <Icon name="photo-library" size={24} color="#fccf1e" />
-            <Text style={styles.uploadBtnText}>Gallery</Text>
+            <Text style={styles.uploadBtnText}>{t('Gallery')}</Text>
           </TouchableOpacity>
 
           {showCamera && (
@@ -983,7 +985,7 @@ const DocumentScreen = ({ navigation, route }) => {
               }}
             >
               <Icon name="camera-alt" size={24} color="#fccf1e" />
-              <Text style={styles.uploadBtnText}>Camera</Text>
+              <Text style={styles.uploadBtnText}>{t('Camera')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -1010,7 +1012,7 @@ const DocumentScreen = ({ navigation, route }) => {
           <View style={styles.statusBadgePending}>
             <Icon name="hourglass-top" size={48} color="#fccf1e" />
           </View>
-          <Text style={styles.reviewTitle}>Application Under Review</Text>
+          <Text style={styles.reviewTitle}>{t('Application Under Review')}</Text>
           <Text style={styles.reviewText}>
             Your documents have been submitted successfully. Our team is
             currently verifying your details. This usually takes 24-48 hours.
@@ -1022,7 +1024,7 @@ const DocumentScreen = ({ navigation, route }) => {
             </Text>
           </View>
           <TouchableOpacity style={styles.refreshBtn} onPress={checkStatus}>
-            <Text style={styles.refreshBtnText}>REFRESH STATUS</Text>
+            <Text style={styles.refreshBtnText}>{t('REFRESH STATUS')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1037,9 +1039,9 @@ const DocumentScreen = ({ navigation, route }) => {
           <View style={styles.statusBadgeError}>
             <Icon name="error-outline" size={48} color="#FF3B30" />
           </View>
-          <Text style={styles.reviewTitle}>Application Rejected</Text>
+          <Text style={styles.reviewTitle}>{t('Application Rejected')}</Text>
           <Text style={styles.rejectReasonText}>
-            Reason: {rejectReason || 'Document verification failed.'}
+            {t('Reason: ')}{rejectReason || 'Document verification failed.'}
           </Text>
           <Text style={styles.reviewText}>
             Please re-submit your documents with correct information to proceed.
@@ -1048,7 +1050,7 @@ const DocumentScreen = ({ navigation, route }) => {
             style={styles.reSubmitBtn}
             onPress={() => setVerifyStatusVal('PENDING')}
           >
-            <Text style={styles.reSubmitBtnText}>RE-SUBMIT DOCUMENTS</Text>
+            <Text style={styles.reSubmitBtnText}>{t('RE-SUBMIT DOCUMENTS')}</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -1059,7 +1061,7 @@ const DocumentScreen = ({ navigation, route }) => {
     return (
       <View style={styles.loadingContainerFull}>
         <ActivityIndicator size="large" color="#fccf1e" />
-        <Text style={styles.loadingTextFull}>Loading...</Text>
+        <Text style={styles.loadingTextFull}>{t('Loading...')}</Text>
       </View>
     );
   }
@@ -1073,7 +1075,7 @@ const DocumentScreen = ({ navigation, route }) => {
           <Icon name="location-off" size={70} color="#fccf1e" />
         </View>
 
-        <Text style={styles.comingSoonTitle}>Coming Soon!</Text>
+        <Text style={styles.comingSoonTitle}>{t('Coming Soon!')}</Text>
 
         <Text style={styles.comingSoonText}>
           Currently GoDelivo Captain registration is available only in Indore,
@@ -1091,7 +1093,7 @@ const DocumentScreen = ({ navigation, route }) => {
             setStep(1);
           }}
         >
-          <Text style={styles.comingSoonBtnText}>Change Location</Text>
+          <Text style={styles.comingSoonBtnText}>{t('Change Location')}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -1109,7 +1111,7 @@ const DocumentScreen = ({ navigation, route }) => {
         </TouchableOpacity>
         <View style={{ flexDirection: 'row', alignItems:'center', gap:'28%'}}>
           <View>
-            <Text style={styles.headerTitle}>Driver Application</Text>
+            <Text style={styles.headerTitle}>{t('Driver Application')}</Text>
             <Text style={styles.headerSubtitle}>
               Step {step} of 5:{' '}
               {step === 1
@@ -1139,7 +1141,7 @@ const DocumentScreen = ({ navigation, route }) => {
         <View style={styles.globalLoader}>
           <ActivityIndicator size="large" color="#fccf1e" />
           <Text style={styles.loaderText}>
-            {uploading ? 'Uploading documents...' : 'Submitting...'}
+            {uploading ? t('Uploading documents...') : t('Submitting...')}
           </Text>
         </View>
       )}
@@ -1156,11 +1158,11 @@ const DocumentScreen = ({ navigation, route }) => {
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
                   <Icon name="person" size={24} color="#fccf1e" />
-                  <Text style={styles.sectionTitle}>Personal Information</Text>
+                  <Text style={styles.sectionTitle}>{t('Personal Information')}</Text>
                 </View>
 
                 {/* Profile Photo */}
-                {renderImagePicker('Profile Photo', 'profilePhoto', true, true)}
+                {renderImagePicker(t('Profile Photo'), 'profilePhoto', true, true)}
 
                 <View style={styles.inputContainer}>
                   <Icon
@@ -1170,7 +1172,7 @@ const DocumentScreen = ({ navigation, route }) => {
                     style={styles.inputIcon}
                   />
                   <TextInput
-                    placeholder="Full Name *"
+                    placeholder={t('Full Name *')}
                     style={styles.input}
                     placeholderTextColor="#999"
                     value={form.fullName}
@@ -1186,7 +1188,7 @@ const DocumentScreen = ({ navigation, route }) => {
                     style={styles.inputIcon}
                   />
                   <TextInput
-                    placeholder="Email Address *"
+                    placeholder={t('Email Address *')}
                     style={styles.input}
                     placeholderTextColor="#999"
                     keyboardType="email-address"
@@ -1214,7 +1216,7 @@ const DocumentScreen = ({ navigation, route }) => {
                     onPress={() => setOpenDatePicker(true)}
                   >
                     <TextInput
-                      placeholder="Date of Birth *"
+                      placeholder={t('Date of Birth *')}
                       style={styles.input}
                       placeholderTextColor="#999"
                       value={form.dateOfBirth}
@@ -1255,7 +1257,7 @@ const DocumentScreen = ({ navigation, route }) => {
                     style={styles.inputIcon}
                   />
                   <TextInput
-                    placeholder="Street Address *"
+                    placeholder={t('Street Address *')}
                     style={styles.input}
                     placeholderTextColor="#999"
                     value={form.address}
@@ -1290,7 +1292,7 @@ const DocumentScreen = ({ navigation, route }) => {
                           { color: form.state ? '#111827' : '#8A8A8A' },
                         ]}
                       >
-                        {form.state || 'Select State *'}
+                        {form.state || t('Select State *')}
                       </Text>
 
                       <Icon name="keyboard-arrow-down" size={22} color="#999" />
@@ -1347,7 +1349,7 @@ const DocumentScreen = ({ navigation, route }) => {
                           { color: form.city ? '#111827' : '#8A8A8A' },
                         ]}
                       >
-                        {form.city || 'Select City *'}
+                        {form.city || t('Select City *')}
                       </Text>
 
                       <Icon name="keyboard-arrow-down" size={22} color="#999" />
@@ -1383,7 +1385,7 @@ const DocumentScreen = ({ navigation, route }) => {
                     style={styles.inputIcon}
                   />
                   <TextInput
-                    placeholder="Pincode *"
+                    placeholder={t('Pincode *')}
                     style={styles.input}
                     placeholderTextColor="#999"
                     keyboardType="numeric"
@@ -1403,18 +1405,18 @@ const DocumentScreen = ({ navigation, route }) => {
             <View style={styles.sectionCard}>
               <View style={styles.sectionHeader}>
                 <Icon name="description" size={24} color="#fccf1e" />
-                <Text style={styles.sectionTitle}>Identity Documents</Text>
+                <Text style={styles.sectionTitle}>{t('Identity Documents')}</Text>
               </View>
 
               {/* Aadhar Front & Back */}
               {renderImagePicker(
-                'Aadhar Card (Front)',
+                t('Aadhar Card (Front)'),
                 'aadharFront',
                 true,
                 true,
               )}
               {renderImagePicker(
-                'Aadhar Card (Back)',
+                t('Aadhar Card (Back)'),
                 'aadharBack',
                 true,
                 true,
@@ -1428,7 +1430,7 @@ const DocumentScreen = ({ navigation, route }) => {
                   style={styles.inputIcon}
                 />
                 <TextInput
-                  placeholder="Aadhar Number * (12 digits)"
+                  placeholder={t('Aadhar Number * (12 digits)')}
                   style={styles.input}
                   placeholderTextColor="#999"
                   keyboardType="numeric"
@@ -1441,11 +1443,11 @@ const DocumentScreen = ({ navigation, route }) => {
               </View>
 
               {/* PAN Card */}
-              {renderImagePicker('PAN Card', 'panCard', true, true)}
+              {renderImagePicker(t('PAN Card'), 'panCard', true, true)}
 
               {/* Driving License */}
               {renderImagePicker(
-                'Driving License',
+                t('Driving License'),
                 'drivingLicense',
                 true,
                 true,
@@ -1459,7 +1461,7 @@ const DocumentScreen = ({ navigation, route }) => {
                   style={styles.inputIcon}
                 />
                 <TextInput
-                  placeholder="License Number *"
+                  placeholder={t('License Number *')}
                   style={styles.input}
                   placeholderTextColor="#999"
                   maxLength={16}
@@ -1478,12 +1480,12 @@ const DocumentScreen = ({ navigation, route }) => {
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
                   <Icon name="directions-car" size={24} color="#fccf1e" />
-                  <Text style={styles.sectionTitle}>Vehicle Information</Text>
+                  <Text style={styles.sectionTitle}>{t('Vehicle Information')}</Text>
                 </View>
 
                 {/* Vehicle Photo */}
                 {renderImagePicker(
-                  'Vehicle Photograph',
+                  t('Vehicle Photograph'),
                   'vehiclePhoto',
                   true,
                   true,
@@ -1539,7 +1541,7 @@ const DocumentScreen = ({ navigation, route }) => {
                     style={styles.inputIcon}
                   />
                   <TextInput
-                    placeholder="Vehicle Number * (e.g., MH12AB1234)"
+                    placeholder={t('Vehicle Number * (e.g., MH12AB1234)')}
                     style={styles.input}
                     placeholderTextColor="#999"
                     autoCapitalize="characters"
@@ -1610,11 +1612,11 @@ const DocumentScreen = ({ navigation, route }) => {
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeader}>
                   <Icon name="assignment" size={24} color="#fccf1e" />
-                  <Text style={styles.sectionTitle}>Vehicle Documents</Text>
+                  <Text style={styles.sectionTitle}>{t('Vehicle Documents')}</Text>
                 </View>
 
                 {/* Vehicle RC */}
-                {renderImagePicker('Vehicle RC', 'vehicleRC', true, true)}
+                {renderImagePicker(t('Vehicle RC'), 'vehicleRC', true, true)}
               </View>
             </View>
           )}
@@ -1623,11 +1625,11 @@ const DocumentScreen = ({ navigation, route }) => {
             <View style={styles.sectionCard}>
               <View style={styles.sectionHeader}>
                 <Icon name="person-pin" size={24} color="#fccf1e" />
-                <Text style={styles.sectionTitle}>Driver Details</Text>
+                <Text style={styles.sectionTitle}>{t('Driver Details')}</Text>
               </View>
 
               <Text style={styles.label}>
-                I will be driving this vehicle{' '}
+                {t('I will be driving this vehicle *').replace(' *', '')}{' '}
                 <Text style={styles.requiredStar}>*</Text>
               </Text>
 
@@ -1703,7 +1705,7 @@ const DocumentScreen = ({ navigation, route }) => {
               {form.hasHiredDriver === 'true' && (
                 <View>
                   <Text style={styles.label}>
-                    Driver Name <Text style={styles.requiredStar}>*</Text>
+                    {t('Driver Name *').replace(' *', '')} <Text style={styles.requiredStar}>*</Text>
                   </Text>
 
                   <View style={styles.inputContainer}>
@@ -1714,7 +1716,7 @@ const DocumentScreen = ({ navigation, route }) => {
                       style={styles.inputIcon}
                     />
                     <TextInput
-                      placeholder="Driver Name"
+                      placeholder={t('Driver Name')}
                       style={styles.input}
                       placeholderTextColor="#999"
                       value={form.hiredDriverName}
@@ -1725,7 +1727,7 @@ const DocumentScreen = ({ navigation, route }) => {
                   </View>
 
                   <Text style={styles.label}>
-                    Driver Phone Number{' '}
+                    {t('Driver Phone Number *').replace(' *', '')}{' '}
                     <Text style={styles.requiredStar}>*</Text>
                   </Text>
 
@@ -1737,7 +1739,7 @@ const DocumentScreen = ({ navigation, route }) => {
                       style={styles.inputIcon}
                     />
                     <TextInput
-                      placeholder="Driver Phone Number"
+                      placeholder={t('Driver Phone Number')}
                       style={styles.input}
                       placeholderTextColor="#999"
                       keyboardType="numeric"
@@ -1753,12 +1755,12 @@ const DocumentScreen = ({ navigation, route }) => {
                   </View>
 
                   <Text style={styles.label}>
-                    Upload Driver License{' '}
+                    {t('Upload Driver License *').replace(' *', '')}{' '}
                     <Text style={styles.requiredStar}>*</Text>
                   </Text>
 
                   {renderImagePicker(
-                    'Driving Licence',
+                    t('Driving Licence'),
                     'hiredDriverLicense',
                     true,
                     true,
@@ -1773,7 +1775,7 @@ const DocumentScreen = ({ navigation, route }) => {
             <View style={styles.sectionCard}>
               <View style={styles.sectionHeader}>
                 <Icon name="account-balance" size={24} color="#fccf1e" />
-                <Text style={styles.sectionTitle}>Bank Account Details</Text>
+                <Text style={styles.sectionTitle}>{t('Bank Account Details')}</Text>
               </View>
 
               <View style={styles.inputContainer}>
@@ -1784,7 +1786,7 @@ const DocumentScreen = ({ navigation, route }) => {
                   style={styles.inputIcon}
                 />
                 <TextInput
-                  placeholder="Account Holder Name *"
+                  placeholder={t('Account Holder Name *')}
                   style={styles.input}
                   placeholderTextColor="#999"
                   value={form.accountHolderName}
@@ -1800,7 +1802,7 @@ const DocumentScreen = ({ navigation, route }) => {
                   style={styles.inputIcon}
                 />
                 <TextInput
-                  placeholder="Account Number *"
+                  placeholder={t('Account Number *')}
                   style={styles.input}
                   placeholderTextColor="#999"
                   maxLength={18}
@@ -1818,7 +1820,7 @@ const DocumentScreen = ({ navigation, route }) => {
                   style={styles.inputIcon}
                 />
                 <TextInput
-                  placeholder="IFSC Code *"
+                  placeholder={t('IFSC Code *')}
                   style={styles.input}
                   placeholderTextColor="#999"
                   value={form.ifscCode}
@@ -1847,7 +1849,7 @@ const DocumentScreen = ({ navigation, route }) => {
                   style={styles.inputIcon}
                 />
                 <TextInput
-                  placeholder="Bank Name"
+                  placeholder={t('Bank Name')}
                   value={form.bankName}
                   editable={false}
                   style={[styles.input, styles.disabledInput]}
@@ -1865,7 +1867,7 @@ const DocumentScreen = ({ navigation, route }) => {
                   style={styles.inputIcon}
                 />
                 <TextInput
-                  placeholder="Branch Name"
+                  placeholder={t('Branch Name')}
                   value={form.branchName}
                   editable={false}
                   style={[styles.input, styles.disabledInput]}
@@ -1893,7 +1895,7 @@ const DocumentScreen = ({ navigation, route }) => {
             disabled={loading || uploading}
           >
             <Icon name="arrow-back" size={20} color="#6B7280" />
-            <Text style={styles.secondaryBtnText}>Back</Text>
+            <Text style={styles.secondaryBtnText}>{t('Back')}</Text>
           </TouchableOpacity>
         )}
 
@@ -1907,7 +1909,7 @@ const DocumentScreen = ({ navigation, route }) => {
             onPress={handleNext}
             disabled={loading || uploading}
           >
-            <Text style={styles.primaryBtnText}>Continue</Text>
+            <Text style={styles.primaryBtnText}>{t('Continue')}</Text>
             <Icon name="arrow-forward" size={20} color="#000" />
           </TouchableOpacity>
         ) : (
@@ -1921,7 +1923,7 @@ const DocumentScreen = ({ navigation, route }) => {
             ) : (
               <>
                 <Icon name="check-circle" size={20} color="#000" />
-                <Text style={styles.primaryBtnText}>Submit Application</Text>
+                <Text style={styles.primaryBtnText}>{t('Submit Application')}</Text>
               </>
             )}
           </TouchableOpacity>
