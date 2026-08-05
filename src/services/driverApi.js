@@ -12,7 +12,7 @@ let isLoggingOut = false;
 const setupInterceptors = (clientInstance, name = 'API') => {
   clientInstance.interceptors.request.use(
     async config => {
-      const token = await AsyncStorage.getItem('userToken');
+      let token = await AsyncStorage.getItem('userToken');
 
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
@@ -33,23 +33,25 @@ const setupInterceptors = (clientInstance, name = 'API') => {
 
       const isTokenExpired =
         status === 401 ||
-        message.toLowerCase().includes('token expired') ||
-        message.toLowerCase().includes('jwt expired') ||
-        message.toLowerCase().includes('unauthorized');
+        (status === 403 && (
+          message.toLowerCase().includes('token expired') ||
+          message.toLowerCase().includes('jwt expired')
+        ));
 
       const isIgnoredEndpoint = url.includes('/arrived') || url.includes('/start') || url.includes('/accept');
 
       if (isTokenExpired && !isLoggingOut && !isIgnoredEndpoint) {
         isLoggingOut = true;
 
-        // Only remove the token so we don't lose the driver profile data
-        await AsyncStorage.removeItem('userToken');
+        // Only remove the token — keep profile/driver data so the user
+        // can re-login without losing their registration state.
+        // await AsyncStorage.removeItem('userToken');
 
         navigate('Login');
 
         setTimeout(() => {
           isLoggingOut = false;
-        }, 1000);
+        }, 3000);
       }
 
       return Promise.reject(error);
@@ -84,10 +86,10 @@ const withAuth = async () => {
 
   return token
     ? {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      }
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
     : {};
 };
 
@@ -165,9 +167,9 @@ export const driverApi = {
 
     const locationPayload = coords
       ? {
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-        }
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+      }
       : {};
 
     const response = await main_client.post(
@@ -181,6 +183,9 @@ export const driverApi = {
       },
       config,
     );
+
+    console.log("api datra", response);
+
 
     return response?.data?.data;
   },
@@ -206,9 +211,9 @@ export const driverApi = {
       rideId: orderId,
       driverLocation: coords
         ? {
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-          }
+          latitude: coords.latitude,
+          longitude: coords.longitude,
+        }
         : null,
     };
     console.log('check data', payload);
@@ -246,7 +251,7 @@ export const driverApi = {
   async cancelOrder(orderId, reason = 'Cancelled by driver') {
     const config = await withAuth();
     await clearActiveOrder();
-    
+
     const payload = { reason, rideId: orderId };
     try {
       const response = await main_client.post(

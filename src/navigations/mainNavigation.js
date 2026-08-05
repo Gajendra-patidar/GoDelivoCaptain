@@ -10,6 +10,7 @@ import SplashScreen from '../screens/splash/SplashScreen';
 import DocumentScreen from '../screens/documents/DocumentScreen';
 import ProfileScreen from '../screens/profile/ProfileScreen';
 import MapScreen from '../screens/map/MapScreen';
+import NavigationScreen from '../screens/map/NavigationScreen';
 import LoginScreen from '../screens/auth/LoginScreen';
 import EarningsScreen from '../screens/earnings/EarningsScreen';
 import OrderHistoryScreen from '../screens/history/OrderHistoryScreen';
@@ -37,6 +38,7 @@ function RootStack() {
       <Stack.Screen name="Docs" component={DocumentScreen} />
       <Stack.Screen name="Profile" component={ProfileScreen} />
       <Stack.Screen name="Map" component={MapScreen} />
+      <Stack.Screen name="Navigation" component={NavigationScreen} options={{ gestureEnabled: false }} />
       <Stack.Screen name="Earnings" component={EarningsScreen} />
       <Stack.Screen name="OrderHistory" component={OrderHistoryScreen} />
       <Stack.Screen name="Notifications" component={NotificationScreen} />

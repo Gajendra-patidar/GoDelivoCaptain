@@ -43,7 +43,6 @@ import {
 import { driverApi } from '../../services/driverApi';
 import { theme } from '../../theme';
 import SwipeToggle from '../../components/SwipeToggle';
-import LinearGradient from 'react-native-linear-gradient';
 import notifee, { EventType } from '@notifee/react-native';
 import {
   requestForegroundNotificationPermission,
@@ -64,10 +63,6 @@ import { cancelRideRequestNotification } from '../../services/rideRequestNotific
 import SocketService from '../../services/socketService';
 import { setLocationPermission } from '../../store/slices/permissionSlice';
 import { getLocationPermission } from '../../services/permissionService';
-import {
-  startOverlayBubble,
-  stopOverlayBubble,
-} from '../../services/FloatingBubbleService';
 
 const getTimeGreeting = () => {
   const hour = new Date().getHours();
@@ -138,9 +133,9 @@ const HomeScreen = ({ navigation }) => {
           // Trigger the standard online flow to ensure sockets and GPS start correctly
           handleToggleOnline(true);
         }
-      } catch (e) {}
+      } catch (e) { }
     };
-    
+
     // Give Redux a moment to settle, then restore status
     setTimeout(restoreOnlineStatus, 500);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -203,12 +198,13 @@ const HomeScreen = ({ navigation }) => {
     try {
       const earnings = await driverApi.getEarnings();
       const wallet = earnings?.wallet;
+      console.log('Wallet Balance:', wallet);
       if (wallet) {
         const local = await setWalletData(wallet);
         setWalletBalance(local.balance);
         return;
       }
-    } catch {}
+    } catch { }
 
     const fallbackWallet = await getWalletData();
     setWalletBalance(fallbackWallet.balance);
@@ -239,7 +235,7 @@ const HomeScreen = ({ navigation }) => {
         setOrderComing(true);
         playOrderSound();
       }
-    } catch (error) {}
+    } catch (error) { }
   }, [isOnline, navigation, orderComing]);
 
   const loadHomeData = useCallback(async () => {
@@ -260,7 +256,9 @@ const HomeScreen = ({ navigation }) => {
           return;
         }
       } catch (error) {
-        if (error.response?.status === 404) {
+        console.log("raj ia du ic z", error.response);
+
+        if (error.response?.status === 401 || error.response?.status === 404) {
           await clearActiveOrder();
         } else {
           SocketService.setActiveRide(rideId);
@@ -297,7 +295,7 @@ const HomeScreen = ({ navigation }) => {
               setDocDes(profileData.rejectionReason || 'Documents rejected');
             }
           }
-        } catch (error) {}
+        } catch (error) { }
       };
 
       loadHomeData();
@@ -398,7 +396,7 @@ const HomeScreen = ({ navigation }) => {
 
   // Initialize Socket.io event listeners
   const initializeSocketListeners = useCallback(() => {
-    
+
     const handleNewRequest = async rideData => {
       try {
         const payload = typeof rideData === 'string' ? JSON.parse(rideData) : rideData;
@@ -465,7 +463,7 @@ const HomeScreen = ({ navigation }) => {
 
       // Initialize Socket.io listeners
       initializeSocketListeners();
-    } catch (error) {}
+    } catch (error) { }
   }, [
     handleIncomingMessage,
     handleNotificationPress,
@@ -756,11 +754,9 @@ const HomeScreen = ({ navigation }) => {
         dispatch(setOnline());
         setToggleBusy(false);
         setPendingOnlineStatus(null);
-        AsyncStorage.setItem('driver_isOnline', 'true').catch(() => {});
+        AsyncStorage.setItem('driver_isOnline', 'true').catch(() => { });
         toast.success('You are now Online. Ready to receive orders!', 'Online');
         console.log('[ONLINE_STATUS] Optimistic local status set: online');
-        // ── Start native overlay bubble (visible outside app too) ──────────
-        startOverlayBubble().catch(() => {});
         // ──────────────────────────────────────────────────────────────────
 
         Promise.resolve()
@@ -770,14 +766,14 @@ const HomeScreen = ({ navigation }) => {
               console.error('Online background sync error:', error);
               showToggleFailure(error);
               LocationService.stop();
-              try { await stopService(); } catch {}
+              try { await stopService(); } catch { }
               latestToggleTargetRef.current = false;
               dispatch(setOffline());
               setLocationServiceHealthy(false);
               console.log('[ONLINE_STATUS] Rollback local status: offline');
               SocketService.emitStatusChange(false, false);
               SocketService.disconnect();
-              NotificationService.updateOnlineStatus(false).catch(() => {});
+              NotificationService.updateOnlineStatus(false).catch(() => { });
             };
 
             try {
@@ -788,7 +784,7 @@ const HomeScreen = ({ navigation }) => {
                 // Another toggle happened — silently stop what we started
                 if (!latestToggleTargetRef.current) {
                   LocationService.stop();
-                  try { await stopService(); } catch {}
+                  try { await stopService(); } catch { }
                 }
                 return;
               }
@@ -809,7 +805,7 @@ const HomeScreen = ({ navigation }) => {
 
               SocketService.emitStatusChange(true, true);
               console.log('[ONLINE_STATUS] Socket status emitted: online');
-              NotificationService.updateOnlineStatus(true).catch(() => {});
+              NotificationService.updateOnlineStatus(true).catch(() => { });
 
               if (serverResult?.nearbyOrder) {
                 setNotificationData(serverResult.nearbyOrder);
@@ -845,25 +841,23 @@ const HomeScreen = ({ navigation }) => {
       setToggleBusy(false);
       setPendingOnlineStatus(null);
       setLocationServiceHealthy(false);
-      AsyncStorage.setItem('driver_isOnline', 'false').catch(() => {});
+      AsyncStorage.setItem('driver_isOnline', 'false').catch(() => { });
       toast.success('You are now Offline.', 'Offline');
       console.log('[ONLINE_STATUS] Optimistic local status set: offline');
-      // ── Stop native overlay bubble ─────────────────────────────────────
-      stopOverlayBubble().catch(() => {});
       // ──────────────────────────────────────────────────────────────────
 
       // Background: sync with server — fire-and-forget, never rollback UI
-      Promise.all([
-        driverApi.updateOnlineStatus(false, lastCoords).catch(err => {
-          // Log only — a 400/network error must NOT flip driver back online
-          console.warn('[ONLINE_STATUS] Server offline sync error (ignored):', err?.response?.status, err?.message);
-        }),
-        stopService().catch(() => {}),
-        NotificationService.updateOnlineStatus(false).catch(() => {}),
-        clearActiveOrder().catch(() => {}),
-      ]).then(() => {
-        console.log('[ONLINE_STATUS] Offline background sync complete');
-      });
+      // Promise.all([
+      //   driverApi.updateOnlineStatus(false, lastCoords).catch(err => {
+      //     // Log only — a 400/network error must NOT flip driver back online
+      //     console.warn('[ONLINE_STATUS] Server offline sync error (ignored):', err?.response?.status, err?.message);
+      //   }),
+      //   stopService().catch(() => { }),
+      //   NotificationService.updateOnlineStatus(false).catch(() => { }),
+      //   clearActiveOrder().catch(() => { }),
+      // ]).then(() => {
+      //   console.log('[ONLINE_STATUS] Offline background sync complete');
+      // });
 
       return true;
     } catch (error) {
@@ -938,7 +932,7 @@ const HomeScreen = ({ navigation }) => {
     stopOrderSound();
     try {
       await driverApi.rejectOrder(order.id);
-    } catch {}
+    } catch { }
 
     await addNotification({
       title: 'Order Rejected',

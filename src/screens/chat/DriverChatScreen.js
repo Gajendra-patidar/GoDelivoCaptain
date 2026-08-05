@@ -121,8 +121,6 @@ const DriverChatScreen = ({ route, navigation }) => {
         },
       });
       const res = await response.json();
-      console.log("djc i xdi inwjd", res);
-      
       if (res.success) {
         // Mark each historical message with isOwnMessage flag
         const currentDriverId = driverId;

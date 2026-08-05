@@ -27,7 +27,7 @@ const errorMessage = error => {
 };
 
 const withAuth = async () => {
-  const token = await AsyncStorage.getItem('userToken');
+  let token = await AsyncStorage.getItem('userToken');
   if (!token) {
     throw new Error('Missing user token. Please login again.');
   }

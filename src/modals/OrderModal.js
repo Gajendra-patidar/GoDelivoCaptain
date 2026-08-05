@@ -220,9 +220,32 @@ export const OrderModal = ({
                       <Text style={styles.infoValue}>{durationMin} min</Text>
                     </View>
                   ) : null}
-                  <View style={styles.infoItem}>
-                    <Ionicons name="wallet-outline" size={18} color={theme.colors.muted} />
-                    <Text style={styles.infoValue}>{paymentMode}</Text>
+                  <View style={[
+                    styles.infoItem, 
+                    {
+                      backgroundColor: paymentMode.toLowerCase() === 'cash' ? '#dcfce7' : '#dbeafe',
+                      paddingHorizontal: 10,
+                      paddingVertical: 4,
+                      borderRadius: 16,
+                      borderWidth: 1,
+                      borderColor: paymentMode.toLowerCase() === 'cash' ? '#22c55e' : '#3b82f6'
+                    }
+                  ]}>
+                    <Ionicons 
+                      name={paymentMode.toLowerCase() === 'cash' ? 'cash' : 'card'} 
+                      size={16} 
+                      color={paymentMode.toLowerCase() === 'cash' ? '#15803d' : '#1d4ed8'} 
+                    />
+                    <Text style={[
+                      styles.infoValue, 
+                      { 
+                        color: paymentMode.toLowerCase() === 'cash' ? '#15803d' : '#1d4ed8',
+                        fontWeight: '900',
+                        fontSize: 14
+                      }
+                    ]}>
+                      {paymentMode.toUpperCase()}
+                    </Text>
                   </View>
                 </View>
 
