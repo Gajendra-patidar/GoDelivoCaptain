@@ -1,0 +1,105 @@
+{
+  "project_info": {
+    "project_number": "98668005964",
+    "project_id": "godelivo-4ced4",
+    "storage_bucket": "godelivo-4ced4.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:98668005964:android:89cd9e6bfe363a9958c2e9",
+        "android_client_info": {
+          "package_name": "com.captainapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCICbt6jnU3Sk0QVsS3eagaFUjeBJ6VKqU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:98668005964:android:1c2a8dde7d42462058c2e9",
+        "android_client_info": {
+          "package_name": "com.godelivo"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCICbt6jnU3Sk0QVsS3eagaFUjeBJ6VKqU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:98668005964:android:dec0914ef9a2017658c2e9",
+        "android_client_info": {
+          "package_name": "com.godelivo.captain"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCICbt6jnU3Sk0QVsS3eagaFUjeBJ6VKqU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:98668005964:android:e7ead3aef5881ea558c2e9",
+        "android_client_info": {
+          "package_name": "com.godelivo.newapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCICbt6jnU3Sk0QVsS3eagaFUjeBJ6VKqU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:98668005964:android:a2f99befe1a5f96a58c2e9",
+        "android_client_info": {
+          "package_name": "com.godelivoapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCICbt6jnU3Sk0QVsS3eagaFUjeBJ6VKqU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
