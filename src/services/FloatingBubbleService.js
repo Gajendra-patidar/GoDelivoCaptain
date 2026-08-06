@@ -1,12 +1,3 @@
-/**
- * FloatingBubbleService.js
- *
- * JavaScript wrapper around the native FloatingBubble Android module.
- * Provides helpers to check/request the SYSTEM_ALERT_WINDOW permission
- * and to start / stop the system-level overlay bubble.
- *
- * Android-only — all calls are no-ops on iOS.
- */
 import { NativeModules, Platform, Alert, Linking } from 'react-native';
 
 const { FloatingBubble } = NativeModules;

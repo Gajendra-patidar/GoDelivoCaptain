@@ -34,7 +34,6 @@ import {
   completeOrder,
   createMockNearbyOrder,
   setActiveOrder,
-  clearActiveOrder,
 } from '../../services/localDriverData';
 import { driverApi } from '../../services/driverApi';
 import SocketService from '../../services/socketService';
@@ -51,6 +50,7 @@ import { getLocationPermission } from '../../services/permissionService';
 
 import imgPath from '../../constant/imgPath';
 import toast from '../../utils/toast';
+import NavigationButton from '../../components/NavigationButton';
 
 const { width, height } = Dimensions.get('window');
 
@@ -242,28 +242,50 @@ const MapScreen = ({ navigation, route }) => {
   const hasPermission = useSelector(
     state => state.permission?.locationGranted ?? false,
   );
-  const vehicleType = profile?.vehicleDetails?.type || profile?.vehicleType || 'bike';
+  const vehicleType = profile?.vehicleDetails?.type || 'scooter';
   // Add this with your other refs
   const cameraUpdateTimeout = useRef(null);
   const lastCameraUpdate = useRef(null);
 
   const driverMarkerImage = useMemo(() => {
-    const vType = String(vehicleType).toLowerCase();
-    if (vType.includes('bike') || vType.includes('motorcycle') || vType.includes('two wheeler') || vType.includes('two-wheeler'))
+    const vType = vehicleType.toLowerCase();
+    if (vType.includes('bike') || vType.includes('motorcycle'))
       return require('../../assets/bike.png');
-    if (vType.includes('scoot')) return require('../../assets/scooter.png');
+    if (vType.includes('scooter')) return require('../../assets/scooter.png');
     if (
       vType.includes('auto') ||
       vType.includes('rickshaw') ||
       vType.includes('riksha')
     )
       return require('../../assets/auto.png');
-    if (vType.includes('truck'))
+    if (vType.includes('truck') && vType.includes('mini'))
       return require('../../assets/truck.png');
-
-    // Default fallback to bike instead of scooter for bike drivers
-    return require('../../assets/bike.png');
+    if (vType.includes('truck')) return require('../../assets/truck.png');
+    return require('../../assets/topscooter.png');
   }, [vehicleType]);
+
+  // const dummyOrder = {
+  //   _id: "TEST_ORDER_001",
+  //   orderId: "ORD123456",
+  //   status: "accepted",
+
+  //   pickupLocation: {
+  //     latitude: 22.7196,
+  //     longitude: 75.8577,
+  //     address: "Rajwada, Indore",
+  //   },
+
+  //   dropLocation: {
+  //     latitude: 22.7533,
+  //     longitude: 75.8937,
+  //     address: "Vijay Nagar, Indore",
+  //   },
+
+  //   customer: {
+  //     name: "Test Customer",
+  //     phone: "9999999999",
+  //   },
+  // };
 
   // Parse and normalize the incoming order data
   const rawOrder = useMemo(
@@ -274,6 +296,8 @@ const MapScreen = ({ navigation, route }) => {
   const { order } = route?.params;
 
   const [initialOrder] = useState(() => route?.params?.order || null);
+
+  console.log("order hi order ", order, rawOrder);
 
 
   //
@@ -403,33 +427,9 @@ const MapScreen = ({ navigation, route }) => {
   const [is3DMode, setIs3DMode] = useState(false);
   const [arrowRotation, setArrowRotation] = useState(90);
   const [nextWaypoint, setNextWaypoint] = useState(null);
-  const [hasUnreadMessage, setHasUnreadMessage] = useState(false);
 
   // Ripple animation for location marker
   const rippleAnim = useRef(new Animated.Value(0)).current;
-  const blinkAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (hasUnreadMessage) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(blinkAnim, {
-            toValue: 1,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-          Animated.timing(blinkAnim, {
-            toValue: 0,
-            duration: 500,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
-    } else {
-      blinkAnim.stopAnimation();
-      blinkAnim.setValue(0);
-    }
-  }, [hasUnreadMessage, blinkAnim]);
 
   useEffect(() => {
     Animated.loop(
@@ -464,7 +464,6 @@ const MapScreen = ({ navigation, route }) => {
   const [showCashModal, setShowCashModal] = useState(false);
   const [cashCollected, setCashCollected] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
-  const [paymentStatus, setPaymentStatus] = useState(order?.paymentStatus || 'pending');
   const [isProcessing, setIsProcessing] = useState(false);
   const [modalError, setModalError] = useState('');
 
@@ -482,11 +481,13 @@ const MapScreen = ({ navigation, route }) => {
 
   // Memoized destination
   const destination = useMemo(() => {
-    if (tripStage === STAGES.GOING_TO_PICKUP) {
+    if (
+      tripStage === STAGES.GOING_TO_PICKUP ||
+      tripStage === STAGES.ARRIVED_PICKUP
+    ) {
       return pickup;
     }
     if (
-      tripStage === STAGES.ARRIVED_PICKUP ||
       tripStage === STAGES.GOING_TO_DROP ||
       tripStage === STAGES.ARRIVED_DROP
     ) {
@@ -525,60 +526,8 @@ const MapScreen = ({ navigation, route }) => {
     if (order && (order.id || order.rideId)) {
       const rideId = order.rideId || order.id;
       SocketService.setActiveRide(rideId);
-
-      const handleRideCancelled = async (data) => {
-        if (data?.rideId === rideId || data?.id === rideId) {
-          toast.info('Ride cancelled by admin/customer.');
-          await clearActiveOrder();
-          navigation.navigate('MyTabs', { screen: 'Home' });
-        }
-      };
-
-      const handleStatusChanged = async (data) => {
-        if ((data?.rideId === rideId || data?.id === rideId) && data?.status === 'cancelled') {
-          toast.info('Ride cancelled by admin/customer.');
-          await clearActiveOrder();
-          navigation.navigate('MyTabs', { screen: 'Home' });
-        }
-      };
-
-      const handleNewMessage = (msg) => {
-        // If message is not from driver, show indicator
-        const driverId = profile?._id || profile?.id;
-        if (msg.senderId != null && driverId != null && msg.senderId.toString() !== driverId.toString()) {
-          setHasUnreadMessage(true);
-        }
-      };
-
-      const handlePaymentConfirmed = (data) => {
-        if (data?.rideId === order?.id || data?.rideId === order?.rideId) {
-          setPaymentStatus('completed');
-          toast.success('Payment Received Online');
-        }
-      };
-
-      SocketService.on('ride:cancelled', handleRideCancelled);
-      SocketService.on('ride:status-changed', handleStatusChanged);
-      SocketService.on('ride_cancelled', handleRideCancelled); // legacy
-      SocketService.on('chat:new_message', handleNewMessage);
-      SocketService.on('ride:payment_confirmed', handlePaymentConfirmed);
-
-      // Join chat room so we receive messages while on map
-      SocketService.socket?.emit('chat:join', {
-        rideId,
-        userId: profile?._id || profile?.id,
-        userType: 'driver',
-      });
-
-      return () => {
-        SocketService.off('ride:cancelled', handleRideCancelled);
-        SocketService.off('ride:status-changed', handleStatusChanged);
-        SocketService.off('ride_cancelled', handleRideCancelled);
-        SocketService.off('chat:new_message', handleNewMessage);
-        SocketService.off('ride:payment_confirmed', handlePaymentConfirmed);
-      };
     }
-  }, [order?.id, order?.rideId, navigation, profile]);
+  }, [order?.id, order?.rideId]);
 
   // Track pickup/drop proximity for action availability
   useEffect(() => {
@@ -664,14 +613,13 @@ const MapScreen = ({ navigation, route }) => {
     }
   }, [driverCoords?.latitude, driverCoords?.longitude]);
 
-  // Render tracksViewChanges once on mount and when driver coords initialize to prevent constant re-render lags
   useEffect(() => {
     setTracksViewChanges(true);
     const timer = setTimeout(() => {
       setTracksViewChanges(false);
-    }, 1500);
+    }, 500);
     return () => clearTimeout(timer);
-  }, []);
+  }, [driverCoords?.latitude, driverCoords?.longitude, arrowRotation]);
 
   const fetchAndDisplayShortestPath = async () => {
     if (!driverCoords || !destination) return;
@@ -843,24 +791,6 @@ const MapScreen = ({ navigation, route }) => {
       updateCamera(driverCoords, arrowRotation);
     }
   }, [driverCoords, tripStage, arrowRotation, updateCamera]);
-
-  // Fit map to show all markers (driver, pickup, drop) smoothly when map becomes ready
-  useEffect(() => {
-    if (isMapReady && mapRef.current && pickup && drop) {
-      const coordsToFit = [pickup, drop];
-      if (driverCoords) coordsToFit.push(driverCoords);
-
-      mapRef.current.fitToCoordinates(coordsToFit, {
-        edgePadding: {
-          top: 80,
-          right: 60,
-          bottom: 240,
-          left: 60,
-        },
-        animated: true,
-      });
-    }
-  }, [isMapReady, pickup, drop]);
 
   const stopLocationTracking = useCallback(() => {
     try {
@@ -1197,16 +1127,10 @@ const MapScreen = ({ navigation, route }) => {
           .toUpperCase()} — Heading to Drop\n🏁 ${dropAddress}`,
       );
 
-      // ── Navigate to Google Navigation SDK screen for turn-by-turn navigation ──
-      navigation.navigate('Navigation', {
-        order,
-        drop,
-        pickup,
-        pickupAddress,
-        dropAddress,
-        rideAmount,
-        initialStage: 'GOING_TO_DROP',
-      });
+      if (mapRef.current && driverCoords) {
+        updateCamera(driverCoords, arrowRotation);
+      }
+
 
     } catch (error) {
       console.error('Pickup confirmation error:', error);
@@ -1221,20 +1145,27 @@ const MapScreen = ({ navigation, route }) => {
     normalizedOrder?.amount ||
     0;
 
-  const handleCashCollected = async (overridePaymentMethod = null) => {
+  const handleCashCollected = async () => {
     try {
-      const activePaymentMethod = typeof overridePaymentMethod === 'string' ? overridePaymentMethod : paymentMethod;
-      const amount = parseFloat(cashCollected) || rideAmount || 0;
-
-      if (activePaymentMethod === 'cash') {
-        if (amount <= 0) {
-          setModalError('Invalid collection amount');
+      if (paymentMethod === 'cash') {
+        if (!cashCollected) {
+          setModalError('Please enter the amount collected');
+          return;
+        }
+        const amountValue = parseFloat(cashCollected);
+        if (isNaN(amountValue) || amountValue <= 0) {
+          setModalError('Please enter a valid amount');
           return;
         }
       }
 
       setModalError('');
       setIsProcessing(true);
+
+      const amount =
+        paymentMethod === 'cash'
+          ? parseFloat(cashCollected)
+          : order?.amount || order?.fare || 0;
 
       const rideId = order?.rideId || order?.id;
 
@@ -1245,7 +1176,7 @@ const MapScreen = ({ navigation, route }) => {
         serverCompleted = await driverApi.completeRide(
           rideId,
           amount,
-          activePaymentMethod,
+          paymentMethod,
         );
       } catch (error) {
         try {
@@ -1259,7 +1190,7 @@ const MapScreen = ({ navigation, route }) => {
 
       // ── Step 3.3: Emit ride:completed socket event BEFORE disconnecting ───
       // IMPORTANT: must emit BEFORE stopLocationTracking() which disconnects socket
-      SocketService.emitRideCompleted(rideId, amount, activePaymentMethod);
+      SocketService.emitRideCompleted(rideId, amount, paymentMethod);
 
       // ── Mark driver available & clear active ride on socket ───────────────
       // emitRideCompleted already calls emitStatusChange(true, true) internally
@@ -1275,13 +1206,13 @@ const MapScreen = ({ navigation, route }) => {
         dropAddress,
         deliveredDistanceKm: distance,
         amount,
-        paymentMethod: activePaymentMethod,
+        paymentMethod,
         completedAt: new Date().toISOString(),
       });
 
       await addNotification({
         title: 'Delivery Completed',
-        body: `${completedOrder.id} completed. ₹${amount} collected via ${activePaymentMethod}.`,
+        body: `${completedOrder.id} completed. ₹${amount} collected via ${paymentMethod}.`,
         type: 'order',
         data: completedOrder,
       });
@@ -1297,9 +1228,9 @@ const MapScreen = ({ navigation, route }) => {
 
       Alert.alert(
         'Delivery Complete',
-        activePaymentMethod === 'cash'
-          ? `Order delivered successfully. ₹${amount} collected.\nYour earnings: ₹${(amount * 0.8).toFixed(2)}`
-          : `Payment Received Online. ₹${(amount * 0.8).toFixed(2)} has been credited to your wallet.`,
+        `Order delivered successfully. ₹${amount} collected.\nYour earnings: ₹${(
+          amount * 0.8
+        ).toFixed(2)}`,
         [
           {
             text: 'Go Home',
@@ -1341,19 +1272,10 @@ const MapScreen = ({ navigation, route }) => {
   };
 
   const handleCompleteDelivery = () => {
-    const currentPaymentMode = (order?.paymentMode || order?.payment_mode || 'cash').toLowerCase();
-
-    if (!['online', 'wallet'].includes(currentPaymentMode)) {
-      setCashCollected(order?.amount?.toString() || '');
-      setPaymentMethod('cash');
-      setModalError('');
-      setShowCashModal(true);
-    } else {
-      // Auto-complete for online/wallet without cash modal
-      setPaymentMethod(currentPaymentMode);
-      setCashCollected(order?.amount?.toString() || '');
-      handleCashCollected(currentPaymentMode);
-    }
+    setCashCollected(order?.amount?.toString() || '');
+    setPaymentMethod('cash');
+    setModalError('');
+    setShowCashModal(true);
   };
 
   // Loading states
@@ -1388,17 +1310,7 @@ const MapScreen = ({ navigation, route }) => {
             latitudeDelta: 0.01,
             longitudeDelta: 0.01,
           }}
-          onMapReady={() => {
-            console.log('✅ MAP READY');
-            setIsMapReady(true);
-          }}
-          onMapLoaded={() => {
-            console.log('✅ MAP LOADED');
-          }}
-          onError={(error) => {
-            console.log('❌ MAP ERROR:', error);
-          }}
-          // onMapReady={() => setIsMapReady(true)}
+          onMapReady={() => setIsMapReady(true)}
           pitchEnabled={is3DMode}
           rotateEnabled={true}
           showsUserLocation={false}
@@ -1414,7 +1326,9 @@ const MapScreen = ({ navigation, route }) => {
           // Use liteMode for better performance (optional)
           liteMode={false}
         >
-          {/* Driver Live Location Navigation Arrow Puck (Google Maps Navigation Puck) */}
+          {/* Driver Vehicle Marker — rotation applied via Image transform
+              because Marker.Animated rotation prop is unreliable on Android
+              with custom Image children */}
           {driverCoords && (
             <Marker.Animated
               coordinate={animatedDriverCoords}
@@ -1422,47 +1336,41 @@ const MapScreen = ({ navigation, route }) => {
               flat={true}
               tracksViewChanges={tracksViewChanges}
             >
-              <View style={styles.navPuckContainer}>
-                <View style={styles.navPuckPulse} />
-                <View style={styles.navPuckOuter}>
-                  <View
-                    style={[
-                      styles.navPuckArrowWrap,
-                      { transform: [{ rotate: `${arrowRotation || 0}deg` }] },
-                    ]}
-                  >
-                    <Ionicons name="navigate" size={24} color="#FFFFFF" />
-                  </View>
-                </View>
-              </View>
+              <Image
+                source={getVehicleImage()}
+                style={{
+                  width: 50,
+                  height: 50,
+                  transform: [{ rotate: `${arrowRotation || 0}deg` }],
+                }}
+                resizeMode="contain"
+              />
             </Marker.Animated>
           )}
 
-          {/* Pickup Marker — rendered immediately */}
+          {/* Pickup Marker */}
           {pickup && (
             <Marker
               coordinate={pickup}
               anchor={{ x: 0.5, y: 1.0 }}
-              tracksViewChanges={tracksViewChanges}
             >
               <Image
                 source={imgPath.ic_pick}
-                style={{ width: 44, height: 44 }}
+                style={{ width: 50, height: 50 }} // ✅ ab kaam karega
                 resizeMode="contain"
               />
             </Marker>
           )}
 
-          {/* Drop Marker — rendered immediately */}
-          {drop && (
+          {/* Drop Marker */}
+          {showDropRoute && drop && (
             <Marker
               coordinate={drop}
               anchor={{ x: 0.5, y: 1.0 }}
-              tracksViewChanges={tracksViewChanges}
             >
               <Image
                 source={imgPath.ic_drop}
-                style={{ width: 44, height: 44 }}
+                style={{ width: 50, height: 50 }} // ✅ ab kaam karega
                 resizeMode="contain"
               />
             </Marker>
@@ -1656,90 +1564,83 @@ const MapScreen = ({ navigation, route }) => {
           </View>
         )}
 
-
-
-
-        {/* Turn-by-Turn Navigation Header (matches provided screenshot) */}
-        <View style={styles.topNavBanner}>
-          <View style={styles.topNavMainRow}>
-            <View style={styles.topNavArrowCircle}>
-              <Ionicons name="arrow-up" size={24} color="#FFFFFF" />
-            </View>
-            <Text style={styles.topNavStreetText} numberOfLines={1}>
-              towards <Text style={styles.topNavStreetBold}>{tripStage.includes('PICKUP') ? (pickupAddress?.split(',')[0] || 'Pickup') : (dropAddress?.split(',')[0] || 'Destination')}</Text>
-            </Text>
-            <View style={styles.topNavSparkleBtn}>
-              <Ionicons name="sparkles" size={18} color="#004D40" />
-            </View>
-          </View>
-          <View style={styles.topNavSubRow}>
-            <Text style={styles.topNavThenText}>Then</Text>
-            <Ionicons name="arrow-undo" size={16} color="#FFFFFF" style={{ marginHorizontal: 4 }} />
-          </View>
-        </View>
-
-        {/* Right Navigation Controls Stack (matches screenshot) */}
-        <View style={styles.rightNavControls}>
-          {/* Compass N Button (3D/2D Perspective Toggle) */}
+        {/* Bottom Card */}
+        {/* Premium Header Overlay */}
+        <View style={styles.mapHeaderOverlay}>
           <TouchableOpacity
-            style={styles.circleNavBtn}
+            style={styles.backBtnRound}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="arrow-back" size={24} color={theme.colors.ink} />
+          </TouchableOpacity>
+          {/* <TouchableOpacity
+            style={[styles.map3DButton, is3DMode && styles.map3DButtonActive]}
             onPress={() => {
-              const next3D = !is3DMode;
-              setIs3DMode(next3D);
-              if (mapRef.current && driverCoords) {
-                mapRef.current.animateCamera({
-                  center: driverCoords,
-                  pitch: next3D ? 60 : 0,
-                  heading: next3D ? (arrowRotation || 0) : 0,
-                  zoom: next3D ? 17 : 16,
-                }, { duration: 500 });
+              setIs3DMode(prev => !prev);
+              if (driverCoords) {
+                updateCamera(driverCoords, arrowRotation);
               }
             }}
-            activeOpacity={0.8}
           >
-            <View style={styles.compassContainer}>
-              <Text style={styles.compassNText}>N</Text>
-              <View style={[styles.compassNeedle, { transform: [{ rotate: `${-(arrowRotation || 0)}deg` }] }]}>
-                <View style={styles.compassNeedleRed} />
-                <View style={styles.compassNeedleWhite} />
-              </View>
-            </View>
-          </TouchableOpacity>
+            <Text style={styles.map3DButtonText}>
+              {is3DMode ? '2D View' : '3D View'}
+            </Text>
+          </TouchableOpacity> */}
 
-          {/* Search Button */}
-          <TouchableOpacity style={styles.circleNavBtn} activeOpacity={0.8}>
-            <Ionicons name="search" size={20} color="#374151" />
-          </TouchableOpacity>
+          {/* <View style={styles.headerTitleCard}>
+            <Text style={styles.headerTripId}>
+              Order #
+              {String(order?.id || '')
+                .slice(-6)
+                .toUpperCase()}
+            </Text>
+            <Text style={styles.headerStageText}>
+              {tripStage === STAGES.GOING_TO_PICKUP
+                ? 'Heading to Pickup'
+                : tripStage === STAGES.ARRIVED_PICKUP
+                ? 'At Pickup'
+                : tripStage === STAGES.GOING_TO_DROP
+                ? 'Heading to Drop'
+                : 'At Destination'}
+            </Text>
+          </View> */}
 
-          {/* Sound Button */}
-          <TouchableOpacity style={styles.circleNavBtn} activeOpacity={0.8}>
-            <Ionicons name="volume-high-outline" size={20} color="#374151" />
-          </TouchableOpacity>
-
-          {/* Warning / Hazard Button */}
-          <TouchableOpacity style={styles.circleNavBtn} activeOpacity={0.8}>
-            <Ionicons name="warning-outline" size={20} color="#D97706" />
-          </TouchableOpacity>
+          {/* <TouchableOpacity
+            style={styles.helpBtnRound}
+            onPress={() => Alert.alert('Help', 'Contacting support...')}
+          >
+            <Ionicons name="help-buoy" size={24} color={theme.colors.danger} />
+          </TouchableOpacity> */}
         </View>
 
-        {/* Re-centre Floating Pill Button (Bottom Left, matches screenshot) */}
-        <TouchableOpacity
-          style={styles.recentrePillBtn}
-          onPress={() => {
-            if (driverCoords && mapRef.current) {
-              mapRef.current.animateCamera({
-                center: driverCoords,
-                pitch: is3DMode ? 60 : 0,
-                heading: is3DMode ? (arrowRotation || 0) : 0,
-                zoom: is3DMode ? 17 : 16,
-              }, { duration: 500 });
+        {/* ── Porter-style Google Maps Navigation Button ───────────────────────────
+             Floats on the map above the bottom card.
+             Auto-targets pickup during GOING_TO_PICKUP / ARRIVED_PICKUP,
+             and drop during GOING_TO_DROP / ARRIVED_DROP. Hidden when COMPLETED. */}
+        {tripStage !== STAGES.COMPLETED && (
+          <NavigationButton
+            origin={driverCoords}
+            destination={
+              tripStage === STAGES.GOING_TO_PICKUP || tripStage === STAGES.ARRIVED_PICKUP
+                ? pickup
+                : drop
             }
-          }}
-          activeOpacity={0.8}
-        >
-          <Ionicons name="navigate" size={18} color="#005952" style={{ transform: [{ rotate: '45deg' }], marginRight: 6 }} />
-          <Text style={styles.recentrePillText}>Re-centre</Text>
-        </TouchableOpacity>
+            destinationLabel={
+              tripStage === STAGES.GOING_TO_PICKUP || tripStage === STAGES.ARRIVED_PICKUP
+                ? 'Pickup'
+                : 'Drop'
+            }
+            disabled={!driverCoords}
+            onSuccess={result => {
+              if (result.method === 'google_maps') {
+                console.log('[MapScreen] Launched Google Maps navigation');
+              }
+            }}
+            onError={result => {
+              console.warn('[MapScreen] Navigation error:', result.error);
+            }}
+          />
+        )}
 
         {/* Navigation Card */}
         <View style={styles.navCardOverlay}>
@@ -1801,25 +1702,9 @@ const MapScreen = ({ navigation, route }) => {
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.phoneCircle, { backgroundColor: '#0080ff' }]}
-                onPress={() => {
-                  setHasUnreadMessage(false);
-                  navigation.navigate('DriverChat', { rideId: order?.rideId || order?.id });
-                }}
+                onPress={() => navigation.navigate('DriverChat', { rideId: order?.rideId || order?.id })}
               >
                 <Ionicons name="chatbubble" size={22} color="#fff" />
-                {hasUnreadMessage && (
-                  <View style={{
-                    position: 'absolute',
-                    top: -2,
-                    right: -2,
-                    width: 14,
-                    height: 14,
-                    borderRadius: 7,
-                    backgroundColor: '#FF3B30',
-                    borderWidth: 2,
-                    borderColor: '#0080ff'
-                  }} />
-                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -1844,33 +1729,16 @@ const MapScreen = ({ navigation, route }) => {
                 </View>
               ))}
             {tripStage === STAGES.ARRIVED_PICKUP && (
-              <>
-                {(!['online', 'wallet'].includes((order?.paymentMode || order?.payment_mode || '').toLowerCase()) || paymentStatus === 'completed') ? (
-                  <TouchableOpacity
-                    style={[
-                      styles.primaryActionBtn,
-                      { backgroundColor: theme.colors.success },
-                    ]}
-                    onPress={handlePickupConfirmActual}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.primaryActionText}>START TRIP</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={styles.disabledActionMsg}>
-                    <Text style={styles.disabledActionText}>
-                      Waiting for customer to complete payment online/wallet...
-                    </Text>
-                  </View>
-                )}
-                {['online', 'wallet'].includes((order?.paymentMode || order?.payment_mode || '').toLowerCase()) && paymentStatus === 'completed' && (
-                  <View style={[styles.disabledActionMsg, { backgroundColor: '#dcfce7', borderColor: '#22c55e', marginTop: 8 }]}>
-                    <Text style={[styles.disabledActionText, { color: '#15803d', fontWeight: 'bold' }]}>
-                      Payment Received. You can now start the ride.
-                    </Text>
-                  </View>
-                )}
-              </>
+              <TouchableOpacity
+                style={[
+                  styles.primaryActionBtn,
+                  { backgroundColor: theme.colors.success },
+                ]}
+                onPress={handlePickupConfirmActual}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.primaryActionText}>START TRIP</Text>
+              </TouchableOpacity>
             )}
             {tripStage === STAGES.GOING_TO_DROP && isAtDrop && (
               <TouchableOpacity
@@ -2042,7 +1910,7 @@ const MapScreen = ({ navigation, route }) => {
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Payment Collection</Text>
+                <Text style={styles.modalTitle}>💰 Payment Collection</Text>
                 <TouchableOpacity
                   onPress={() => !isProcessing && setShowCashModal(false)}
                   disabled={isProcessing}
@@ -2051,12 +1919,65 @@ const MapScreen = ({ navigation, route }) => {
                 </TouchableOpacity>
               </View>
 
+              <View style={styles.orderSummary}>
+                <Text style={styles.summaryText}>Order #{order?.id || order?.rideId}</Text>
+                <Text style={styles.summaryText}>
+                  Distance:{' '}
+                  {distance
+                    ? distance < 1
+                      ? `${Math.round(distance * 1000)} m`
+                      : `${distance.toFixed(1)} km`
+                    : '0 km'}
+                </Text>
+              </View>
 
+              <View style={styles.paymentMethods}>
+                {['cash', 'card', 'online'].map(method => (
+                  <TouchableOpacity
+                    key={method}
+                    style={[
+                      styles.paymentMethod,
+                      paymentMethod === method && styles.paymentMethodActive,
+                    ]}
+                    onPress={() => {
+                      setPaymentMethod(method);
+                      setModalError('');
+                    }}
+                    disabled={isProcessing}
+                  >
+                    <Text
+                      style={[
+                        styles.paymentMethodText,
+                        paymentMethod === method &&
+                        styles.paymentMethodTextActive,
+                      ]}
+                    >
+                      {method === 'cash' && '💵 Cash'}
+                      {method === 'card' && '💳 Card'}
+                      {method === 'online' && '📱 Online'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
               {paymentMethod === 'cash' && (
                 <View style={styles.amountInputContainer}>
                   <Text style={styles.amountLabel}>Amount Collected (₹)</Text>
-                  <Text style={styles.amountInputContainerText}>₹ {rideAmount}</Text>
+                  <TextInput
+                    style={[
+                      styles.amountInput,
+                      modalError && styles.inputError,
+                    ]}
+                    value={cashCollected}
+                    onChangeText={text => {
+                      setCashCollected(text);
+                      setModalError('');
+                    }}
+                    keyboardType="numeric"
+                    placeholder="Enter amount"
+                    placeholderTextColor="#999"
+                    editable={!isProcessing}
+                  />
                 </View>
               )}
 
@@ -2080,7 +2001,7 @@ const MapScreen = ({ navigation, route }) => {
                   styles.collectButton,
                   isProcessing && styles.disabledButton,
                 ]}
-                onPress={() => handleCashCollected()}
+                onPress={handleCashCollected}
                 disabled={isProcessing}
                 activeOpacity={0.8}
               >
@@ -2089,8 +2010,8 @@ const MapScreen = ({ navigation, route }) => {
                 ) : (
                   <Text style={styles.collectButtonText}>
                     {paymentMethod === 'cash'
-                      ? 'Cash Collected'
-                      : 'Confirm Payment'}
+                      ? '✅ Cash Collected'
+                      : '✅ Confirm Payment'}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -2820,11 +2741,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     fontWeight: '600',
   },
-  amountInputContainerText: {
-    fontSize: 22,
-    color: '#111827',
-    fontWeight: '800',
-  },
   amountInput: {
     borderWidth: 1,
     borderColor: '#E5E7EB',
@@ -2870,177 +2786,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     marginBottom: 12,
-  },
-  navPuckContainer: {
-    width: 50,
-    height: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  navPuckPulse: {
-    position: 'absolute',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(26, 115, 232, 0.25)',
-  },
-  navPuckOuter: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: '#1A73E8',
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.35,
-    shadowRadius: 4,
-  },
-  navPuckArrowWrap: {
-    width: 24,
-    height: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  topNavBanner: {
-    position: 'absolute',
-    top: Platform.OS === 'ios' ? 54 : 40,
-    left: 14,
-    right: 14,
-    zIndex: 100,
-  },
-  topNavMainRow: {
-    backgroundColor: '#004D40',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-  },
-  topNavArrowCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
-  },
-  topNavStreetText: {
-    flex: 1,
-    fontSize: 15,
-    color: '#E0F2F1',
-    fontWeight: '500',
-  },
-  topNavStreetBold: {
-    fontSize: 17,
-    color: '#FFFFFF',
-    fontWeight: '800',
-  },
-  topNavSparkleBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#E0F2F1',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 8,
-  },
-  topNavSubRow: {
-    backgroundColor: '#00382E',
-    alignSelf: 'flex-start',
-    borderBottomLeftRadius: 10,
-    borderBottomRightRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 3,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: -2,
-    marginLeft: 12,
-  },
-  topNavThenText: {
-    color: '#B2DFDB',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  rightNavControls: {
-    position: 'absolute',
-    right: 14,
-    top: Platform.OS === 'ios' ? 145 : 125,
-    zIndex: 90,
-    alignItems: 'center',
-    gap: 10,
-  },
-  circleNavBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-  },
-  compassContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  compassNText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#9CA3AF',
-    marginBottom: -4,
-  },
-  compassNeedle: {
-    width: 4,
-    height: 18,
-    alignItems: 'center',
-  },
-  compassNeedleRed: {
-    width: 4,
-    height: 9,
-    backgroundColor: '#EF4444',
-    borderTopLeftRadius: 2,
-    borderTopRightRadius: 2,
-  },
-  compassNeedleWhite: {
-    width: 4,
-    height: 9,
-    backgroundColor: '#9CA3AF',
-    borderBottomLeftRadius: 2,
-    borderBottomRightRadius: 2,
-  },
-  recentrePillBtn: {
-    position: 'absolute',
-    left: 14,
-    bottom: '29.5%',
-    zIndex: 90,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 24,
-    elevation: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-  },
-  recentrePillText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#005952',
   },
 });
 

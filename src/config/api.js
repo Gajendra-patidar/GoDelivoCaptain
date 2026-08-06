@@ -6,4 +6,4 @@ export {
 } from '../services/api';
 
 // Google Maps — move to env variable for production builds
-export const GOOGLE_MAPS_APIKEY = 'AIzaSyCgpFAvw-8Q8nHEHz4z5ztx449xZLkilyk';
+export const GOOGLE_MAPS_APIKEY = '';//AIzaSyCICbt6jnU3Sk0QVsS3eagaFUjeBJ6VKqU

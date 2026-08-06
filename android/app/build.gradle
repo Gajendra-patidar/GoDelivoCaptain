@@ -119,15 +119,13 @@ android {
     }
 }
 
-configurations.all {
-    exclude group: 'com.google.android.gms', module: 'play-services-maps'
-}
 
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
-    implementation 'com.google.android.gms:play-services-location:20.0.0'
+    implementation 'com.google.android.gms:play-services-location:21.3.0'
+    implementation 'com.google.android.gms:play-services-maps:18.2.0'
 
     // Required for Google Navigation SDK core library desugaring
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.0.4'

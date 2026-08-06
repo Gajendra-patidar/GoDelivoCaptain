@@ -1,7 +1,6 @@
 import { StyleSheet, useColorScheme, AppState, Platform } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { NavigationProvider, TaskRemovedBehavior } from '@googlemaps/react-native-navigation-sdk';
 import MainNavigation from './src/navigations/mainNavigation';
 import { Provider } from 'react-redux';
 import { store } from './src/store/store';
@@ -15,7 +14,6 @@ import SocketService from './src/services/socketService';
 import PremiumToast from './src/components/PremiumToast';
 import { getThemeForScheme } from './src/theme';
 import { startOverlayBubble } from './src/services/FloatingBubbleService';
-import { navigationRef } from './src/navigations/navigationRef';
 import BubbleController from './src/components/BubbleController';
 
 
@@ -71,21 +69,8 @@ function App() {
             edges={['right', 'left', 'top']}
           >
             <ErrorBoundary>
-              <NavigationProvider
-                termsAndConditionsDialogOptions={{
-                  title: 'Terms and Conditions',
-                  companyName: 'GoDelivo',
-                  showOnlyDisclaimer: false,
-                  uiParams: {
-                    backgroundColor: '#FFFFFF',
-                    titleColor: 'rgba(0,0,0,1)',
-                  },
-                }}
-                taskRemovedBehavior={TaskRemovedBehavior.CONTINUE_SERVICE}
-              >
                 <MainNavigation />
-                <BubbleController />
-              </NavigationProvider>
+              <BubbleController />
             </ErrorBoundary>
             <PremiumToast />
           </SafeAreaView>
